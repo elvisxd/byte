@@ -25,6 +25,8 @@ class AppContext:
     runs: RunManager
     registry: ToolRegistry
     checkpointer: Any = None
+    # None cuando Byte arranca sin Postgres: /documents y /search devuelven 503.
+    rag: Any = None
 
 
 def get_context(request: Request) -> AppContext:
