@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Node (sandbox)
+node_modules/
+
+# Go (cli)
+cli/bin/
+
+# Datos locales
+*.db
+*.sqlite
+data/
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store

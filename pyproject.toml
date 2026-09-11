@@ -1,0 +1,12 @@
+[project]
+name = "byte"
+version = "0.1.0"
+description = "Agente de IA local (self-hosted) que programa, busca en internet y usa herramientas vía MCP"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
