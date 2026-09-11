@@ -78,6 +78,11 @@ curl -s -X POST "localhost:8000/api/v1/conversations/$CONV/messages?wait=true" \
 
 ```bash
 uv run pytest -q          # no necesita Ollama, Tavily ni Postgres
+
+# Con Postgres levantado, se suman los tests del repositorio y el checkpointer
+# contra la base real (en CI esto corre siempre)
+BYTE_TEST_DATABASE_URL=postgresql://byte:byte@localhost:5432/byte uv run pytest -q
+
 uv run ruff check .
 uv run ruff format .
 uv run pre-commit install # ruff + gitleaks antes de cada commit
@@ -127,8 +132,10 @@ Implementado:
 - **`BYTE_ENV=prod` no arranca sin Postgres**: el checkpointer nunca queda en memoria
   en producción, como pide el plan
 - **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
-- **95 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
-  sandbox: no hacen falta servicios externos para correrlos
+- **116 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
+  sandbox. Los del repositorio y el checkpointer corren contra las dos
+  implementaciones: en memoria siempre, y contra Postgres cuando hay uno
+  (se saltean si no)
 
 Pendiente de Fase 0:
 - **Correr el agente contra un Ollama real.** El código y los tests están, pero los

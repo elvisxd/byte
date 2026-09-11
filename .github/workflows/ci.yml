@@ -20,6 +20,25 @@ jobs:
         python: ["3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python }}
+      # Con esto, los tests del repositorio y del checkpointer corren también
+      # contra Postgres. Sin la variable se saltean, y el bug de paginación que
+      # solo aparecía ahí habría vuelto a pasar desapercibido.
+      BYTE_TEST_DATABASE_URL: postgresql://byte:byte@127.0.0.1:5432/byte
+    services:
+      postgres:
+        # La misma imagen que usa el compose: trae pgvector para la Fase 2.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: byte
+          POSTGRES_PASSWORD: byte
+          POSTGRES_DB: byte
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U byte -d byte"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
 

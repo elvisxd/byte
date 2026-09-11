@@ -344,8 +344,12 @@ class PostgresRepository:
             )
             for r in page
         ]
+        # El cursor se arma con `items`, no con `page`: las filas de psycopg son
+        # dicts y no tienen atributos.
         next_cursor = (
-            _encode_cursor(page[-1].updated_at, page[-1].id) if len(rows) > limit and page else None
+            _encode_cursor(items[-1].updated_at, items[-1].id)
+            if len(rows) > limit and items
+            else None
         )
         return items, next_cursor
 
