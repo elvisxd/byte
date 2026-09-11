@@ -106,6 +106,12 @@ def create_app(
         # El RAG reusa el pool del repositorio: sin Postgres no hay store, y
         # tanto la búsqueda en documentos como /documents quedan fuera.
         rag = _build_rag(resolved_settings, repo)
+        if rag is not None:
+            # Las tareas de ingesta viven en memoria: lo que estaba indexándose
+            # cuando se cayó el proceso quedaría en 'processing' para siempre.
+            huerfanos = await rag.store.recuperar_huerfanos()
+            if huerfanos:
+                logger.warning("documentos_interrumpidos", cantidad=huerfanos)
 
         async with AsyncExitStack() as stack:
             checkpointer = await _build_checkpointer(resolved_settings, stack)

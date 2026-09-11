@@ -1,15 +1,15 @@
-"""Chunking, parseo e ingesta del RAG.
+"""Chunking, parseo y compactación del RAG.
 
-El store y la búsqueda híbrida necesitan pgvector, así que se prueban contra el
-Postgres real (tests/test_postgres.py corre solo si hay DSN); acá va lo que se
-puede verificar sin base.
+Acá va lo que se puede verificar sin base. `rag/store.py` y la búsqueda híbrida
+necesitan pgvector y hoy **no tienen tests**: se verificaron a mano contra un
+Postgres real. Es una deuda conocida, no una cobertura delegada a otro archivo.
 """
 
 import io
 
 import pytest
 
-from rag.chunking import CHUNK_CHARS, OVERLAP_CHARS, split
+from rag.chunking import CHUNK_CHARS, split
 from rag.parsing import ParseError, parse
 
 # --- Chunking ---
@@ -58,9 +58,18 @@ def test_corta_en_limites_de_palabra() -> None:
         assert not chunk.content.endswith("pala")
 
 
-def test_el_solapamiento_es_menor_que_el_chunk() -> None:
-    """Si el solapamiento fuera >= al chunk, el índice no avanzaría nunca."""
-    assert 0 < OVERLAP_CHARS < CHUNK_CHARS
+def test_el_texto_completo_sobrevive_al_chunkeo() -> None:
+    """Ninguna palabra puede perderse entre dos chunks.
+
+    Antes esto afirmaba `0 < OVERLAP_CHARS < CHUNK_CHARS`, que es cierto por
+    definición de dos constantes y no ejecuta `split()`.
+    """
+    palabras = [f"palabra{i}" for i in range(2000)]
+    chunks = split(" ".join(palabras))
+
+    unidas = " ".join(c.content for c in chunks)
+    faltantes = [p for p in palabras if p not in unidas]
+    assert not faltantes, f"se perdieron {len(faltantes)} palabras al chunkear"
 
 
 # --- Parseo ---
@@ -185,3 +194,158 @@ async def test_el_resumen_se_recomprime_cuando_no_entra() -> None:
 
     assert resultado == "condensado"
     assert len(llm.pedidos) == 2  # el resumen nuevo, y después la recompresión
+
+
+# --- Embeddings: los errores de Ollama son el fallo operativo más común ---
+
+
+class _RespuestaFalsa:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _ClienteFalso:
+    """Reemplaza a httpx.AsyncClient dentro de Embedder.embed."""
+
+    def __init__(self, payload: dict | None = None, error: Exception | None = None) -> None:
+        self._payload = payload or {}
+        self._error = error
+
+    async def __aenter__(self) -> "_ClienteFalso":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    async def post(self, *_: object, **__: object) -> _RespuestaFalsa:
+        if self._error is not None:
+            raise self._error
+        return _RespuestaFalsa(self._payload)
+
+
+async def test_sin_textos_no_se_llama_a_ollama() -> None:
+    from rag.embeddings import Embedder
+
+    assert await Embedder("http://x", "m").embed([]) == []
+
+
+async def test_ollama_caido_da_embedding_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Es el fallo más común en la práctica: el servicio no está levantado."""
+    import httpx
+
+    from rag.embeddings import Embedder, EmbeddingError
+
+    monkeypatch.setattr(
+        "httpx.AsyncClient", lambda **_: _ClienteFalso(error=httpx.ConnectError("sin ruta"))
+    )
+    with pytest.raises(EmbeddingError):
+        await Embedder("http://x", "m").embed(["hola"])
+
+
+async def test_vector_de_otra_dimension_se_rechaza(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cambiar OLLAMA_EMBED_MODEL sin migrar la columna corrompería la tabla:
+    mejor fallar acá, con el motivo claro."""
+    from rag.embeddings import Embedder, EmbeddingError
+
+    monkeypatch.setattr(
+        "httpx.AsyncClient", lambda **_: _ClienteFalso({"embeddings": [[0.1, 0.2, 0.3]]})
+    )
+    with pytest.raises(EmbeddingError, match="768"):
+        await Embedder("http://x", "m").embed(["hola"])
+
+
+async def test_faltan_vectores_se_rechaza(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un lote parcial desalinearía los chunks de sus vectores."""
+    from rag.embeddings import EMBEDDING_DIM, Embedder, EmbeddingError
+
+    monkeypatch.setattr(
+        "httpx.AsyncClient", lambda **_: _ClienteFalso({"embeddings": [[0.0] * EMBEDDING_DIM]})
+    )
+    with pytest.raises(EmbeddingError, match="se pidieron 2"):
+        await Embedder("http://x", "m").embed(["uno", "dos"])
+
+
+# --- Ingesta: todo termina en indexed o error, nunca propaga ---
+
+
+class _StoreFalso:
+    def __init__(self) -> None:
+        self.guardados: list[tuple] = []
+        self.errores: list[str] = []
+
+    async def save_chunks(self, document_id: str, chunks: list) -> None:
+        self.guardados.append((document_id, chunks))
+
+    async def mark_error(self, document_id: str, mensaje: str) -> None:
+        self.errores.append(mensaje)
+
+
+class _EmbedderFalso:
+    def __init__(self, dim: int = 768, error: Exception | None = None) -> None:
+        self._dim = dim
+        self._error = error
+
+    async def embed(self, textos: list[str]) -> list[list[float]]:
+        if self._error is not None:
+            raise self._error
+        return [[0.1] * self._dim for _ in textos]
+
+
+def _ingestor(store: _StoreFalso, embedder: object, batch: int = 2) -> object:
+    from rag.ingest import Ingestor
+
+    return Ingestor(store=store, embedder=embedder, parse_timeout_s=5.0, batch_size=batch)
+
+
+async def test_un_archivo_ilegible_queda_en_error() -> None:
+    """El usuario tiene que ver el motivo, no un documento colgado."""
+    store = _StoreFalso()
+    await _ingestor(store, _EmbedderFalso()).index("doc-1", b"PK\x03\x04\x00\x00", "raro.zip")
+
+    assert store.guardados == []
+    assert store.errores and "no es texto ni PDF" in store.errores[0]
+
+
+async def test_si_fallan_los_embeddings_el_documento_queda_en_error() -> None:
+    from rag.embeddings import EmbeddingError
+
+    store = _StoreFalso()
+    embedder = _EmbedderFalso(error=EmbeddingError("ollama no responde"))
+    await _ingestor(store, embedder).index("doc-2", b"texto suficiente", "notas.txt")
+
+    assert store.guardados == []
+    assert store.errores and "ollama" in store.errores[0]
+
+
+async def test_el_indexado_vectoriza_en_lotes() -> None:
+    """Un documento grande en una sola llamada se pasa del timeout de Ollama."""
+    store = _StoreFalso()
+    embedder = _EmbedderFalso()
+    texto = " ".join(f"palabra{i}" for i in range(3000))
+    await _ingestor(store, embedder, batch=2).index("doc-3", texto.encode(), "largo.txt")
+
+    assert store.errores == []
+    assert len(store.guardados) == 1
+    _, chunks = store.guardados[0]
+    assert len(chunks) > 2
+    # Cada chunk sale con su índice y un vector de la dimensión correcta.
+    assert [c[0] for c in chunks] == list(range(len(chunks)))
+    assert all(len(c[2]) == 768 for c in chunks)
+
+
+async def test_un_error_inesperado_no_tumba_la_tarea() -> None:
+    """Corre en segundo plano: si escapara una excepción, nadie la vería."""
+    store = _StoreFalso()
+
+    class _EmbedderRoto:
+        async def embed(self, _textos: list[str]) -> list[list[float]]:
+            raise RuntimeError("algo raro")
+
+    await _ingestor(store, _EmbedderRoto()).index("doc-4", b"texto valido", "notas.txt")
+    assert store.errores and "inesperado" in store.errores[0]

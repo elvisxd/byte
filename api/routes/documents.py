@@ -6,6 +6,7 @@ GET /documents/{id} (processing → indexed | error).
 """
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, File, Request, UploadFile, status
@@ -20,6 +21,7 @@ from models.schemas import (
     SearchRequest,
     SearchResults,
 )
+from rag.embeddings import EmbeddingError
 
 router = APIRouter(tags=["documentos"])
 logger = get_logger("api.documents")
@@ -29,6 +31,18 @@ MAX_SNIPPET_CHARS = 300
 # Las tareas de indexado se guardan acá para que el recolector de basura no se
 # las lleve a mitad de camino (asyncio solo guarda referencias débiles).
 _tareas: set[asyncio.Task[None]] = set()
+
+
+def _limpiar_nombre(filename: str | None) -> str:
+    """Se queda con el nombre, sin ruta ni caracteres de control.
+
+    Byte nunca escribe el archivo en disco, así que un "../../etc/passwd" no
+    sería un traversal. Pero el nombre se muestra en la UI y viaja al prompt
+    del modelo como parte de las citas: mejor que sea un nombre y nada más.
+    """
+    nombre = (filename or "").replace("\\", "/").split("/")[-1]
+    nombre = "".join(c for c in nombre if c.isprintable()).strip(". ")
+    return nombre[:255] or "documento"
 
 
 def _rag(ctx: Context) -> Any:
@@ -65,20 +79,32 @@ async def subir_documento(
             status_code=413,
         )
 
-    filename = (file.filename or "documento")[:255]
+    filename = _limpiar_nombre(file.filename)
+    mime_type = file.content_type or "application/octet-stream"
     document_id = await rag.store.create(
         filename=filename,
         size_bytes=len(data),
-        mime_type=file.content_type or "application/octet-stream",
+        mime_type=mime_type,
         user_id=None,
+    )
+
+    # La respuesta se arma con lo que ya se sabe, sin releer la base: entre el
+    # create y un get habría un await, y la tarea de indexado podría adelantarse
+    # y devolver "indexed" en el 202 que promete "processing".
+    respuesta = DocumentInfo(
+        id=document_id,
+        filename=filename,
+        status="processing",
+        size_bytes=len(data),
+        mime_type=mime_type,
+        chunks=0,
+        uploaded_at=datetime.now(UTC),
     )
 
     tarea = asyncio.create_task(rag.ingestor.index(document_id, data, filename))
     _tareas.add(tarea)
     tarea.add_done_callback(_tareas.discard)
-
-    documento = await rag.store.get(document_id, None)
-    return DocumentInfo.model_validate(documento)
+    return respuesta
 
 
 @router.get("/documents", response_model=DocumentList)
@@ -113,9 +139,12 @@ async def buscar(
 ) -> SearchResults:
     """La misma búsqueda híbrida que usa el agente, expuesta para `byte search`."""
     rag = _rag(ctx)
+    # Solo EmbeddingError es "Ollama no responde". Capturar todo acá haría que un
+    # bug del código se reporte como servicio caído, y el operador reiniciaría
+    # Ollama en loop buscando un problema que está en otro lado.
     try:
         vector = await rag.embedder.embed_one(payload.query)
-    except Exception as exc:  # noqa: BLE001 - el detalle va al log
+    except EmbeddingError as exc:
         logger.warning("search_embedding_fallo", error_type=type(exc).__name__)
         raise ByteError(
             "embeddings_no_disponibles",
