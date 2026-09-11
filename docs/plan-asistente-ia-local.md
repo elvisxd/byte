@@ -143,7 +143,8 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 
 ### Fase 6 — CLI en Go (v2) (estimación: depende del aprendizaje de Go)
 - [ ] Sacar el certificado/base de Go
-- [ ] Cliente CLI que consuma la misma API FastAPI, siguiendo la pantalla diseñada en Canva (`byte ask`, `byte search`, `byte run`)
+- [ ] Cliente CLI en Go que consuma la misma API FastAPI, siguiendo la pantalla diseñada en Canva (`byte ask`, `byte search`, `byte run`)
+- [x] Mientras tanto, un CLI en Python con los mismos comandos (`cli/byte_cli.py`): la API ya estaba completa, así que esperar a Go dejaba la terminal sin usar sin ninguna razón técnica
 
 ### Fase 7 — Despliegue final optimizado (estimación: 1 semana)
 - [ ] Servicios separados en Railway por red privada: Ollama, FastAPI, Postgres, sandbox WASM, Bugsink (+ n8n si se usa), con sus volúmenes
