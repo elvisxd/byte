@@ -17,6 +17,11 @@ uv run pytest -q
 - `test_bordes.py` — casos borde y garantías fáciles de romper sin darse cuenta
 - `test_repositorio.py` — el contrato del repositorio contra **las dos**
   implementaciones, más el checkpointer y la API sobre Postgres
+- `test_rag.py` — chunking, parseo, embeddings, ingesta y la acumulación del
+  resumen (`rag/store.py` necesita pgvector: se prueba a mano, no acá)
+- `test_compact_endpoint.py` — `POST /compact`: que saque los mensajes del hilo
+  sin llevarse el system prompt ni romper el pareo de tool calls
+- `test_pausas_y_memoria.py` — aprobaciones pendientes y recorte del historial
 - `test_evals.py` — que el juez de los evals no dé falsos verdes
 
 ## Con Postgres

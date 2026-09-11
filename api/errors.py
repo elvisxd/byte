@@ -29,7 +29,12 @@ _CODE_BY_STATUS = {
 
 
 class ByteError(Exception):
-    """Error de dominio con código estable para el cliente."""
+    """Error de dominio con código estable para el cliente.
+
+    El `code` va en **snake_case en inglés**, siempre. Es lo que el CLI en Go y
+    la UI van a usar en un switch, así que cruza la frontera hacia el cliente y
+    no puede mezclar idiomas: los mensajes van en español, los códigos no.
+    """
 
     def __init__(
         self,

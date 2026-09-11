@@ -1,7 +1,8 @@
 """Esquemas de entrada y salida de la API (contrato en docs/api-contrato-byte.md).
 
-En el MVP solo existen CONVERSATIONS y MESSAGES del ERD; DOCUMENTS y
-DOCUMENT_CHUNKS llegan en la Fase 2 con el RAG.
+Cubre CONVERSATIONS y MESSAGES del ERD y, desde la Fase 2, DOCUMENTS y los
+esquemas de la búsqueda. DOCUMENT_CHUNKS no se expone: los chunks solo salen
+como resultados de búsqueda, nunca como recurso propio.
 """
 
 from datetime import datetime

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from api.logging import get_logger
 from rag.embeddings import Embedder, EmbeddingError
-from rag.store import DocumentStore
+from rag.store import SIN_USUARIO, DocumentStore
 from tools.base import Tool, ToolResult, wrap_untrusted
 
 logger = get_logger("tools.doc_search")
@@ -46,7 +46,10 @@ def build_doc_search_tool(
         try:
             vector = await embedder.embed_one(query)
             hits = await store.search(
-                query=query, embedding=vector, user_id=None, top_k=args.top_k or default_top_k
+                query=query,
+                embedding=vector,
+                user_id=SIN_USUARIO,
+                top_k=args.top_k or default_top_k,
             )
         except EmbeddingError:
             return ToolResult(

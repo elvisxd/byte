@@ -510,7 +510,7 @@ class RunManager:
             # Sin resumen no se saca nada del hilo: perder los mensajes sin
             # nada que los reemplace sería peor que no compactar.
             raise ByteError(
-                "compactacion_fallida",
+                "compaction_failed",
                 "No se pudo generar el resumen (¿el modelo responde?)",
                 status_code=503,
             )

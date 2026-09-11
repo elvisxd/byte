@@ -4,6 +4,7 @@ Herramientas que el agente puede usar. Una herramienta = un módulo. Agregar una
 - `web_search.py` — Tavily (SearxNG a evaluar después)
 - `code_exec.py` — cliente del sandbox WASM (Pyodide), más el chequeo de salud
   que alimenta `/health/details`
+- `doc_search.py` — búsqueda híbrida en los documentos del usuario (RAG)
 - `registry.py` — arma el registro según la configuración: cada herramienta se
   registra solo si está configurada
 

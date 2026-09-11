@@ -2,7 +2,7 @@
 
 > Un agente de IA propio que corre un modelo open source localmente, capaz de programar, buscar en internet y usar herramientas vía MCP — sin depender de APIs pagas.
 
-**Estado:** MVP (Fase 0) y ejecución de código en sandbox (Fase 1) funcionando de punta a punta en local.
+**Estado:** MVP (Fase 0), ejecución de código en sandbox (Fase 1) y memoria con RAG (Fase 2) funcionando de punta a punta en local.
 
 ## Stack
 Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + pgvector · MCP · AG-UI · Railway · Go (CLI)
@@ -98,6 +98,24 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 
 ## Qué hay hoy
 
+### Fase 2 — memoria y RAG
+
+- **Documentos**: `POST /documents` sube PDF, TXT o Markdown (máx. 20 MB, tipo
+  validado por magic bytes), responde `202` e indexa en segundo plano. El estado
+  se sigue con `GET /documents/{id}`: `processing` → `indexed` | `error`
+- **Búsqueda híbrida** sobre `pgvector`: similitud de vector (embeddings de
+  `nomic-embed-text`, índice HNSW) combinada con coincidencia léxica
+  (`tsvector` + GIN). Expuesta en `POST /search` y como herramienta `doc_search`
+  del agente
+- **Citas**: los fragmentos que usó el agente quedan en `MESSAGES.metadata` con
+  su `document_id` y `chunk_id`. Los chunks vienen de archivos de terceros, así
+  que entran al prompt marcados como contenido no confiable, y leer un documento
+  y querer ejecutar código en el mismo run dispara el modo seguro
+- **Compactación**: cuando el historial pasa el ~60% del contexto, los mensajes
+  viejos se resumen en `CONVERSATIONS.summary` en vez de descartarse, y el
+  resumen se inyecta en cada turno. Los originales no se borran: la UI los sigue
+  mostrando. `POST /conversations/{id}/compact` la fuerza a mano
+
 ### Fase 1 — ejecución de código
 
 - **Servicio `sandbox/`** (Node + Pyodide): corre el código que escribe el
@@ -107,11 +125,13 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   [`sandbox/README.md`](sandbox/README.md)
 - **`POST /execute`** para ejecutar directo (lo que va a usar `byte run`), y
   `code_exec` como segunda herramienta del agente
-- **Modo seguro (HITL)**: si en el mismo run hubo búsqueda web y el agente
-  quiere ejecutar código, el run se **detiene** y espera confirmación humana,
-  aunque nadie lo haya pedido. La combinación "contenido de terceros + ejecutar
-  código" es justo la que permite que una inyección indirecta llegue a correr
-  algo. Se modela como estado AG-UI (`awaiting_approval`) y se retoma con
+- **Modo seguro (HITL)**: si en la conversación entró contenido externo —una
+  búsqueda web o un documento del RAG— y el agente quiere ejecutar código, el run
+  se **detiene** y espera confirmación humana, aunque nadie lo haya pedido. La
+  combinación "contenido de terceros + ejecutar código" es justo la que permite
+  que una inyección indirecta llegue a correr algo. Cuenta la conversación
+  entera, no el run: si mirara solo el run, partir el ataque en dos mensajes lo
+  evadiría. Se modela como estado AG-UI (`awaiting_approval`) y se retoma con
   `POST /runs/{id}/resume`, en el mismo run, desde el checkpoint
 - **`evals/`** con 10 tareas para detectar regresiones del agente
 
@@ -138,7 +158,7 @@ Implementado:
 - **`BYTE_ENV=prod` no arranca sin Postgres**: el checkpointer nunca queda en memoria
   en producción, como pide el plan
 - **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
-- **124 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
+- **158 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
   sandbox. Los del repositorio y el checkpointer corren contra las dos
   implementaciones: en memoria siempre, y contra Postgres cuando hay uno
   (se saltean si no)
@@ -152,7 +172,6 @@ Pendiente de Fase 0:
 - Límite de gasto y alertas en Railway (se configura en el dashboard)
 
 Decisiones que se corrieron de fase, a propósito:
-- `POST /conversations/{id}/compact` y el nodo `compact` van con el RAG (Fase 2)
 - `POST /runs/{id}/resume` y el modo seguro (HITL) van con el sandbox (Fase 1): hoy
   `safe_mode` se acepta y se reporta, pero no hay herramienta peligrosa que aprobar
 - `Idempotency-Key` queda para la Fase 4, junto con el resto del endurecimiento de la API
