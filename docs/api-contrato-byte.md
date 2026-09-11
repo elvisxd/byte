@@ -30,7 +30,7 @@ Prefijo: `/api/v1`. Respuestas en JSON salvo el streaming (SSE). FastAPI genera 
 **GET `/conversations?limit=20&cursor=`** → `{ "items": [ { "id", "title", "preview", "updated_at" } ], "next_cursor" }` ordenado por `updated_at` desc.
 **GET `/conversations/{id}?limit=50&before=<message_id>&include_tool_messages=false`** → `{ ...Conversation, "summary", "summary_up_to_message_id", "messages": [ Message ], "has_more" }`. La UI usa `summary_up_to_message_id` para mostrar el marcador "conversación compactada hasta acá".
 **PATCH `/conversations/{id}`** `{ "title" }` → `200`
-**POST `/conversations/{id}/compact`** → `202 { "run_id" }`. Fuerza la compactación: el modelo resume los mensajes viejos y los guarda en `summary`. Normalmente se dispara solo cuando el historial supera ~60% del contexto del modelo. Los mensajes originales no se borran.
+**POST `/conversations/{id}/compact`** → `200 { "summary", "compacted_messages" }`. Fuerza la compactación: el modelo resume los mensajes viejos, los guarda en `summary` y los saca del hilo del agente, que es lo que libera contexto. Normalmente se dispara solo cuando el historial supera ~60% del contexto del modelo. Los mensajes originales no se borran de `MESSAGES`: la UI los sigue mostrando. Es sincrónico (una sola llamada al modelo), no `202`. `409` si hay un run en curso, `422` si no hay historial viejo que compactar.
 **DELETE `/conversations/{id}`** → `204`. Cancela los runs en vuelo de la conversación y borra mensajes **y el hilo del checkpointer de LangGraph** (`thread_id = id`).
 
 ---
