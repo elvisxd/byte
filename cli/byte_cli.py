@@ -9,15 +9,23 @@ igual contra una instancia remota que contra la local.
 """
 
 import argparse
+import json
 import os
+import re
 import shutil
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+try:  # readline le da historial y edición de línea a `input()`; en Windows no está.
+    import readline  # noqa: F401
+except ImportError:  # pragma: no cover - depende de la plataforma
+    pass
 
 # Paleta de la identidad, en ANSI (docs/prompts-canva-byte.md): prompt ámbar,
 # respuestas en crema, estado en gris.
@@ -39,31 +47,56 @@ def _color(texto: str, codigo: str) -> str:
     return f"{codigo}{texto}{FIN}" if sys.stdout.isatty() else texto
 
 
+def _en_pantalla() -> bool:
+    """Si alguien está mirando esto en una terminal, y no un archivo o un pipe."""
+    return sys.stdout.isatty()
+
+
+def _recortar(texto: str, ancho: int) -> str:
+    """Una línea larga en el estado empujaría el spinner fuera de la pantalla."""
+    texto = " ".join(texto.split())  # los saltos de línea romperían la línea viva
+    return texto if len(texto) <= ancho else texto[: max(0, ancho - 1)] + "…"
+
+
+def _interactiva() -> bool:
+    """Si hay una terminal de verdad de los dos lados.
+
+    Es lo que decide si `byte` a secas abre el chat o solo se presenta: un REPL
+    leyendo de un pipe o escribiendo a un archivo no le sirve a nadie.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _error(mensaje: str) -> int:
     print(_color(f"✗ {mensaje}", ROJO), file=sys.stderr)
     return 1
 
 
-class Pensando:
-    """Spinner mientras el modelo responde, con el tiempo que lleva.
+class Estado:
+    """La línea viva de abajo: qué está haciendo el agente, ahora mismo.
 
-    Va en un hilo porque la petición HTTP bloquea el principal, y sobre stderr
-    para no ensuciar la salida que alguien pueda estar redirigiendo a un
-    archivo. Sin terminal no dibuja nada.
+    El verbo lo cambia el stream de eventos (`Working`, `Searching the web`,
+    `Running code`…), así que no es un texto fijo: dice lo que de verdad está
+    pasando. Gira en un hilo porque el stream bloquea el principal, y escribe en
+    stderr para no ensuciar una salida redirigida. Sin terminal no dibuja nada.
     """
 
     CUADROS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-    def __init__(self, texto: str = "pensando") -> None:
+    def __init__(self, texto: str = "Working") -> None:
         self._texto = texto
+        self._detalle = ""
         self._activo = False
         self._hilo: threading.Thread | None = None
         self._encendido = sys.stderr.isatty()
+        self._arranque = time.monotonic()
+        self._candado = threading.Lock()
 
-    def __enter__(self) -> "Pensando":
+    def __enter__(self) -> "Estado":
         if not self._encendido:
             return self
         self._activo = True
+        self._arranque = time.monotonic()
         sys.stderr.write("\033[?25l")  # esconde el cursor mientras gira
         self._hilo = threading.Thread(target=self._girar, daemon=True)
         self._hilo.start()
@@ -72,21 +105,58 @@ class Pensando:
     def __exit__(self, *_: object) -> None:
         if not self._encendido:
             return
+        if self._activo:
+            self.detener()
+        else:
+            # Ya lo paró el primer token de la respuesta; queda asegurar el cursor.
+            sys.stderr.write("\033[?25h")
+            sys.stderr.flush()
+
+    def seguir(self, texto: str) -> None:
+        """Vuelve a girar después de un `detener()`.
+
+        Hace falta porque entre una herramienta y la siguiente se imprime una
+        línea de trabajo: el spinner para, se escribe, y arranca de nuevo.
+        """
+        if not self._encendido or self._activo:
+            return
+        self.cambiar(texto)
+        self._activo = True
+        sys.stderr.write("\033[?25l")
+        self._hilo = threading.Thread(target=self._girar, daemon=True)
+        self._hilo.start()
+
+    def cambiar(self, texto: str, detalle: str = "") -> None:
+        """El verbo nuevo; `detalle` es el argumento (la consulta, el archivo)."""
+        with self._candado:
+            self._texto, self._detalle = texto, detalle
+
+    def detener(self) -> None:
+        """Para el spinner y borra su línea, para no pisar lo que venga después.
+
+        Lo llama quien empieza a escribir la respuesta: si solo se borrara la
+        línea, el hilo la volvería a dibujar en el siguiente cuadro y el texto
+        saldría entrelazado con el spinner.
+        """
+        if not self._encendido or not self._activo:
+            return
         self._activo = False
         if self._hilo:
             self._hilo.join(timeout=0.5)
-        # Borra la línea del spinner y devuelve el cursor.
         sys.stderr.write("\r\033[2K\033[?25h")
         sys.stderr.flush()
 
     def _girar(self) -> None:
-        arranque = time.monotonic()
         i = 0
         while self._activo:
+            with self._candado:
+                texto, detalle = self._texto, self._detalle
             cuadro = self.CUADROS[i % len(self.CUADROS)]
-            segundos = time.monotonic() - arranque
+            segundos = time.monotonic() - self._arranque
+            cola = f" {GRIS}{detalle}{FIN}" if detalle else ""
             sys.stderr.write(
-                f"\r\033[2K{AMBAR}{cuadro}{FIN} {GRIS}{self._texto}… {segundos:.0f}s{FIN}"
+                f"\r\033[2K{AMBAR}{cuadro}{FIN} {CREMA}{texto}{FIN}"
+                f"{cola} {GRIS}{segundos:.0f}s{FIN}"
             )
             sys.stderr.flush()
             time.sleep(0.08)
@@ -125,6 +195,30 @@ class Byte:
             raise RuntimeError(_mensaje_de_error(respuesta))
         return None if respuesta.status_code == 204 else respuesta.json()
 
+    def eventos(self, ruta: str) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Los eventos AG-UI de un run, a medida que llegan.
+
+        Un SSE trae bloques separados por una línea en blanco; de cada uno solo
+        interesan `event:` y `data:`. Los comentarios de keepalive (`:`) se
+        ignoran solos porque no tienen ninguno de los dos campos.
+        """
+        with self._cliente.stream("GET", ruta, timeout=TIMEOUT_LARGO) as respuesta:
+            if respuesta.status_code >= 400:
+                respuesta.read()
+                raise RuntimeError(_mensaje_de_error(respuesta))
+            tipo, datos = "", ""
+            for linea in respuesta.iter_lines():
+                if linea.startswith("event:"):
+                    tipo = linea[6:].strip()
+                elif linea.startswith("data:"):
+                    datos = linea[5:].strip()
+                elif not linea.strip() and tipo:
+                    try:
+                        yield tipo, json.loads(datos) if datos else {}
+                    except json.JSONDecodeError:
+                        pass  # un evento ilegible no debería cortar el stream
+                    tipo, datos = "", ""
+
 
 def _config() -> tuple[str, str]:
     """URL y API key, del entorno o del .env del proyecto."""
@@ -148,85 +242,593 @@ def _config() -> tuple[str, str]:
 # con la etiqueta ámbar. Mismo espíritu que el logo SVG de la web.
 MASCOTA = ["▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝▝  "]
 
+ANCHO_MAXIMO = 104
+ANCHO_MINIMO_DOS_COLUMNAS = 90  # por debajo de esto la derecha queda ilegible
 
-def _bienvenida(byte: Byte, url: str) -> int:
-    """Lo que se ve al escribir `byte` sin comando."""
-    ancho = min(shutil.get_terminal_size((88, 24)).columns, 88)
-    linea = "─" * (ancho - 2)
+# `GET /tools` devuelve solo nombre y origen; para qué sirve cada una es
+# decisión de presentación y vive acá, no en la API.
+QUE_HACE = {
+    "doc_search": "searches the documents you added",
+    "web_search": "looks things up on the web",
+    "code_exec": "runs Python in a sandbox",
+}
 
-    def fila(texto: str = "", color: str = "") -> None:
-        # El padding se calcula sobre el texto sin códigos ANSI, que no ocupan
-        # ancho en pantalla pero sí caracteres en el string.
-        relleno = " " * max(0, ancho - 4 - len(texto))
-        print(f"│ {_color(texto, color) if color else texto}{relleno} │")
 
-    print(_color(f"╭{linea}╮", AZUL))
-    fila()
-    for i, parte in enumerate(MASCOTA):
-        centrada = parte.center(ancho - 4)
-        fila(centrada, AMBAR if i == 2 else AZUL)
-    fila()
-    fila("  Byte — your AI agent, running local", NEGRITA)
-    fila()
+def _visible(texto: str) -> int:
+    """El ancho en pantalla: los códigos ANSI ocupan caracteres pero no columnas."""
+    return len(re.sub(r"\033\[[0-9;]*m", "", texto))
 
+
+def _rellenar(texto: str, ancho: int) -> str:
+    """Lleva la celda a `ancho` columnas, recortando con elipsis si se pasa."""
+    sobra = ancho - _visible(texto)
+    if sobra >= 0:
+        return texto + " " * sobra
+    # Recorta contando solo lo visible, para no cortar un código ANSI al medio.
+    salida, usado = "", 0
+    for trozo in re.split(r"(\033\[[0-9;]*m)", texto):
+        if trozo.startswith("\033"):
+            salida += trozo
+            continue
+        for caracter in trozo:
+            if usado >= ancho - 1:
+                return salida + "…" + FIN
+            salida += caracter
+            usado += 1
+    return salida + " " * (ancho - usado)
+
+
+def _centrar(texto: str, ancho: int) -> str:
+    izquierda = max(0, (ancho - _visible(texto)) // 2)
+    return _rellenar(" " * izquierda + texto, ancho)
+
+
+def _panel_identidad(byte: Byte, url: str, ancho: int) -> list[str]:
+    """Columna izquierda: quién es y contra qué está corriendo."""
+    filas = [""]
+    filas += [_centrar(_color(p, AMBAR if i == 2 else AZUL), ancho) for i, p in enumerate(MASCOTA)]
+    filas.append("")
+    filas.append(_centrar(_color("Byte", NEGRITA) + _color(" — your AI agent", GRIS), ancho))
+    filas.append(_centrar(_color("running local", GRIS), ancho))
+    filas.append("")
     try:
         salud = byte.pedir("GET", "/health/details")
-        herramientas = byte.pedir("GET", "/tools")["tools"]
-        punto = "●" if salud["status"] == "ok" else "◐"
-        fila(f"  {punto} {salud['model']} · {url}", VERDE if salud["status"] == "ok" else AMBAR)
-        fila(f"    {', '.join(t['name'] for t in herramientas)}", GRIS)
+        ok = salud["status"] == "ok"
+        punto = _color("●" if ok else "◐", VERDE if ok else AMBAR)
+        filas.append(_centrar(f"{punto} {_color(salud['model'], CREMA)}", ancho))
     except Exception:  # noqa: BLE001 - la bienvenida no puede fallar por esto
-        fila("  ○ no connection to the API", GRIS)
-        fila(f"    {url}", GRIS)
+        filas.append(_centrar(_color("○ no connection", ROJO), ancho))
+    filas.append(_centrar(_color(url, GRIS), ancho))
+    return filas
 
-    fila()
-    fila('  byte ask "..."        ask it something', GRIS)
-    fila("  byte docs add x.pdf   add a document", GRIS)
-    fila("  byte --help           all commands", GRIS)
-    fila()
-    print(_color(f"╰{linea}╯", AZUL))
+
+def _panel_pistas(byte: Byte, interactivo: bool, ancho: int) -> list[str]:
+    """Columna derecha: qué podés hacer y con qué cuenta."""
+    filas = [_color("Tips for getting started", NEGRITA)]
+    if interactivo:
+        filas.append(_color("Just type — it answers and remembers the conversation", GRIS))
+        filas.append(
+            _color("Run ", GRIS)
+            + _color("/add", CREMA)
+            + _color(" or ", GRIS)
+            + _color("/search", CREMA)
+            + _color(" to work with your documents", GRIS)
+        )
+        filas.append(
+            _color("Run ", GRIS) + _color("/help", CREMA) + _color(" to see the rest", GRIS)
+        )
+    else:
+        filas.append(
+            _color("Run ", GRIS)
+            + _color('byte ask "..."', CREMA)
+            + _color(" to ask it something", GRIS)
+        )
+        filas.append(
+            _color("Run ", GRIS)
+            + _color("byte docs add x.pdf", CREMA)
+            + _color(" to add a document", GRIS)
+        )
+        filas.append(
+            _color("Run ", GRIS) + _color("byte --help", CREMA) + _color(" for all commands", GRIS)
+        )
+
+    filas.append(_color("─" * ancho, GRIS))
+    filas.append(_color("What it can use", NEGRITA))
+    try:
+        for t in byte.pedir("GET", "/tools")["tools"]:
+            nombre = t["name"]
+            filas.append(_color(f"{nombre:<12}", CREMA) + _color(QUE_HACE.get(nombre, ""), GRIS))
+    except Exception:  # noqa: BLE001
+        filas.append(_color("unavailable while the API is down", GRIS))
+    return filas
+
+
+def _bienvenida(byte: Byte, url: str, interactivo: bool = False) -> int:
+    """Lo que se ve al escribir `byte` sin comando.
+
+    En dos columnas, como las herramientas de agente modernas: a la izquierda
+    quién sos y contra qué corrés, a la derecha qué podés hacer. En una terminal
+    angosta se cae a una sola columna, que es lo único que entra.
+    """
+    ancho = min(shutil.get_terminal_size((ANCHO_MAXIMO, 24)).columns, ANCHO_MAXIMO)
+    dos_columnas = ancho >= ANCHO_MINIMO_DOS_COLUMNAS
+
+    # Interior = ancho - 2 bordes. Con dos columnas hay un separador y un
+    # espacio de aire a cada lado de cada celda: 1 + izq + 1 + │ + 1 + der + 1.
+    interior = ancho - 2
+    ancho_izq = 27 if dos_columnas else interior - 2
+    ancho_der = interior - ancho_izq - 5 if dos_columnas else 0
+
+    izquierda = _panel_identidad(byte, url, ancho_izq)
+    derecha = _panel_pistas(byte, interactivo, ancho_der) if dos_columnas else []
+
+    borde = lambda c: _color(c, AZUL)  # noqa: E731
+    print(borde("╭" + "─" * interior + "╮"))
+    for i in range(max(len(izquierda), len(derecha))):
+        celda_izq = izquierda[i] if i < len(izquierda) else ""
+        linea = borde("│") + " " + _rellenar(celda_izq, ancho_izq) + " "
+        if dos_columnas:
+            celda_der = derecha[i] if i < len(derecha) else ""
+            linea += borde("│") + " " + _rellenar(celda_der, ancho_der) + " "
+        print(linea + borde("│"))
+    print(borde("╰" + "─" * interior + "╯"))
+    return 0
+
+
+# --- Chat interactivo ---
+
+# Los comandos del chat llevan `/` para no confundirse con lo que se le
+# pregunta al modelo: "status" bien puede ser una pregunta, "/status" no.
+AYUDA_CHAT = [
+    ("/new", "start a fresh conversation, with no memory of this one"),
+    ("/docs", "list your documents"),
+    ("/add <file>", "add a document"),
+    ("/search <text>", "search your documents, without asking the model"),
+    ("/run <file.py>", "run a Python file in the sandbox"),
+    ("/safe", "toggle asking before running code"),
+    ("/status", "Byte and its services"),
+    ("/id", "this conversation's id"),
+    ("/help", "this help"),
+    ("/exit", "leave (or Ctrl-D)"),
+]
+
+# Cada comando acepta variantes: el banner está en inglés, pero quien escribe en
+# español no debería chocarse con un "no conozco /salir".
+ALIAS_CHAT = {
+    "/salir": "/exit",
+    "/quit": "/exit",
+    "/q": "/exit",
+    "/nueva": "/new",
+    "/ayuda": "/help",
+    "/h": "/help",
+    "/?": "/help",
+    "/buscar": "/search",
+    "/agregar": "/add",
+    "/seguro": "/safe",
+    "/estado": "/status",
+}
+
+
+def _nueva_conversacion(byte: Byte) -> str:
+    return str(byte.pedir("POST", "/conversations", json={})["id"])
+
+
+class Sesion:
+    """Lo que el chat recuerda entre turnos: la conversación y el modo seguro."""
+
+    def __init__(self, conversacion: str, safe: bool) -> None:
+        self.conversacion = conversacion
+        self.safe = safe
+        self.seguir = True
+
+
+def _comando_del_chat(byte: Byte, entrada: str, sesion: Sesion) -> None:
+    """Atiende un `/comando`, cambiando la sesión si hace falta.
+
+    Los errores de la API se muestran y no cortan la sesión: que `/docs` falle
+    porque la API se cayó no es razón para perder el hilo de la charla.
+    """
+    partes = entrada.split(maxsplit=1)
+    orden = ALIAS_CHAT.get(partes[0].lower(), partes[0].lower())
+    resto = partes[1].strip() if len(partes) > 1 else ""
+
+    if orden == "/exit":
+        sesion.seguir = False
+        return
+
+    try:
+        if orden == "/new":
+            sesion.conversacion = _nueva_conversacion(byte)
+            print(_color("✓ fresh conversation, no memory of the previous one", VERDE))
+
+        elif orden == "/docs":
+            cmd_docs_list(byte, argparse.Namespace())
+
+        elif orden == "/add":
+            if not resto:
+                print(_color("which file? — /add report.pdf", GRIS))
+            else:
+                cmd_docs_add(byte, argparse.Namespace(archivo=os.path.expanduser(resto)))
+
+        elif orden == "/search":
+            if not resto:
+                print(_color("search for what? — /search deployment", GRIS))
+            else:
+                cmd_search(byte, argparse.Namespace(consulta=resto, top_k=5))
+
+        elif orden == "/run":
+            if not resto:
+                print(_color("which file? — /run script.py", GRIS))
+            else:
+                cmd_run(byte, argparse.Namespace(archivo=os.path.expanduser(resto), timeout=10))
+
+        elif orden == "/safe":
+            sesion.safe = not sesion.safe
+            estado = "on — it will ask before running code" if sesion.safe else "off"
+            print(_color(f"✓ safe mode {estado}", VERDE if sesion.safe else GRIS))
+
+        elif orden == "/status":
+            cmd_status(byte, argparse.Namespace())
+
+        elif orden == "/id":
+            print(_color(sesion.conversacion, GRIS))
+            print(_color(f'pick it up later with: byte ask -c {sesion.conversacion} "..."', GRIS))
+
+        elif orden == "/help":
+            for nombre, que_hace in AYUDA_CHAT:
+                print(f"  {_color(f'{nombre:<16}', AMBAR)}{_color(que_hace, GRIS)}")
+
+        else:
+            print(_color(f"I don't know {orden} — try /help", GRIS))
+
+    except (RuntimeError, httpx.HTTPError) as exc:
+        _error(str(exc))
+
+
+def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
+    """La ventana que se queda abierta: preguntá, responde, y sigue esperando.
+
+    Mantiene una sola conversación entre turnos, así que el agente se acuerda de
+    lo anterior. Ctrl-C corta la respuesta en curso pero no la sesión; para eso
+    están Ctrl-D y /salir.
+    """
+    _bienvenida(byte, url, interactivo=True)
+    print()
+
+    try:
+        sesion = Sesion(conversacion or _nueva_conversacion(byte), safe)
+    except (RuntimeError, httpx.HTTPError) as exc:
+        return _error(str(exc))
+
+    prompt = _color("❯ ", AMBAR)
+    while sesion.seguir:
+        try:
+            entrada = input(prompt).strip()
+        except EOFError:  # Ctrl-D
+            print()
+            break
+        except KeyboardInterrupt:  # Ctrl-C en el prompt: descarta la línea
+            print()
+            continue
+
+        if not entrada:
+            continue
+
+        if entrada.startswith("/"):
+            _comando_del_chat(byte, entrada, sesion)
+            if sesion.seguir:
+                print()
+            continue
+
+        try:
+            datos = _preguntar_en_vivo(byte, sesion.conversacion, entrada, sesion.safe)
+        except KeyboardInterrupt:
+            # El run sigue del lado de la API; acá solo se deja de esperarlo.
+            print(_color("· stopped waiting for the answer", GRIS))
+            continue
+        except (RuntimeError, httpx.HTTPError) as exc:
+            _error(str(exc))
+            continue
+
+        if datos.get("status") == "paused":
+            _mostrar_pausa(datos)
+        else:
+            _mostrar_respuesta(datos)
+        print()
+
+    print(_color("Bye 👋", GRIS))
     return 0
 
 
 # --- Comandos ---
 
 
-def cmd_ask(byte: Byte, args: argparse.Namespace) -> int:
-    """Una pregunta al agente, esperando la respuesta completa.
+def _preguntar(byte: Byte, conversacion: str, pregunta: str, safe: bool) -> dict[str, Any]:
+    """Una vuelta de pregunta/respuesta, esperando la respuesta completa.
 
     Usa `?wait=true` en vez del SSE: para un comando de una sola vuelta, seguir
-    el stream solo agrega complejidad. El de Go, que muestra el texto token a
-    token, sí va a usar los eventos.
+    el stream solo agrega complejidad. El chat, que muestra el texto mientras se
+    escribe, sí usa los eventos (`_preguntar_en_vivo`).
     """
-    conversacion = args.conversation or byte.pedir("POST", "/conversations", json={})["id"]
-    with Pensando():
-        datos = byte.pedir(
+    with Estado():
+        return byte.pedir(
             "POST",
             f"/conversations/{conversacion}/messages",
             params={"wait": "true"},
-            json={"content": args.pregunta, "safe_mode": args.safe},
+            json={"content": pregunta, "safe_mode": safe},
         )
 
-    if datos.get("status") == "paused":
-        # Modo seguro: el run espera una decisión humana. Se muestra el código
-        # y se resuelve con `byte approve` / `byte reject`.
-        pendiente = datos["awaiting_approval"]
-        print(_color("⚠ Byte quiere ejecutar código y espera tu confirmación", AMBAR))
-        for codigo in pendiente.get("codes") or [pendiente.get("code", "")]:
-            print(_color(codigo, GRIS))
+
+# Qué mostrar en la línea de estado según el nodo del grafo en que esté el run.
+# En inglés como el resto de la interfaz, y en gerundio: describe lo que está
+# pasando ahora, no lo que se pidió.
+POR_PASO = {
+    "retrieve_context": "Reading your documents",
+    "compact": "Summarizing the conversation",
+    "agent": "Thinking",
+    "finalize": "Wrapping up",
+}
+
+# El nodo `tools` entra *después* del TOOL_CALL_START, así que su verbo genérico
+# pisaría el específico ("Searching the web"). Se ignora: la herramienta ya dijo
+# algo mejor, y si no dijo nada, el verbo anterior sigue siendo cierto.
+PASOS_MUDOS = {"tools"}
+
+POR_HERRAMIENTA = {
+    "doc_search": "Searching your documents",
+    "web_search": "Searching the web",
+    "code_exec": "Running code",
+}
+
+
+def _detalle_de(argumentos: str) -> str:
+    """El argumento que vale la pena mostrar al lado del verbo.
+
+    De `{"query": "fastapi"}` saca `fastapi`; del código que va a ejecutar, su
+    primera línea. Si no hay nada legible, prefiere no decir nada.
+    """
+    try:
+        datos = json.loads(argumentos)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(datos, dict):
+        return ""
+    for clave in ("query", "consulta", "q"):
+        if isinstance(datos.get(clave), str):
+            return _recortar(datos[clave], 48)
+    if isinstance(datos.get("code"), str):
+        primera = datos["code"].strip().splitlines()[0] if datos["code"].strip() else ""
+        return _recortar(primera, 48)
+    return ""
+
+
+def _resumen_de(nombre: str, datos: dict[str, Any]) -> str:
+    """Qué decir de una herramienta que ya terminó.
+
+    Del `summary` que manda la API (`results`, `exit_code`, `error`…) sale una
+    línea corta: lo que alguien querría saber sin abrir Langfuse.
+    """
+    if not datos.get("ok", True):
+        return {
+            "query_vacia": "empty query",
+            "embeddings_caidos": "embeddings are down",
+            "busqueda_fallida": "the search failed",
+            "sandbox_no_disponible": "no sandbox available",
+            "codigo_demasiado_largo": "the code was too long",
+            "argumentos_invalidos": "invalid arguments",
+            "herramienta_desconocida": "unknown tool",
+            "ejecucion_fallida": "it failed",
+            "rechazado_por_el_usuario": "you rejected it",
+        }.get(str(datos.get("error", "")), "failed")
+
+    if nombre == "code_exec":
+        partes = ["exit 0"]
+        if datos.get("duration_ms") is not None:
+            partes.append(f"{int(datos['duration_ms'])}ms")
+        if datos.get("truncated"):
+            partes.append("output trimmed")
+        return ", ".join(partes)
+
+    if "results" in datos:
+        cuantos = datos["results"]
+        return "nothing found" if not cuantos else f"{cuantos} result{'s' if cuantos != 1 else ''}"
+    return "done"
+
+
+def _linea_de_trabajo(verbo: str, detalle: str, resultado: str, ok: bool) -> None:
+    """Una línea de lo que el agente ya hizo, para que quede en el historial.
+
+    Es el contexto que antes se perdía: el spinner lo mostraba y lo borraba. Acá
+    queda escrito, como las líneas de trabajo de un agente de código.
+    """
+    punto = _color("✓" if ok else "✗", VERDE if ok else ROJO)
+    linea = f"{punto} {_color(verbo, CREMA)}"
+    if detalle:
+        linea += f" {_color(detalle, GRIS)}"
+    if resultado:
+        linea += _color(f" · {resultado}", GRIS)
+    print(linea)
+
+
+def _parrafos(texto: str) -> Iterator[str]:
+    """Corta el texto en bloques por línea en blanco.
+
+    Es la unidad con la que se muestra la respuesta: un párrafo entero de una
+    vez, en vez de letra por letra. Se ve terminado apenas aparece.
+    """
+    bloque: list[str] = []
+    for linea in texto.splitlines():
+        if linea.strip():
+            bloque.append(linea)
+        elif bloque:
+            yield "\n".join(bloque)
+            bloque = []
+    if bloque:
+        yield "\n".join(bloque)
+
+
+def _preguntar_en_vivo(byte: Byte, conversacion: str, pregunta: str, safe: bool) -> dict[str, Any]:
+    """Igual que `_preguntar`, pero siguiendo el run por SSE.
+
+    Devuelve la misma forma que `?wait=true` para que quien llama no distinga:
+    `{"message": …}` o `{"status": "paused", …}`. Lo que gana es el contexto: se
+    ve qué herramienta usó, con qué argumento y con qué resultado, y cada una
+    deja su línea en el historial. El texto se acumula y se muestra armado
+    (`_mostrar_respuesta`), no token a token.
+    """
+    arranque = byte.pedir(
+        "POST",
+        f"/conversations/{conversacion}/messages",
+        json={"content": pregunta, "safe_mode": safe},
+    )
+    run_id = arranque["run_id"]
+
+    texto: list[str] = []
+    fuentes: list[dict[str, Any]] = []
+    pendiente: dict[str, Any] = {}
+    llamadas: dict[str, dict[str, str]] = {}  # toolCallId → lo que se sabe de esa llamada
+    trabajo: list[str] = []  # nombres de las herramientas que corrieron, en orden
+    error = ""
+    arrancó = time.monotonic()
+
+    with Estado("Working") as estado:
+        for tipo, datos in byte.eventos(f"/runs/{run_id}/events"):
+            if tipo == "STEP_STARTED":
+                paso = datos.get("stepName", "")
+                if paso not in PASOS_MUDOS:
+                    estado.cambiar(POR_PASO.get(paso, "Working"))
+
+            elif tipo == "TOOL_CALL_START":
+                nombre = datos.get("toolCallName", "")
+                llamadas[datos.get("toolCallId", "")] = {"nombre": nombre, "detalle": ""}
+                estado.cambiar(POR_HERRAMIENTA.get(nombre, f"Using {nombre}"))
+
+            elif tipo == "TOOL_CALL_ARGS":
+                llamada = llamadas.get(datos.get("toolCallId", ""))
+                detalle = _detalle_de(datos.get("delta", ""))
+                if llamada and detalle:
+                    llamada["detalle"] = detalle
+                    estado.cambiar(
+                        POR_HERRAMIENTA.get(llamada["nombre"], f"Using {llamada['nombre']}"),
+                        detalle,
+                    )
+
+            elif tipo == "TOOL_CALL_RESULT":
+                # La herramienta terminó: su línea sale ya, mientras el modelo
+                # sigue pensando. Así se ve avanzar el trabajo, no solo el final.
+                llamada = llamadas.get(datos.get("toolCallId", ""), {})
+                nombre = llamada.get("nombre", "")
+                ok = bool(datos.get("ok", True))
+                estado.detener()
+                _linea_de_trabajo(
+                    POR_HERRAMIENTA.get(nombre, f"Using {nombre}"),
+                    llamada.get("detalle", ""),
+                    _resumen_de(nombre, datos),
+                    ok,
+                )
+                estado.seguir("Thinking")
+                if ok:
+                    trabajo.append(nombre)
+
+            elif tipo == "TEXT_MESSAGE_CONTENT":
+                # Se acumula y se muestra armado al final: ver letras apareciendo
+                # de a una es más lento de leer que un párrafo ya hecho.
+                texto.append(datos.get("delta", ""))
+
+            elif tipo in ("STATE_DELTA", "STATE_SNAPSHOT"):
+                if datos.get("sources"):
+                    fuentes = datos["sources"]
+                if datos.get("awaiting_approval"):
+                    pendiente = datos["awaiting_approval"]
+
+            elif tipo == "RUN_ERROR":
+                error = datos.get("message") or "el run falló"
+                break
+
+            elif tipo == "RUN_FINISHED":
+                if datos.get("sources"):
+                    fuentes = datos["sources"]
+                if datos.get("status") == "paused":
+                    pendiente = pendiente or datos.get("awaiting_approval", {})
+                break
+
+    if error:
+        raise RuntimeError(error)
+
+    if pendiente:
+        return {"status": "paused", "run_id": run_id, "awaiting_approval": pendiente}
+
+    return {
+        "message": {"content": "".join(texto).strip(), "metadata": {"sources": fuentes}},
+        "segundos": time.monotonic() - arrancó,
+        "herramientas": trabajo,
+    }
+
+
+def _mostrar_pausa(datos: dict[str, Any]) -> None:
+    """Modo seguro: el run espera una decisión humana. Se muestra el código y se
+    resuelve con `byte approve` / `byte reject`."""
+    pendiente = datos["awaiting_approval"]
+    print(_color("⚠ Byte wants to run code and is waiting for your call", AMBAR))
+    for codigo in pendiente.get("codes") or [pendiente.get("code", "")]:
+        print(_color(codigo, GRIS))
+    print()
+    print(f"  byte approve {datos['run_id']} {pendiente['resume_token']}")
+    print(f"  byte reject  {datos['run_id']} {pendiente['resume_token']}")
+
+
+def _mostrar_respuesta(datos: dict[str, Any]) -> None:
+    """La respuesta ya terminada, en bloques, y debajo de qué salió.
+
+    Por párrafos y no token a token: un bloque completo se lee de un vistazo,
+    mientras que ver letras apareciendo obliga a esperar a que pare.
+    """
+    mensaje = datos["message"]
+    contenido = mensaje["content"]
+    # Redirigido a un archivo va el texto pelado: el pie y el aire son para leer
+    # en la terminal, y ensuciarían la salida de un script.
+    con_adornos = _en_pantalla()
+    if con_adornos:
+        if datos.get("herramientas"):
+            print()  # aire entre las líneas de trabajo y la respuesta
+        for i, parrafo in enumerate(_parrafos(contenido)):
+            if i:
+                print()
+            print(parrafo)
+    else:
+        print(contenido)
+        return
+
+    # El pie: de dónde salió y cuánto costó. Es el contexto que el spinner
+    # mostraba y borraba.
+    pie = []
+    fuentes = mensaje["metadata"].get("sources") or []
+    if fuentes:
+        nombres = sorted({f.get("filename") or f.get("url", "") for f in fuentes} - {""})
+        if nombres:
+            pie.append("Sources: " + " · ".join(nombres))
+    # Por debajo de un segundo el número no dice nada; se omite en vez de "0s".
+    if datos.get("segundos", 0) >= 1:
+        pie.append(f"{datos['segundos']:.0f}s")
+    if datos.get("herramientas"):
+        pie.append(" · ".join(datos["herramientas"]))
+    if pie:
         print()
-        print(f"  byte approve {datos['run_id']} {pendiente['resume_token']}")
-        print(f"  byte reject  {datos['run_id']} {pendiente['resume_token']}")
+        print(_color("  ".join(pie), GRIS))
+
+
+def cmd_ask(byte: Byte, args: argparse.Namespace) -> int:
+    """Una pregunta al agente, esperando la respuesta completa."""
+    conversacion = args.conversation or byte.pedir("POST", "/conversations", json={})["id"]
+    datos = _preguntar(byte, conversacion, args.pregunta, args.safe)
+
+    if datos.get("status") == "paused":
+        _mostrar_pausa(datos)
         return 2
 
-    mensaje = datos["message"]
-    print(mensaje["content"])
-    fuentes = mensaje["metadata"].get("sources") or []
-    if fuentes and sys.stdout.isatty():
-        nombres = {f.get("filename") or f.get("url", "") for f in fuentes}
-        print(_color("\nFuentes: " + " · ".join(sorted(n for n in nombres if n)), GRIS))
+    _mostrar_respuesta(datos)
     if args.conversation is None and sys.stdout.isatty():
-        print(_color(f"\nConversación: {conversacion}", GRIS))
+        print(_color(f"\nConversation: {conversacion}", GRIS))
     return 0
 
 
@@ -237,8 +839,8 @@ def cmd_resume(byte: Byte, args: argparse.Namespace) -> int:
         f"/runs/{args.run_id}/resume",
         json={"resume_token": args.token, "approve": args.aprobar},
     )
-    print(_color("✓ " + ("aprobado" if args.aprobar else "rechazado"), VERDE))
-    print(_color("El run sigue: mirá la conversación con `byte ask -c <id>`", GRIS))
+    print(_color("✓ " + ("approved" if args.aprobar else "rejected"), VERDE))
+    print(_color("The run continues — see it with `byte ask -c <id>`", GRIS))
     return 0
 
 
@@ -246,7 +848,7 @@ def cmd_search(byte: Byte, args: argparse.Namespace) -> int:
     """Búsqueda híbrida en los documentos, sin pasar por el agente."""
     datos = byte.pedir("POST", "/search", json={"query": args.consulta, "top_k": args.top_k})
     if not datos["results"]:
-        print(_color("Sin resultados en tus documentos.", GRIS))
+        print(_color("Nothing in your documents matched that.", GRIS))
         return 0
     for i, r in enumerate(datos["results"], start=1):
         print(f"{_color(f'[{i}] {r["filename"]}', AMBAR)}  {_color(f'{r["score"]:.3f}', GRIS)}")
@@ -258,7 +860,7 @@ def cmd_run(byte: Byte, args: argparse.Namespace) -> int:
     """Ejecuta un archivo de Python en el sandbox, sin pasar por el modelo."""
     ruta = Path(args.archivo)
     if not ruta.is_file():
-        return _error(f"no existe {ruta}")
+        return _error(f"{ruta} does not exist")
     datos = byte.pedir(
         "POST",
         "/execute",
@@ -269,7 +871,7 @@ def cmd_run(byte: Byte, args: argparse.Namespace) -> int:
     if datos["stderr"]:
         print(_color(datos["stderr"], ROJO), end="", file=sys.stderr)
     if datos["truncated"]:
-        print(_color("[salida recortada]", GRIS), file=sys.stderr)
+        print(_color("[output trimmed]", GRIS), file=sys.stderr)
     # El exit_code del sandbox se propaga: así `byte run` encadena en un script.
     return int(datos["exit_code"])
 
@@ -277,18 +879,18 @@ def cmd_run(byte: Byte, args: argparse.Namespace) -> int:
 def cmd_docs_add(byte: Byte, args: argparse.Namespace) -> int:
     ruta = Path(args.archivo)
     if not ruta.is_file():
-        return _error(f"no existe {ruta}")
+        return _error(f"{ruta} does not exist")
     with ruta.open("rb") as archivo:
         datos = byte.pedir("POST", "/documents", files={"file": (ruta.name, archivo)})
-    print(_color(f"✓ {datos['filename']} subido", VERDE))
-    print(_color("  indexando… seguilo con `byte docs list`", GRIS))
+    print(_color(f"✓ {datos['filename']} uploaded", VERDE))
+    print(_color("  indexing… follow it with `byte docs list`", GRIS))
     return 0
 
 
 def cmd_docs_list(byte: Byte, _args: argparse.Namespace) -> int:
     datos = byte.pedir("GET", "/documents")
     if not datos["items"]:
-        print(_color("Todavía no subiste documentos.", GRIS))
+        print(_color("No documents yet.", GRIS))
         return 0
     colores = {"indexed": VERDE, "processing": AMBAR, "error": ROJO}
     for doc in datos["items"]:
@@ -302,16 +904,14 @@ def cmd_docs_list(byte: Byte, _args: argparse.Namespace) -> int:
 
 def cmd_docs_rm(byte: Byte, args: argparse.Namespace) -> int:
     byte.pedir("DELETE", f"/documents/{args.id}")
-    print(_color("✓ eliminado", VERDE))
+    print(_color("✓ removed", VERDE))
     return 0
 
 
 def cmd_status(byte: Byte, _args: argparse.Namespace) -> int:
     salud = byte.pedir("GET", "/health/details")
     ok = salud["status"] == "ok"
-    print(
-        _color("● " + ("en línea, corriendo local" if ok else "degradado"), VERDE if ok else AMBAR)
-    )
+    print(_color("● " + ("online, running local" if ok else "degraded"), VERDE if ok else AMBAR))
     for clave in ("model", "ollama", "db", "sandbox"):
         print(f"  {clave:<9} {salud[clave]}")
     herramientas = byte.pedir("GET", "/tools")["tools"]
@@ -324,6 +924,11 @@ def cmd_conversations(byte: Byte, args: argparse.Namespace) -> int:
     for conv in datos["items"]:
         print(f"{_color(conv['id'], GRIS)}  {conv['title']}")
     return 0
+
+
+def cmd_chat(byte: Byte, args: argparse.Namespace) -> int:
+    url, _ = _config()
+    return _chat(byte, url, args.safe, args.conversation)
 
 
 # --- Parseo ---
@@ -343,6 +948,13 @@ def construir_parser() -> argparse.ArgumentParser:
         "--safe", action="store_true", help="pedir confirmación antes de ejecutar código"
     )
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("chat", help="abrir el chat interactivo (lo mismo que `byte` a secas)")
+    p.add_argument("-c", "--conversation", help="seguir una conversación existente")
+    p.add_argument(
+        "--safe", action="store_true", help="pedir confirmación antes de ejecutar código"
+    )
+    p.set_defaults(func=cmd_chat)
 
     p = sub.add_parser("approve", help="aprobar una ejecución pendiente")
     p.add_argument("run_id")
@@ -389,17 +1001,22 @@ def main(argv: list[str] | None = None) -> int:
     args = construir_parser().parse_args(argv)
     url, clave = _config()
     if not clave:
-        return _error("falta BYTE_API_KEY (o un .env con ella)")
+        return _error("missing BYTE_API_KEY (or a .env holding it)")
 
     try:
         with Byte(url, clave) as byte:
             if args.comando is None:
+                # Con terminal, `byte` abre el chat y se queda ahí. Sin ella
+                # (un pipe, un script) solo se presenta: un REPL leyendo de
+                # stdin redirigido no es lo que nadie espera.
+                if _interactiva():
+                    return _chat(byte, url, safe=False, conversacion=None)
                 return _bienvenida(byte, url)
             return int(args.func(byte, args))
     except httpx.ConnectError:
-        return _error(f"no responde {url} — ¿está levantada la API?")
+        return _error(f"{url} is not answering — is the API up?")
     except httpx.TimeoutException:
-        return _error("la API tardó demasiado")
+        return _error("the API took too long")
     except RuntimeError as exc:
         return _error(str(exc))
     except KeyboardInterrupt:

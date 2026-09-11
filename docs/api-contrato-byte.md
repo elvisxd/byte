@@ -125,6 +125,7 @@ Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries
 ## Mapeo con el CLI en Go (cliente generado con `oapi-codegen`)
 | Comando | Endpoints |
 |---|---|
+| `byte` / `byte chat` | `POST /conversations` una vez y, por turno, `POST …/messages` + `GET /runs/{id}/events` (SSE). El CLI en Python no pinta los tokens: acumula el texto y lo muestra por párrafos al cerrar el run, y usa `TOOL_CALL_*` para dejar una línea por herramienta (`✓ Searching the web  …  · 3 results`) |
 | `byte ask "..."` | `POST /conversations/{id}/messages` → `GET /runs/{id}/events` (SSE) |
 | `byte search "..."` | igual que `ask`, o `POST /search` para buscar solo en documentos |
 | `byte run script.py` | `POST /execute` |
