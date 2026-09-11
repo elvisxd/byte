@@ -117,3 +117,71 @@ async def test_pdf_sin_texto_avisa_que_puede_ser_escaneo() -> None:
 
     with pytest.raises(ParseError, match="escaneo"):
         await parse(buffer.getvalue(), "escaneo.pdf", 5.0)
+
+
+# --- Compactación del historial ---
+
+
+class LlmQueResume:
+    """Doble del modelo: devuelve lo que se le diga, y anota qué le pidieron."""
+
+    def __init__(self, *respuestas: str) -> None:
+        self._respuestas = list(respuestas)
+        self.pedidos: list[str] = []
+
+    async def ainvoke(self, messages: list[object]) -> object:
+        from langchain_core.messages import AIMessage
+
+        self.pedidos.append(str(messages[-1].content))  # type: ignore[attr-defined]
+        return AIMessage(content=self._respuestas.pop(0) if self._respuestas else "resumen")
+
+
+def _conversacion() -> list[object]:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    return [HumanMessage(content="Elegí Postgres con pgvector"), AIMessage(content="Buena idea")]
+
+
+async def test_el_resumen_previo_no_se_pierde() -> None:
+    """El modelo resume solo lo nuevo y se concatena: pidiéndole que integre los
+    dos, un 8B se queda con lo reciente y descarta lo viejo."""
+    from agent.compact import resumir
+
+    llm = LlmQueResume("Eligió pgvector")
+    resultado = await resumir(llm, _conversacion(), previo="Se llama Elvis")
+
+    assert resultado is not None
+    assert "Se llama Elvis" in resultado
+    assert "Eligió pgvector" in resultado
+    # Al modelo no se le pasa el resumen previo: no puede tirarlo.
+    assert "Se llama Elvis" not in llm.pedidos[0]
+
+
+async def test_sin_resumen_nuevo_se_conserva_el_previo() -> None:
+    """Si el modelo falla, perder el resumen que ya había sería peor."""
+    from agent.compact import resumir
+
+    class LlmCaido:
+        async def ainvoke(self, messages: list[object]) -> object:
+            raise RuntimeError("ollama no responde")
+
+    assert await resumir(LlmCaido(), _conversacion(), previo="lo de antes") == "lo de antes"
+
+
+async def test_sin_mensajes_no_se_llama_al_modelo() -> None:
+    from agent.compact import resumir
+
+    llm = LlmQueResume()
+    assert await resumir(llm, [], previo="lo de antes") == "lo de antes"
+    assert llm.pedidos == []
+
+
+async def test_el_resumen_se_recomprime_cuando_no_entra() -> None:
+    """Recién cuando el acumulado pasa el tope se vuelve a resumir todo junto."""
+    from agent.compact import MAX_SUMMARY_CHARS, resumir
+
+    llm = LlmQueResume("x" * 500, "condensado")
+    resultado = await resumir(llm, _conversacion(), previo="y" * MAX_SUMMARY_CHARS)
+
+    assert resultado == "condensado"
+    assert len(llm.pedidos) == 2  # el resumen nuevo, y después la recompresión

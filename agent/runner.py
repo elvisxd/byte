@@ -410,6 +410,8 @@ class RunManager:
                 "thread_id": run.conversation_id,
                 "emitter": run,
                 "safe_mode": run.safe_mode,
+                # Para que compact pueda leer el resumen previo y guardar el nuevo.
+                "repository": self._repo,
             },
             "recursion_limit": self._max_iterations * 2 + 10,
         }

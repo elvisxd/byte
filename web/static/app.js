@@ -36,6 +36,7 @@ let destinoActual = null;
 
 const PASOS = {
   retrieve_context: "Preparando contexto...",
+  compact: "Resumiendo lo anterior...",
   agent: "Pensando...",
   tools: "Usando herramientas...",
   finalize: "Cerrando...",

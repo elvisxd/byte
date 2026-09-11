@@ -19,8 +19,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from pydantic import ValidationError
 
+from agent.compact import resumir
 from agent.events import AGUI
-from agent.prompts import iteration_limit_notice
+from agent.prompts import compact_notice, iteration_limit_notice
 from agent.state import ByteState
 from api.logging import get_logger
 from tools.base import ToolRegistry, wrap_untrusted
@@ -71,6 +72,20 @@ def _emitter(config: RunnableConfig) -> Emitter:
     return (config.get("configurable") or {}).get("emitter") or NullEmitter()
 
 
+def _es_uuid(value: str | None) -> bool:
+    """Si el id sirve para una columna uuid de Postgres.
+
+    Los mensajes del grafo llevan ids de LangChain ("msg_..."), que no lo son.
+    """
+    if not value:
+        return False
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
 def _approx_token_count(messages: list[AnyMessage]) -> int:
     total = 0
     for message in messages:
@@ -100,8 +115,8 @@ def build_graph(
     async def retrieve_context(state: ByteState, config: RunnableConfig) -> dict[str, Any]:
         """Recorta el historial para que entre en el contexto.
 
-        En el MVP solo recorta. En la Fase 2 acá entran el RAG y el resumen
-        compactado de la conversación.
+        Lo que no entra no se tira: pasa por `compact`, que lo resume para que
+        el agente no pierda el hilo de las conversaciones largas.
         """
         emitter = _emitter(config)
         emitter.emit(AGUI.STEP_STARTED, {"stepName": "retrieve_context"})
@@ -121,13 +136,89 @@ def build_graph(
         )
         if len(trimmed) == len(messages):
             return {}
+
         # add_messages reemplaza por id: se marcan para borrar los que sobran.
         keep_ids = {id(m) for m in trimmed}
         removed = [m for m in messages if id(m) not in keep_ids]
         logger.info("historial_recortado", descartados=len(removed), quedaron=len(trimmed))
         from langchain_core.messages import RemoveMessage
 
+        # El resumen NO se agrega al historial: se guarda en la conversación y
+        # agent_node lo inyecta en cada turno. Como mensaje volvería a entrar en
+        # el recorte, y cada compactación resumiría el resumen anterior hasta
+        # dejarlo en nada (medido: 973 caracteres útiles degradados a 118).
+        await _compactar(removed, config, emitter)
         return {"messages": [RemoveMessage(id=m.id) for m in removed if m.id]}
+
+    async def _compactar(
+        removed: list[AnyMessage], config: RunnableConfig, emitter: Emitter
+    ) -> str | None:
+        """Resume los mensajes que se van y persiste el resumen si se puede."""
+        configurable = config.get("configurable") or {}
+        repository = configurable.get("repository")
+        conversation_id = configurable.get("thread_id")
+
+        previo = None
+        if repository is not None and conversation_id:
+            conversacion = await repository.get_conversation(conversation_id)
+            previo = conversacion.summary if conversacion else None
+
+        emitter.emit(AGUI.STEP_STARTED, {"stepName": "compact"})
+        # Resume el modelo del agente, sin bind_tools: acá no tiene que llamar a
+        # ninguna herramienta, solo escribir texto.
+        resumen = await resumir(llm, removed, previo)
+        emitter.emit(AGUI.STEP_FINISHED, {"stepName": "compact", "ok": resumen is not None})
+        if resumen is None:
+            return None
+
+        if repository is not None and conversation_id:
+            # Los mensajes del grafo tienen ids propios de LangChain ("msg_..."),
+            # que no son los uuid de MESSAGES: guardar uno ahí rompe la columna.
+            # Se usa solo si resulta ser un uuid; el resumen vale igual sin
+            # marcador, que solo sirve para el "compactada hasta acá" de la UI.
+            ultimo = next((m.id for m in reversed(removed) if _es_uuid(m.id)), None)
+            try:
+                await repository.set_summary(conversation_id, resumen, ultimo)
+            except Exception as exc:  # noqa: BLE001 - el resumen igual se usa en este run
+                logger.warning(
+                    "summary_no_persistido",
+                    conversation_id=conversation_id,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
+
+        logger.info("historial_compactado", resumidos=len(removed), chars=len(resumen))
+        return resumen
+
+    async def _con_resumen(messages: list[AnyMessage], config: RunnableConfig) -> list[AnyMessage]:
+        """Antepone el resumen de lo compactado, si la conversación tiene uno.
+
+        Se lee de la conversación en cada turno en vez de vivir en el historial:
+        así no lo alcanza el recorte y no se degrada al re-resumirse.
+        """
+        configurable = config.get("configurable") or {}
+        repository = configurable.get("repository")
+        conversation_id = configurable.get("thread_id")
+        if repository is None or not conversation_id:
+            return messages
+
+        try:
+            conversacion = await repository.get_conversation(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - sin resumen se sigue igual
+            logger.warning("resumen_no_leido", error_type=type(exc).__name__)
+            return messages
+
+        resumen = getattr(conversacion, "summary", None) if conversacion else None
+        if not resumen:
+            return messages
+
+        from langchain_core.messages import SystemMessage
+
+        # Después del system prompt y antes del historial: es contexto de fondo,
+        # no algo que alguien dijo en la conversación.
+        corte = 1 if messages and isinstance(messages[0], SystemMessage) else 0
+        aviso = SystemMessage(content=compact_notice(resumen))
+        return [*messages[:corte], aviso, *messages[corte:]]
 
     async def agent_node(state: ByteState, config: RunnableConfig) -> dict[str, Any]:
         """Llama al modelo en streaming y emite el texto token a token."""
@@ -137,7 +228,7 @@ def build_graph(
 
         accumulated: Any = None
         text_open = False
-        async for chunk in model.astream(state["messages"]):
+        async for chunk in model.astream(await _con_resumen(state["messages"], config)):
             accumulated = chunk if accumulated is None else accumulated + chunk
             delta = chunk.content if isinstance(chunk.content, str) else ""
             if not delta:
