@@ -51,7 +51,12 @@ body {
 .app {
   display: grid;
   grid-template-columns: 17rem 1fr;
-  min-height: 100vh;
+  /* Altura fija, no min-height: con min-height el grid crece con el historial
+     y la barra de escritura termina fuera de la pantalla. Cada columna
+     scrollea por dentro. */
+  height: 100vh;
+  height: 100dvh; /* en móvil descuenta la barra del navegador */
+  overflow: hidden;
 }
 
 .sidebar {
@@ -61,6 +66,15 @@ body {
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
+  min-height: 0; /* sin esto el flex no deja encoger y el scroll no aparece */
+  overflow: hidden;
+}
+
+/* Solo la lista de conversaciones scrollea: la marca, el botón y la
+   navegación quedan siempre a la vista. */
+#historial {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -202,6 +216,7 @@ body {
 
 .chat {
   flex: 1;
+  min-height: 0; /* deja que el área de mensajes scrollee en vez de estirar */
   overflow-y: auto;
   padding: 1.5rem;
 }
@@ -530,6 +545,16 @@ button:disabled {
   width: 4rem;
   height: 4rem;
   margin: 0 auto;
+}
+.subtitulo {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+  color: var(--texto-suave);
+}
+.ingreso h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
 }
 .ingreso input {
   padding: 0.6rem 0.8rem;

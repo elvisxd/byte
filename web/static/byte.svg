@@ -1,7 +1,9 @@
 <!-- Mascota Byte: perrito geométrico flat (docs/prompts-canva-byte.md).
      Va en SVG y no en PNG: escala sin perder nitidez, pesa menos que un ícono
      bitmap y no necesita variantes por densidad de pantalla. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Byte">
+<!-- El viewBox se ajusta al dibujo (sin márgenes muertos): así la mascota ocupa
+     todo el alto que le dé el CSS en vez de flotar chica en el medio. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 8 48 54" role="img" aria-label="Byte">
   <!-- Orejas -->
   <path d="M10 16 L22 10 L22 30 Z" fill="#2E3A57" />
   <path d="M54 16 L42 10 L42 30 Z" fill="#2E3A57" />

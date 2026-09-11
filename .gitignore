@@ -29,3 +29,5 @@ data/
 .vscode/
 .idea/
 .DS_Store
+scripts/node_modules/
+capturas/
