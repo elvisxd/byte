@@ -84,6 +84,8 @@ Tablas: USERS, CONVERSATIONS, MESSAGES, DOCUMENTS, DOCUMENT_CHUNKS.
 - Sin tabla propia de tool calls: esa data la traza Langfuse; `MESSAGES.langfuse_trace_id` linkea con la traza completa
 - El checkpointer de LangGraph (`PostgresSaver`) crea sus propias tablas de estado del grafo en el mismo Postgres. `MESSAGES` sigue siendo la fuente de verdad para la UI; las tablas del checkpointer son estado interno del agente
 - Índice HNSW sobre `embedding`; búsqueda híbrida vector + tsvector
+- **Verificado contra Postgres 16 real** (repositorio, migración y checkpointer),
+  no solo contra la implementación en memoria: los tests corren contra las dos
 
 ## Estrategia de RAM y costos
 Railway cobra por uso (~$10/GB RAM al mes, prorrateado por segundo). 18-20GB de RAM 24/7 = ~$180-200/mes solo en RAM. Por eso:
