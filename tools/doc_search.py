@@ -21,7 +21,9 @@ MAX_SNIPPET_CHARS = 500
 
 class DocSearchArgs(BaseModel):
     query: str = Field(description="Qué buscar en los documentos, en lenguaje natural")
-    top_k: int = Field(default=5, ge=1, le=10, description="Cuántos fragmentos traer")
+    # Sin default: si el modelo no lo manda, vale el de la configuración
+    # (BYTE_RAG_TOP_K). Con un default acá, ese ajuste no haría nada.
+    top_k: int | None = Field(default=None, ge=1, le=10, description="Cuántos fragmentos traer")
 
 
 def build_doc_search_tool(

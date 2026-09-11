@@ -67,8 +67,13 @@ def wrap_untrusted(label: str, body: str, max_chars: int) -> str:
     """Envuelve contenido externo en delimitadores claros y lo acota.
 
     El modelo tiene instrucción explícita de tratar esto como datos.
+
+    El cuerpo no puede contener los delimitadores: un nombre de archivo o un
+    fragmento con "<<<FIN ...>>>" adentro cerraría el bloque antes de tiempo, y
+    lo que viniera después quedaría, a ojos del modelo, fuera de la zona no
+    confiable. Se neutralizan los "<<<" del contenido.
     """
-    truncated = body[:max_chars]
+    truncated = body[:max_chars].replace("<<<", "< <<")
     if len(body) > max_chars:
         truncated += f"\n[...recortado, {len(body) - max_chars} caracteres omitidos]"
     return (
