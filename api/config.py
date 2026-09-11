@@ -1,10 +1,10 @@
 """Configuración de Byte. Todo se lee del entorno (o de .env en desarrollo)."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from models.schemas import HARD_MAX_MESSAGE_CHARS
 
@@ -61,7 +61,11 @@ class Settings(BaseSettings):
     rate_limit_runs: str = Field(default="10/minute", alias="BYTE_RATE_LIMIT_RUNS")
 
     # --- Web ---
-    cors_origins: list[str] = Field(default_factory=list, alias="BYTE_CORS_ORIGINS")
+    # NoDecode: sin esto pydantic-settings intenta leer el valor como JSON antes
+    # de que corra _split_origins, y una lista separada por comas (o vacía) falla.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="BYTE_CORS_ORIGINS"
+    )
     # Los events_token duran 60 s y son de un solo uso (contrato de la API).
     events_token_ttl_s: int = Field(default=60, alias="BYTE_EVENTS_TOKEN_TTL_S")
     session_ttl_s: int = Field(default=86400, alias="BYTE_SESSION_TTL_S")
