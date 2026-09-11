@@ -281,6 +281,11 @@ class PostgresRepository:
         if self._pool is not None:
             await self._pool.close()
 
+    @property
+    def pool(self) -> Any:
+        """El pool ya abierto, para que el store del RAG no abra otro propio."""
+        return self._pool
+
     async def ping(self) -> bool:
         try:
             async with self._pool.connection() as conn:

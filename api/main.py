@@ -39,6 +39,16 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 MAX_REQUEST_BYTES = 64 * 1024
 
 
+def _build_doc_store(repo: Repository) -> Any:
+    """El store del RAG, solo si el repositorio es Postgres con su pool abierto."""
+    pool = getattr(repo, "pool", None)
+    if pool is None:
+        return None
+    from rag.store import DocumentStore
+
+    return DocumentStore(pool)
+
+
 async def _build_checkpointer(settings: Settings, stack: AsyncExitStack) -> Any:
     """Checkpointer de LangGraph: Postgres cuando hay DSN, memoria en dev.
 
@@ -89,9 +99,13 @@ def create_app(
         )
         await repo.startup()
 
+        # El RAG reusa el pool del repositorio: sin Postgres no hay store, y
+        # tanto la búsqueda en documentos como /documents quedan fuera.
+        doc_store = _build_doc_store(repo)
+
         async with AsyncExitStack() as stack:
             checkpointer = await _build_checkpointer(resolved_settings, stack)
-            tool_registry = registry or build_registry(resolved_settings)
+            tool_registry = registry or build_registry(resolved_settings, doc_store)
             graph = build_graph(
                 llm or build_llm(resolved_settings),
                 tool_registry,
