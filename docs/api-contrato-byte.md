@@ -31,7 +31,7 @@ Prefijo: `/api/v1`. Respuestas en JSON salvo el streaming (SSE). FastAPI genera 
 **GET `/conversations/{id}?limit=50&before=<message_id>&include_tool_messages=false`** → `{ ...Conversation, "summary", "summary_up_to_message_id", "messages": [ Message ], "has_more" }`. La UI usa `summary_up_to_message_id` para mostrar el marcador "conversación compactada hasta acá".
 **PATCH `/conversations/{id}`** `{ "title" }` → `200`
 **POST `/conversations/{id}/compact`** → `202 { "run_id" }`. Fuerza la compactación: el modelo resume los mensajes viejos y los guarda en `summary`. Normalmente se dispara solo cuando el historial supera ~60% del contexto del modelo. Los mensajes originales no se borran.
-**DELETE `/conversations/{id}`** → `204`. Borra mensajes **y el hilo del checkpointer de LangGraph** (`thread_id = id`).
+**DELETE `/conversations/{id}`** → `204`. Cancela los runs en vuelo de la conversación y borra mensajes **y el hilo del checkpointer de LangGraph** (`thread_id = id`).
 
 ---
 
@@ -42,6 +42,7 @@ Un *run* es una ejecución del agente. Se crea con un mensaje y se observa por S
 Body: `{ "content": "Buscá la última versión de FastAPI y armá el endpoint base", "safe_mode": false }`
 → `202 { "run_id", "message_id", "events_url": "/api/v1/runs/{run_id}/events", "events_token": "<firmado, 60 s, un solo uso>" }`
 Con `?wait=true` espera y devuelve `{ "message": Message, "sources": [...] }` en un solo JSON (tests y scripts).
+**`409 conversation_busy`** si la conversación ya tiene un run en curso: dos runs a la vez comparten el hilo del checkpointer (`thread_id = conversation_id`), se pisan el estado y cada uno responde sin ver la pregunta del otro. El tope de runs concurrentes por credencial sigue aplicando entre conversaciones distintas.
 
 **GET `/runs/{run_id}/events`** — `text/event-stream`. Headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`, sin gzip. Cada evento lleva `id:` para que el cliente reconecte con `Last-Event-ID` y retome donde quedó.
 
@@ -65,6 +66,8 @@ Eventos: **protocolo AG-UI** (en vez de nombres propios). Los que usa Byte:
 **GET `/runs/{run_id}`** → `{ "status": "running" | "paused" | "finished" | "cancelled" | "error", "iterations", "started_at", "finished_at" }`
 
 **GET `/messages/{id}`** → `Message`
+
+> **Dos ids distintos, a propósito.** El `messageId` de los eventos `TEXT_MESSAGE_*` es el id del mensaje *dentro del run* (así funciona AG-UI: el cliente lo usa para ir armando la burbuja mientras llega el texto). El `message_id` de `RUN_FINISHED` es el id del registro ya guardado en `MESSAGES`, que es el que sirve para `GET /messages/{id}`.
 
 ### Esquema `Message`
 ```json
@@ -121,6 +124,17 @@ Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries
 
 ## Seguridad
 Ver `seguridad-byte.md`. Resumen aplicado a la API: servicios internos (Ollama, Postgres, sandbox) sin dominio público; cookie httpOnly para la web; resultados de herramientas delimitados y acotados en el prompt; argumentos de herramientas validados con Pydantic; Markdown sanitizado; cabeceras CSP/HSTS; CORS restringido; todo filtrado por `user_id` en multi-usuario.
+
+## Estado de implementación (Fase 0)
+Implementado: salud, conversaciones (CRUD + cursor), mensajes y runs (crear, SSE,
+cancelar, consultar), `GET /messages/{id}`, `GET /tools`, y `POST /session` +
+`DELETE /session` para la cookie de la web (agregados acá, no estaban en la v2).
+El spec de `/docs` ya declara los modelos de respuesta y el envoltorio de error,
+así que sirve para generar el cliente del CLI con `oapi-codegen`.
+
+Pendiente, con su fase: `/compact` (Fase 2, con el RAG), `/resume` y el modo
+seguro (Fase 1, con el sandbox), `Idempotency-Key` (Fase 4), documentos y
+`/search` (Fase 2), `/execute` (Fase 1), compatibilidad OpenAI (Fase 3).
 
 ## Decisiones
 - Runs como recurso propio: separa crear (POST) de observar (GET SSE), habilita cancelar, reconectar y consultar estado

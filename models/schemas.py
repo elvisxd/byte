@@ -98,6 +98,18 @@ class SessionRequest(BaseModel):
     api_key: str = Field(min_length=1, max_length=512)
 
 
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    request_id: str | None = None
+
+
+class ErrorEnvelope(BaseModel):
+    """Formato de error del contrato. Lo devuelven todos los handlers."""
+
+    error: ErrorDetail
+
+
 class ToolInfo(BaseModel):
     name: str
     source: str

@@ -191,17 +191,20 @@ def test_timeout_del_run(crear_cliente: Callable[..., TestClient]) -> None:
 
 
 def test_tope_de_runs_concurrentes(crear_cliente: Callable[..., TestClient]) -> None:
+    """El tope es por credencial: se prueba con dos conversaciones distintas,
+    porque dentro de una sola el segundo run corta antes con 409."""
     cliente = crear_cliente(llm=SlowLLM(delay_s=30), BYTE_MAX_CONCURRENT_RUNS=1)
-    conversacion = nueva_conversacion(cliente)
-    crear_run(cliente, conversacion)
-    segundo = cliente.post(
-        f"/api/v1/conversations/{conversacion}/messages",
+    primera = nueva_conversacion(cliente)
+    segunda = nueva_conversacion(cliente)
+    crear_run(cliente, primera)
+    otro = cliente.post(
+        f"/api/v1/conversations/{segunda}/messages",
         json={"content": "otra"},
         headers=AUTH,
     )
-    assert segundo.status_code == 429
-    assert segundo.json()["error"]["code"] == "too_many_runs"
-    assert segundo.headers["retry-after"] == "5"
+    assert otro.status_code == 429
+    assert otro.json()["error"]["code"] == "too_many_runs"
+    assert otro.headers["retry-after"] == "5"
 
 
 def test_mensaje_demasiado_largo(crear_cliente: Callable[..., TestClient]) -> None:

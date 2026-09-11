@@ -77,8 +77,11 @@ async def patch_conversation(
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-    conversation_id: str, ctx: Context, _credential: CredentialId
+    conversation_id: str, ctx: Context, credential: CredentialId
 ) -> Response:
+    # Primero se cortan los runs en vuelo: si no, el agente seguiría generando
+    # contra un hilo que está por desaparecer.
+    await ctx.runs.cancel_conversation(conversation_id, credential)
     deleted = await ctx.repository.delete_conversation(conversation_id)
     if not deleted:
         raise ByteError("not_found", "La conversación no existe", status_code=404)
@@ -92,7 +95,13 @@ async def delete_conversation(
 @router.post(
     "/conversations/{conversation_id}/messages",
     status_code=status.HTTP_202_ACCEPTED,
+    # La respuesta cambia según ?wait: se declaran las dos para que el spec
+    # OpenAPI sirva para generar clientes tipados (el CLI en Go, Fase 6).
     response_model=None,
+    responses={
+        202: {"model": RunAccepted, "description": "Run creado: seguirlo por SSE"},
+        200: {"model": MessageResult, "description": "Con ?wait=true: mensaje final"},
+    },
 )
 @limiter.limit(runs_limit)
 async def create_message(
