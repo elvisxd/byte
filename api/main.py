@@ -25,7 +25,7 @@ from api.config import Settings, get_settings
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
-from api.routes import conversations, execute, health, runs, session, tools
+from api.routes import conversations, documents, execute, health, runs, session, tools
 from api.security import Credentials, TokenService, resolve_secret_key, security_headers
 from db.repository import Repository, build_repository
 from models.schemas import ErrorEnvelope
@@ -37,6 +37,20 @@ logger = get_logger("api")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 # Tope de cuerpo para las rutas del MVP. Los uploads del RAG (Fase 2) tendrán el suyo.
 MAX_REQUEST_BYTES = 64 * 1024
+
+
+def _build_rag(settings: Settings, repo: Repository) -> Any:
+    """El servicio de RAG, solo si el repositorio es Postgres con su pool abierto.
+
+    Sin Postgres no hay pgvector: el agente arranca sin doc_search y las rutas
+    de documentos responden 503.
+    """
+    pool = getattr(repo, "pool", None)
+    if pool is None:
+        return None
+    from rag.service import build_rag_service
+
+    return build_rag_service(settings, pool)
 
 
 async def _build_checkpointer(settings: Settings, stack: AsyncExitStack) -> Any:
@@ -89,9 +103,15 @@ def create_app(
         )
         await repo.startup()
 
+        # El RAG reusa el pool del repositorio: sin Postgres no hay store, y
+        # tanto la búsqueda en documentos como /documents quedan fuera.
+        rag = _build_rag(resolved_settings, repo)
+
         async with AsyncExitStack() as stack:
             checkpointer = await _build_checkpointer(resolved_settings, stack)
-            tool_registry = registry or build_registry(resolved_settings)
+            tool_registry = registry or build_registry(
+                resolved_settings, rag.store if rag else None
+            )
             graph = build_graph(
                 llm or build_llm(resolved_settings),
                 tool_registry,
@@ -123,6 +143,7 @@ def create_app(
                 runs=run_manager,
                 registry=tool_registry,
                 checkpointer=checkpointer,
+                rag=rag,
             )
             logger.info(
                 "byte_arriba",
@@ -154,8 +175,15 @@ def create_app(
         request_id = new_request_id()
         set_request_id(request_id)
 
+        # Los uploads del RAG tienen su propio tope (max_document_bytes, 20 MB):
+        # el de 64 KB es para los JSON del resto de la API.
+        tope = (
+            resolved_settings.max_document_bytes
+            if request.url.path.endswith("/documents")
+            else MAX_REQUEST_BYTES
+        )
         content_length = request.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BYTES:
+        if content_length and content_length.isdigit() and int(content_length) > tope:
             return error_response(413, "payload_too_large", "El cuerpo es demasiado grande")
 
         started = time.perf_counter()
@@ -222,6 +250,7 @@ def create_app(
         runs.router,
         tools.router,
         execute.router,
+        documents.router,
     ):
         app.include_router(router, prefix="/api/v1", responses=errores_comunes)
 

@@ -122,6 +122,10 @@ class RunState(BaseModel):
 MAX_EXECUTE_CODE_CHARS = 50 * 1024
 MAX_EXECUTE_TIMEOUT_S = 30
 
+# Tope de la query de /search. Coincide con el que se le impone al modelo en
+# las herramientas de búsqueda (BYTE_MAX_SEARCH_QUERY_CHARS).
+MAX_SEARCH_QUERY_CHARS = 200
+
 
 class ExecuteRequest(BaseModel):
     """Ejecución directa de código, sin pasar por el agente (CLI y scripts)."""
@@ -165,6 +169,42 @@ class ToolInfo(BaseModel):
 
 class ToolList(BaseModel):
     tools: list[ToolInfo]
+
+
+class DocumentInfo(BaseModel):
+    """Un documento del RAG, como lo muestra la pantalla de carga."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: str
+    status: Literal["processing", "indexed", "error"]
+    size_bytes: int
+    mime_type: str
+    chunks: int
+    uploaded_at: datetime
+    error_message: str | None = None
+
+
+class DocumentList(BaseModel):
+    items: list[DocumentInfo]
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_CHARS)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class SearchHit(BaseModel):
+    chunk_id: str
+    document_id: str
+    filename: str
+    snippet: str
+    score: float
+
+
+class SearchResults(BaseModel):
+    results: list[SearchHit]
 
 
 class Health(BaseModel):
