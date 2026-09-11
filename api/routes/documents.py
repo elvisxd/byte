@@ -22,6 +22,7 @@ from models.schemas import (
     SearchResults,
 )
 from rag.embeddings import EmbeddingError
+from rag.store import SIN_USUARIO
 
 router = APIRouter(tags=["documentos"])
 logger = get_logger("api.documents")
@@ -50,7 +51,7 @@ def _rag(ctx: Context) -> Any:
     rag = getattr(ctx, "rag", None)
     if rag is None:
         raise ByteError(
-            "rag_no_configurado",
+            "rag_not_configured",
             "Los documentos necesitan Postgres con pgvector (DATABASE_URL)",
             status_code=503,
         )
@@ -69,7 +70,7 @@ async def subir_documento(
     data = await file.read()
 
     if not data:
-        raise ByteError("archivo_vacio", "El archivo está vacío", status_code=422)
+        raise ByteError("empty_file", "El archivo está vacío", status_code=422)
     # El middleware ya corta por content-length, pero eso es lo que el cliente
     # *dice* que manda: acá se mide lo que realmente llegó.
     if len(data) > ctx.settings.max_document_bytes:
@@ -85,7 +86,7 @@ async def subir_documento(
         filename=filename,
         size_bytes=len(data),
         mime_type=mime_type,
-        user_id=None,
+        user_id=SIN_USUARIO,
     )
 
     # La respuesta se arma con lo que ya se sabe, sin releer la base: entre el
@@ -110,14 +111,14 @@ async def subir_documento(
 @router.get("/documents", response_model=DocumentList)
 async def listar_documentos(ctx: Context, _credential: CredentialId) -> DocumentList:
     rag = _rag(ctx)
-    documentos = await rag.store.list_documents(None)
+    documentos = await rag.store.list_documents(SIN_USUARIO)
     return DocumentList(items=[DocumentInfo.model_validate(doc) for doc in documentos])
 
 
 @router.get("/documents/{document_id}", response_model=DocumentInfo)
 async def ver_documento(document_id: str, ctx: Context, _credential: CredentialId) -> DocumentInfo:
     rag = _rag(ctx)
-    documento = await rag.store.get(document_id, None)
+    documento = await rag.store.get(document_id, SIN_USUARIO)
     if documento is None:
         raise ByteError("not_found", "No existe ese documento", status_code=404)
     return DocumentInfo.model_validate(documento)
@@ -128,7 +129,7 @@ async def borrar_documento(document_id: str, ctx: Context, _credential: Credenti
     rag = _rag(ctx)
     # Los chunks se van con el documento por el ON DELETE CASCADE: el borrado es
     # real, no lógico (docs/seguridad-byte.md).
-    if not await rag.store.delete(document_id, None):
+    if not await rag.store.delete(document_id, SIN_USUARIO):
         raise ByteError("not_found", "No existe ese documento", status_code=404)
 
 
@@ -147,13 +148,13 @@ async def buscar(
     except EmbeddingError as exc:
         logger.warning("search_embedding_fallo", error_type=type(exc).__name__)
         raise ByteError(
-            "embeddings_no_disponibles",
+            "embeddings_unavailable",
             "El modelo de embeddings no responde",
             status_code=503,
         ) from exc
 
     hits = await rag.store.search(
-        query=payload.query, embedding=vector, user_id=None, top_k=payload.top_k
+        query=payload.query, embedding=vector, user_id=SIN_USUARIO, top_k=payload.top_k
     )
     return SearchResults(
         results=[

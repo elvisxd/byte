@@ -21,8 +21,23 @@ logger = get_logger("rag.store")
 # Peso de cada mitad en la búsqueda híbrida. El vector manda porque captura
 # sinónimos y parafraseo; el léxico rescata nombres propios, identificadores y
 # códigos de error, que el embedding difumina.
+#
+# Se aplican sobre posiciones (RRF), no sobre los scores crudos: ver `search`.
 PESO_VECTOR = 0.7
 PESO_LEXICO = 0.3
+# La constante de RRF: amortigua cuánto gana el primer puesto sobre el segundo.
+# 60 es el valor del paper original y el que usan Elasticsearch y pgvector en
+# sus ejemplos; más chico vuelve el primer puesto casi imbatible.
+RRF_K = 60
+
+# FASE 4 (multi-usuario con JWT): hoy no hay usuarios, así que todo se guarda y
+# se busca con user_id NULL. Las consultas ya filtran por la columna, pero
+# mientras el valor sea siempre el mismo el filtro nunca discrimina. Cuando
+# llegue el JWT hay que reemplazar los usos de esta constante por el usuario del
+# request — buscarla da los puntos exactos, que es para lo que existe.
+# Nota: db/repository.py (conversaciones y mensajes) todavía no tiene el
+# parámetro, así que esa mitad es una refactorización aparte.
+SIN_USUARIO: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,34 +200,68 @@ class DocumentStore:
     async def search(
         self, *, query: str, embedding: list[float], user_id: str | None, top_k: int
     ) -> list[ChunkHit]:
-        """Búsqueda híbrida: similitud de vector + coincidencia léxica.
+        """Búsqueda híbrida por fusión de rankings (RRF).
 
-        Las dos mitades se calculan sobre el mismo conjunto y se combinan con
-        pesos fijos. El score léxico usa websearch_to_tsquery, que tolera texto
-        libre del usuario sin romper con la sintaxis de tsquery.
+        Se combinan las **posiciones** de cada mitad, no sus scores. Sumarlos
+        directamente no funciona: el coseno está normalizado en [0,1] y en la
+        práctica cae entre 0.4 y 0.75, mientras que `ts_rank` no está acotado y
+        devuelve del orden de 0.004 a 0.1. Medido sobre los documentos de
+        prueba, el término léxico aportaba ~0.03 contra ~0.5 del vector: pesaba
+        un orden de magnitud menos que su peso nominal, y no rescataba los
+        nombres propios e identificadores que es justo para lo que está.
+
+        RRF (1/(k+posición)) es indiferente a la escala: solo le importa qué
+        salió primero en cada lista. `websearch_to_tsquery` tolera texto libre
+        del usuario sin romper con la sintaxis de tsquery.
+
+        Con el corpus de prueba (2 documentos, ~8 chunks) las dos fórmulas
+        devuelven lo mismo en 8 de 8 consultas: el vector ya domina cuando hay
+        tan poco donde elegir. La diferencia se paga con muchos documentos, que
+        es cuando el ranking léxico tiene contra quién competir. Si algún día
+        hay corpus real, vale la pena volver a medirlo antes de tocar los pesos.
         """
         async with self._pool.connection() as conn:
             cur = await conn.execute(
                 """
-                SELECT c.id, c.document_id, d.filename, c.content,
-                       %s * (1 - (c.embedding <=> %s::vector))
-                       + %s * COALESCE(
-                           ts_rank(c.content_search, websearch_to_tsquery('simple', %s)), 0
-                       ) AS score
-                FROM document_chunks c
-                JOIN documents d ON d.id = c.document_id
-                WHERE d.user_id IS NOT DISTINCT FROM %s
-                  AND d.status = 'indexed'
-                  AND c.embedding IS NOT NULL
+                WITH candidatos AS (
+                    SELECT c.id, c.document_id, c.content, d.filename,
+                           RANK() OVER (ORDER BY c.embedding <=> %s::vector) AS pos_vector,
+                           RANK() OVER (
+                               ORDER BY COALESCE(
+                                   ts_rank(c.content_search,
+                                           websearch_to_tsquery('simple', %s)), 0
+                               ) DESC
+                           ) AS pos_lexico,
+                           COALESCE(
+                               ts_rank(c.content_search,
+                                       websearch_to_tsquery('simple', %s)), 0
+                           ) AS lexico
+                    FROM document_chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE d.user_id IS NOT DISTINCT FROM %s
+                      AND d.status = 'indexed'
+                      AND c.embedding IS NOT NULL
+                )
+                SELECT id, document_id, filename, content,
+                       %s / (%s + pos_vector)
+                       -- El lado léxico solo suma si hubo coincidencia real: sin
+                       -- ella todos empatan en la misma posición y el ranking
+                       -- sería ruido con el mismo peso que una coincidencia.
+                       + CASE WHEN lexico > 0 THEN %s / (%s + pos_lexico) ELSE 0 END
+                       AS score
+                FROM candidatos
                 ORDER BY score DESC
                 LIMIT %s
                 """,
                 (
-                    PESO_VECTOR,
                     _vector_literal(embedding),
-                    PESO_LEXICO,
+                    query,
                     query,
                     user_id,
+                    PESO_VECTOR,
+                    RRF_K,
+                    PESO_LEXICO,
+                    RRF_K,
                     top_k,
                 ),
             )

@@ -86,7 +86,7 @@ def test_sin_historial_viejo_no_hay_nada_que_compactar(
 
     respuesta = cliente.post(f"/api/v1/conversations/{conversacion}/compact", headers=AUTH)
     assert respuesta.status_code == 422
-    assert respuesta.json()["error"]["code"] == "nada_para_compactar"
+    assert respuesta.json()["error"]["code"] == "nothing_to_compact"
 
 
 def test_compactar_dos_veces_no_repite_lo_ya_resumido(

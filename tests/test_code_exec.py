@@ -132,7 +132,7 @@ async def test_sandbox_status_sin_servicio() -> None:
 def test_execute_sin_sandbox_configurado(cliente: TestClient) -> None:
     respuesta = cliente.post("/api/v1/execute", json={"code": "print(1)"}, headers=AUTH)
     assert respuesta.status_code == 503
-    assert respuesta.json()["error"]["code"] == "sandbox_no_configurado"
+    assert respuesta.json()["error"]["code"] == "sandbox_not_configured"
 
 
 def test_execute_pide_credencial(cliente: TestClient) -> None:

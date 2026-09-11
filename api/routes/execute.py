@@ -25,7 +25,7 @@ async def execute(
     settings = ctx.settings
     if not settings.sandbox_url or not settings.sandbox_token:
         raise ByteError(
-            "sandbox_no_configurado",
+            "sandbox_not_configured",
             "La ejecución de código no está configurada (SANDBOX_URL y SANDBOX_TOKEN)",
             status_code=503,
         )

@@ -88,10 +88,15 @@ Eventos: **protocolo AG-UI** (en vez de nombres propios). Los que usa Byte:
 
 ## Documentos (RAG) — Fase 2
 **POST `/documents`** — `multipart/form-data` con `file` (PDF, TXT, MD; máx. 20 MB; tipo validado por contenido). → `202 { "id", "filename", "status": "processing", "size_bytes", "mime_type", "uploaded_at" }`
-**GET `/documents`** → `{ "items": [ { "id", "filename", "status": "processing" | "indexed" | "error", "progress", "chunks", "size_bytes", "uploaded_at" } ] }`
-**GET `/documents/{id}`** → detalle con `progress` y `error_message`
-**POST `/documents/{id}/reindex`** → `202`
+**GET `/documents`** → `{ "items": [ { "id", "filename", "status": "processing" | "indexed" | "error", "chunks", "size_bytes", "mime_type", "uploaded_at", "error_message" } ] }`
+**GET `/documents/{id}`** → el mismo objeto. `chunks` vale 0 mientras está en `processing` y `error_message` explica los `error`
 **DELETE `/documents/{id}`** → `204` (borra sus chunks)
+
+Sin `progress` numérico: la ingesta no reporta avance parcial, así que el estado
+es de tres valores y nada más. Tampoco hay `POST /documents/{id}/reindex`:
+reindexar exigiría guardar los bytes originales (hasta 20 MB por documento), y
+hoy solo se persiste el texto ya chunkeado. Un documento que quedó en `error`
+—incluido el que interrumpió un reinicio— se vuelve a subir.
 **POST `/search`** `{ "query", "top_k": 5 }` → `{ "results": [ { "chunk_id", "document_id", "filename", "snippet", "score" } ] }` — búsqueda híbrida directa
 
 ---

@@ -193,7 +193,7 @@ async def compact_conversation(
     """
     await _require_conversation(ctx, conversation_id)
     if ctx.llm is None:
-        raise ByteError("modelo_no_configurado", "No hay modelo para resumir", status_code=503)
+        raise ByteError("model_not_configured", "No hay modelo para resumir", status_code=503)
     # Cualquier run vivo, no solo los de esta credencial: dos escrituras
     # simultáneas del mismo summary se pisarían.
     if ctx.runs.busy(conversation_id):
@@ -206,7 +206,7 @@ async def compact_conversation(
     resumen, compactados = await ctx.runs.compactar(conversation_id, ctx.llm)
     if not compactados:
         raise ByteError(
-            "nada_para_compactar",
+            "nothing_to_compact",
             "La conversación no tiene historial viejo para compactar",
             status_code=422,
         )
