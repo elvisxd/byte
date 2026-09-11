@@ -1,0 +1,23 @@
+<!-- Mascota Byte: perrito geométrico flat (docs/prompts-canva-byte.md).
+     Va en SVG y no en PNG: escala sin perder nitidez, pesa menos que un ícono
+     bitmap y no necesita variantes por densidad de pantalla. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Byte">
+  <!-- Orejas -->
+  <path d="M10 16 L22 10 L22 30 Z" fill="#2E3A57" />
+  <path d="M54 16 L42 10 L42 30 Z" fill="#2E3A57" />
+  <!-- Cabeza -->
+  <rect x="14" y="14" width="36" height="32" rx="11" fill="#3B4A6B" />
+  <!-- Ojos, con el brillo que pide la identidad -->
+  <circle cx="25" cy="27" r="3.4" fill="#F4EDE4" />
+  <circle cx="39" cy="27" r="3.4" fill="#F4EDE4" />
+  <circle cx="26.1" cy="25.9" r="1.1" fill="#1A1F2E" />
+  <circle cx="40.1" cy="25.9" r="1.1" fill="#1A1F2E" />
+  <!-- Hocico -->
+  <rect x="24" y="33" width="16" height="11" rx="5.5" fill="#F4EDE4" />
+  <ellipse cx="32" cy="36.5" rx="2.6" ry="1.9" fill="#1A1F2E" />
+  <!-- Collar con la etiqueta ámbar -->
+  <rect x="16" y="47" width="32" height="5" rx="2.5" fill="#2E3A57" />
+  <circle cx="32" cy="55" r="6.5" fill="#F5A524" />
+  <text x="32" y="58.3" text-anchor="middle" font-family="ui-monospace, monospace"
+        font-size="7" font-weight="700" fill="#1A1F2E">&lt;/&gt;</text>
+</svg>

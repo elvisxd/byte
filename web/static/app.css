@@ -1,111 +1,563 @@
-/* Página mínima del MVP: sin diseño todavía. La identidad visual de Canva
-   llega en la Fase 5. */
+/* Identidad Byte (docs/prompts-canva-byte.md): flat, minimalista, mucho aire.
+   Sin degradados, brillos ni neón — la paleta y la estética salen de ahí. */
 :root {
-  color-scheme: light dark;
-  --borde: #8884;
+  --azul: #3b4a6b;
+  --azul-oscuro: #2e3a57;
+  --crema: #f4ede4;
+  --ambar: #f5a524;
+  --tinta: #1a1f2e;
+
+  --fondo: #ffffff;
+  --superficie: var(--crema);
+  --texto: var(--tinta);
+  --texto-suave: #5b6478;
+  --borde: #e3e8f0;
+  --verde: #1f9d55;
+
+  --radio: 0.75rem;
+  --radio-chico: 0.5rem;
+  /* Manrope/Inter si el sistema las tiene; si no, la sans del sistema. La CSP
+     no permite cargar fuentes de terceros, y tampoco hace falta. */
+  --fuente: "Manrope", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #151a26;
+    --superficie: #1e2534;
+    --texto: #eef1f6;
+    --texto-suave: #98a2b8;
+    --borde: #2b3345;
+    --crema: #232b3c;
+    --verde: #35c07a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
-  margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
-  max-width: 46rem;
-  font: 16px/1.55 system-ui, sans-serif;
-}
-header {
-  border-bottom: 1px solid var(--borde);
-  margin-bottom: 1rem;
-}
-h1 {
   margin: 0;
-  font-size: 1.4rem;
+  min-height: 100vh;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 15px/1.6 var(--fuente);
 }
-.estado,
-.pasos,
-.fuentes {
-  margin: 0.35rem 0;
-  font-size: 0.85rem;
-  opacity: 0.7;
+
+/* --- Estructura: sidebar + panel --- */
+
+.app {
+  display: grid;
+  grid-template-columns: 17rem 1fr;
+  min-height: 100vh;
 }
-#login {
+
+.sidebar {
+  background: var(--superficie);
+  border-right: 1px solid var(--borde);
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* sin esto, un bloque de código ancho estira todo el grid */
+}
+
+/* En pantallas chicas la sidebar pasa arriba y se acorta. */
+@media (max-width: 52rem) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--borde);
+    max-height: 40vh;
+  }
+}
+
+/* --- Marca --- */
+
+.marca {
+  display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 0.6rem;
 }
-#mensajes {
+.marca img {
+  width: 2rem;
+  height: 2rem;
+}
+.marca h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.estado {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+}
+.estado::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--texto-suave);
+}
+.estado[data-salud="ok"]::before {
+  background: var(--verde);
+}
+.estado[data-salud="degraded"]::before {
+  background: var(--ambar);
+}
+
+/* --- Navegación entre pantallas --- */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.nav button {
+  justify-content: flex-start;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--texto-suave);
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radio-chico);
+  text-align: left;
+}
+.nav button[aria-current="page"] {
+  background: var(--fondo);
+  color: var(--texto);
+  font-weight: 600;
+}
+
+/* --- Conversaciones --- */
+
+.grupo-fecha {
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--texto-suave);
+}
+
+.conversaciones {
   list-style: none;
-  margin: 0 0 1rem;
+  margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
 }
-#mensajes li {
-  border: 1px solid var(--borde);
-  border-radius: 0.5rem;
-  padding: 0.6rem 0.8rem;
-  margin-bottom: 0.6rem;
+.conversaciones button {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radio-chico);
+  display: block;
+}
+.conversaciones button:hover {
+  background: var(--fondo);
+}
+.conversaciones li[aria-current="true"] button {
+  background: var(--fondo);
+  box-shadow: inset 3px 0 0 var(--ambar);
+}
+.conv-titulo {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-preview {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Chat --- */
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+.mensajes {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 48rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.mensajes li {
+  max-width: 82%;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--radio);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-#mensajes li.user {
-  background: #8881;
+.mensajes .de-usuario {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--ambar) 22%, var(--fondo));
+  border-bottom-right-radius: 0.2rem;
 }
-.rol {
-  display: block;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.6;
-  margin-bottom: 0.25rem;
+.mensajes .de-byte {
+  align-self: flex-start;
+  background: var(--superficie);
+  border-bottom-left-radius: 0.2rem;
 }
-textarea,
-input {
-  width: 100%;
-  font: inherit;
-  padding: 0.5rem;
-  border: 1px solid var(--borde);
-  border-radius: 0.4rem;
+
+/* Marcador de la conversación compactada: lo de arriba ya no va al modelo. */
+.compactado {
+  align-self: center;
+  max-width: 100%;
   background: transparent;
-  color: inherit;
-  box-sizing: border-box;
+  color: var(--texto-suave);
+  font-size: 0.78rem;
+  text-align: center;
+  border-top: 1px dashed var(--borde);
+  border-radius: 0;
+  padding: 0.6rem 0 0;
 }
-#api-key {
-  max-width: 18rem;
+
+/* Tres puntitos mientras el agente responde. */
+.escribiendo {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
 }
-.acciones {
+.escribiendo span {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--texto-suave);
+  animation: latido 1.2s infinite ease-in-out;
+}
+.escribiendo span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.escribiendo span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes latido {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-0.15rem);
+  }
+}
+/* Quien pidió menos movimiento ve los puntos fijos, no saltando. */
+@media (prefers-reduced-motion: reduce) {
+  .escribiendo span {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+.pasos {
+  margin: 0.5rem auto 0;
+  max-width: 48rem;
+  font-size: 0.8rem;
+  color: var(--texto-suave);
+  min-height: 1.2em;
+}
+
+.fuentes {
+  margin: 0.4rem auto 0;
+  max-width: 48rem;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+}
+
+/* --- Barra de escritura --- */
+
+.redactor {
+  border-top: 1px solid var(--borde);
+  padding: 0.9rem 1.5rem 1.2rem;
+  background: var(--fondo);
+}
+.redactor form {
+  max-width: 48rem;
+  margin: 0 auto;
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  gap: 0.6rem;
+  align-items: flex-end;
 }
+.redactor textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 2.8rem;
+  max-height: 12rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: inherit;
+  font: inherit;
+}
+.redactor textarea:focus-visible,
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--ambar);
+  outline-offset: 2px;
+}
+
+/* --- Botones --- */
+
 button {
   font: inherit;
-  padding: 0.45rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
   border: 1px solid var(--borde);
-  border-radius: 0.4rem;
+  border-radius: var(--radio-chico);
   background: transparent;
   color: inherit;
   cursor: pointer;
 }
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
+.primario {
+  background: var(--azul);
+  border-color: var(--azul);
+  color: #fff;
+  font-weight: 600;
+}
+.primario:hover:not(:disabled) {
+  background: var(--azul-oscuro);
+}
+.acento {
+  background: var(--ambar);
+  border-color: var(--ambar);
+  color: var(--tinta);
+  font-weight: 600;
+}
+.enviar {
+  width: 2.8rem;
+  height: 2.8rem;
+  padding: 0;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.acciones {
+  display: flex;
+  gap: 0.5rem;
+}
 
-/* Modo seguro: confirmación antes de ejecutar código. */
+/* --- Modo seguro: la aprobación antes de ejecutar código --- */
+
 .aprobacion {
-  border: 2px solid var(--borde);
-  border-radius: 0.5rem;
-  padding: 0.8rem;
-  margin-bottom: 1rem;
+  max-width: 48rem;
+  margin: 0 auto 1rem;
+  border: 2px solid var(--ambar);
+  border-radius: var(--radio);
+  padding: 1rem;
+  background: color-mix(in srgb, var(--ambar) 8%, var(--fondo));
 }
 .aprobacion h2 {
-  margin: 0 0 0.3rem;
+  margin: 0 0 0.2rem;
   font-size: 1rem;
+  font-weight: 600;
 }
 .aprobacion pre {
-  margin: 0.5rem 0 0;
-  padding: 0.6rem;
-  background: #8881;
-  border-radius: 0.4rem;
+  margin: 0.6rem 0;
+  padding: 0.75rem;
+  background: var(--tinta);
+  color: var(--crema);
+  border-radius: var(--radio-chico);
   overflow-x: auto;
-  font-size: 0.85rem;
+  font: 0.82rem/1.5 var(--mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* --- Documentos --- */
+
+.contenido {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+.contenido h2 {
+  max-width: 52rem;
+  margin: 0 auto 1rem;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.soltar {
+  max-width: 52rem;
+  margin: 0 auto 1.5rem;
+  border: 2px dashed var(--azul);
+  border-radius: var(--radio);
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--texto-suave);
+  cursor: pointer;
+  background: transparent;
+  display: block;
+  width: 100%;
+}
+.soltar:hover,
+.soltar[data-encima="true"] {
+  background: var(--superficie);
+}
+.soltar strong {
+  display: block;
+  color: var(--texto);
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.documentos {
+  max-width: 52rem;
+  margin: 0 auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.documentos th {
+  text-align: left;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--texto-suave);
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--borde);
+}
+.documentos td {
+  padding: 0.65rem 0.6rem;
+  border-bottom: 1px solid var(--borde);
+  vertical-align: middle;
+}
+.documentos .nombre {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.etiqueta {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.etiqueta[data-estado="indexed"] {
+  background: color-mix(in srgb, var(--verde) 18%, var(--fondo));
+  color: var(--verde);
+}
+.etiqueta[data-estado="processing"] {
+  background: color-mix(in srgb, var(--ambar) 22%, var(--fondo));
+  color: #8a5a00;
+}
+.etiqueta[data-estado="error"] {
+  background: #d9534f22;
+  color: #c9302c;
+}
+@media (prefers-color-scheme: dark) {
+  .etiqueta[data-estado="processing"] {
+    color: var(--ambar);
+  }
+  .etiqueta[data-estado="error"] {
+    color: #ff8a85;
+  }
+}
+
+.motivo-error {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--texto-suave);
+  margin-top: 0.15rem;
+}
+
+.vacio {
+  max-width: 52rem;
+  margin: 2rem auto;
+  text-align: center;
+  color: var(--texto-suave);
+}
+
+/* --- Pantalla de ingreso --- */
+
+.ingreso {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+.ingreso form {
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  text-align: center;
+}
+.ingreso img {
+  width: 4rem;
+  height: 4rem;
+  margin: 0 auto;
+}
+.ingreso input {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-chico);
+  background: var(--fondo);
+  color: inherit;
+  font: inherit;
+}
+
+.error {
+  color: #c9302c;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* Visible para un lector de pantalla, invisible en la pantalla: para encabezados
+   de tabla que el diseño deja vacíos pero que la tabla necesita igual. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
