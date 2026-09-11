@@ -1,5 +1,5 @@
 # API de Byte. Imagen chica y proceso sin root.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # uv instala las dependencias desde el lock, sin resolver de nuevo.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
