@@ -38,15 +38,21 @@ HISTORY_CONTEXT_RATIO = 0.6
 # Herramientas que pueden pedir confirmación humana antes de correr.
 HERRAMIENTAS_SENSIBLES = frozenset({"code_exec"})
 
+# Herramientas que traen contenido de terceros al prompt. `doc_search` cuenta:
+# un PDF o un README que alguien subió es tan ajeno como una página web
+# (docs/seguridad-byte.md: "páginas web, documentos, resultados de herramientas"
+# son todos entrada no confiable).
+HERRAMIENTAS_CON_CONTENIDO_EXTERNO = frozenset({"web_search", "doc_search"})
+
 
 def requiere_aprobacion(pedidas: list[str], ya_usadas: list[str], safe_mode: bool) -> str | None:
     """Devuelve el motivo por el que hace falta aprobación humana, o None.
 
     La regla del contrato: el modo seguro se activa **automáticamente** si en el
-    mismo run hubo búsqueda web y el agente quiere ejecutar código, aunque el
-    usuario no lo haya pedido. El razonamiento es de `docs/seguridad-byte.md`:
-    contenido de terceros (la web) más ejecución de código es la combinación que
-    permite que una inyección indirecta termine corriendo algo.
+    mismo run entró contenido externo y el agente quiere ejecutar código, aunque
+    el usuario no lo haya pedido. El razonamiento es de `docs/seguridad-byte.md`:
+    contenido de terceros más ejecución de código es la combinación que permite
+    que una inyección indirecta termine corriendo algo.
     """
     if not HERRAMIENTAS_SENSIBLES & set(pedidas):
         return None
@@ -54,7 +60,9 @@ def requiere_aprobacion(pedidas: list[str], ya_usadas: list[str], safe_mode: boo
         return "modo_seguro_activado"
     # Se cuentan también las de este mismo turno: el modelo puede pedir buscar y
     # ejecutar en la misma tanda.
-    if "web_search" in set(ya_usadas) | set(pedidas):
+    # El motivo conserva el nombre histórico: lo usan la UI, los tests y los
+    # evals, y renombrarlo no agrega nada.
+    if HERRAMIENTAS_CON_CONTENIDO_EXTERNO & (set(ya_usadas) | set(pedidas)):
         return "web_y_codigo_en_el_mismo_run"
     return None
 

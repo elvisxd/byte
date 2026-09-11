@@ -61,6 +61,18 @@ def test_la_regla_de_activacion() -> None:
     # Buscar en la web sola nunca pide permiso.
     assert requiere_aprobacion(["web_search"], [], True) is None
 
+    # Los documentos del RAG cuentan igual que la web: un PDF que alguien subió
+    # es contenido de terceros, y la inyección indirecta puede venir de ahí.
+    assert (
+        requiere_aprobacion(["code_exec"], ["doc_search"], False) == "web_y_codigo_en_el_mismo_run"
+    )
+    assert (
+        requiere_aprobacion(["doc_search", "code_exec"], [], False)
+        == "web_y_codigo_en_el_mismo_run"
+    )
+    # Buscar en documentos sin ejecutar nada tampoco pide permiso.
+    assert requiere_aprobacion(["doc_search"], [], False) is None
+
 
 # --- El flujo completo ---
 
