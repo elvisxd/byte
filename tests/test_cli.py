@@ -116,7 +116,7 @@ def test_la_bienvenida_aguanta_una_api_caida(
 
     monkeypatch.setattr(byte_cli.Byte, "pedir", caida)
     assert cli() == 0
-    assert "sin conexión" in capsys.readouterr().out
+    assert "no connection" in capsys.readouterr().out
 
 
 def test_el_spinner_no_dibuja_sin_terminal(capsys: pytest.CaptureFixture[str]) -> None:
@@ -134,33 +134,3 @@ def test_el_spinner_devuelve_el_cursor_aunque_falle(
     with pytest.raises(ValueError, match="algo falló"), byte_cli.Pensando():
         raise ValueError("algo falló")
     assert "\033[?25h" in capsys.readouterr().err
-
-
-# --- Todo en español ---
-
-
-def test_la_ayuda_no_tiene_ingles(capsys: pytest.CaptureFixture[str]) -> None:
-    """argparse trae sus encabezados en inglés: `--help` no puede ser lo único
-    de Byte que no hable español."""
-    with pytest.raises(SystemExit):
-        byte_cli.main(["--help"])
-    salida = capsys.readouterr().out
-    for ingles in ("usage:", "positional arguments", "options:", "show this help"):
-        assert ingles not in salida, f"quedó '{ingles}' en inglés"
-    assert "uso:" in salida
-    assert "opciones:" in salida
-
-
-def test_los_errores_de_uso_estan_en_espanol(capsys: pytest.CaptureFixture[str]) -> None:
-    """Son los que más se ven: aparecen cada vez que alguien se equivoca."""
-    with pytest.raises(SystemExit):
-        byte_cli.main(["inventado"])
-    error = capsys.readouterr().err
-    assert "invalid choice" not in error
-    assert "no es un comando válido" in error
-
-    with pytest.raises(SystemExit):
-        byte_cli.main(["ask"])
-    error = capsys.readouterr().err
-    assert "the following arguments are required" not in error
-    assert "faltan argumentos" in error

@@ -166,7 +166,7 @@ def _bienvenida(byte: Byte, url: str) -> int:
         centrada = parte.center(ancho - 4)
         fila(centrada, AMBAR if i == 2 else AZUL)
     fila()
-    fila("  Byte — tu agente de IA, corriendo local", NEGRITA)
+    fila("  Byte — your AI agent, running local", NEGRITA)
     fila()
 
     try:
@@ -176,13 +176,13 @@ def _bienvenida(byte: Byte, url: str) -> int:
         fila(f"  {punto} {salud['model']} · {url}", VERDE if salud["status"] == "ok" else AMBAR)
         fila(f"    {', '.join(t['name'] for t in herramientas)}", GRIS)
     except Exception:  # noqa: BLE001 - la bienvenida no puede fallar por esto
-        fila("  ○ sin conexión con la API", GRIS)
+        fila("  ○ no connection to the API", GRIS)
         fila(f"    {url}", GRIS)
 
     fila()
-    fila('  byte ask "..."        preguntarle algo', GRIS)
-    fila("  byte docs add x.pdf   sumar un documento", GRIS)
-    fila("  byte --help           todos los comandos", GRIS)
+    fila('  byte ask "..."        ask it something', GRIS)
+    fila("  byte docs add x.pdf   add a document", GRIS)
+    fila("  byte --help           all commands", GRIS)
     fila()
     print(_color(f"╰{linea}╯", AZUL))
     return 0
@@ -329,60 +329,14 @@ def cmd_conversations(byte: Byte, args: argparse.Namespace) -> int:
 # --- Parseo ---
 
 
-class AyudaEnEspanol(argparse.HelpFormatter):
-    """argparse trae sus encabezados en inglés y no son configurables.
-
-    Byte habla español en todo lo que ve el usuario, así que `--help` no puede
-    ser lo único que diga "usage" y "positional arguments".
-    """
-
-    # "argumentos" y no "comandos": la misma sección lista los subcomandos en la
-    # ayuda principal y los argumentos posicionales en la de cada subcomando
-    # (`byte ask --help` muestra ahí `pregunta`, que no es un comando).
-    ENCABEZADOS = {
-        "usage: ": "uso: ",
-        "positional arguments": "argumentos",
-        "options": "opciones",
-        "show this help message and exit": "mostrar esta ayuda y salir",
-    }
-
-    def format_help(self) -> str:
-        texto = super().format_help()
-        for ingles, espanol in self.ENCABEZADOS.items():
-            texto = texto.replace(ingles, espanol)
-        return texto
-
-
-class ParserEnEspanol(argparse.ArgumentParser):
-    """Los mensajes de error de argparse también vienen en inglés, y son los
-    que más se ven: aparecen cada vez que alguien se equivoca al escribir."""
-
-    ERRORES = (
-        ("invalid choice:", "no es un comando válido:"),
-        ("choose from", "elegí entre"),
-        ("the following arguments are required:", "faltan argumentos:"),
-        ("unrecognized arguments:", "no reconozco:"),
-        ("expected one argument", "esperaba un valor"),
-        ("argument comando:", "comando:"),
-        ("invalid int value:", "no es un número:"),
-    )
-
-    def error(self, message: str) -> Any:
-        for ingles, espanol in self.ERRORES:
-            message = message.replace(ingles, espanol)
-        return super().error(message)
-
-
 def construir_parser() -> argparse.ArgumentParser:
-    parser = ParserEnEspanol(
-        prog="byte",
-        description="Byte: tu agente de IA local, desde la terminal.",
-        formatter_class=AyudaEnEspanol,
+    parser = argparse.ArgumentParser(
+        prog="byte", description="Byte: your local AI agent, from the terminal."
     )
     # Sin `required`: `byte` a secas muestra la bienvenida, como Claude Code.
-    sub = parser.add_subparsers(dest="comando", metavar="comando", parser_class=ParserEnEspanol)
+    sub = parser.add_subparsers(dest="comando")
 
-    p = sub.add_parser("ask", formatter_class=AyudaEnEspanol, help="preguntarle algo al agente")
+    p = sub.add_parser("ask", help="preguntarle algo al agente")
     p.add_argument("pregunta")
     p.add_argument("-c", "--conversation", help="seguir una conversación existente")
     p.add_argument(
@@ -390,51 +344,41 @@ def construir_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=cmd_ask)
 
-    p = sub.add_parser(
-        "approve", formatter_class=AyudaEnEspanol, help="aprobar una ejecución pendiente"
-    )
+    p = sub.add_parser("approve", help="aprobar una ejecución pendiente")
     p.add_argument("run_id")
     p.add_argument("token")
     p.set_defaults(func=cmd_resume, aprobar=True)
 
-    p = sub.add_parser(
-        "reject", formatter_class=AyudaEnEspanol, help="rechazar una ejecución pendiente"
-    )
+    p = sub.add_parser("reject", help="rechazar una ejecución pendiente")
     p.add_argument("run_id")
     p.add_argument("token")
     p.set_defaults(func=cmd_resume, aprobar=False)
 
-    p = sub.add_parser("search", formatter_class=AyudaEnEspanol, help="buscar en tus documentos")
+    p = sub.add_parser("search", help="buscar en tus documentos")
     p.add_argument("consulta")
     p.add_argument("-k", "--top-k", type=int, default=5)
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser(
-        "run", formatter_class=AyudaEnEspanol, help="ejecutar un archivo Python en el sandbox"
-    )
+    p = sub.add_parser("run", help="ejecutar un archivo Python en el sandbox")
     p.add_argument("archivo")
     p.add_argument("--timeout", type=int, default=10, help="segundos (1-30)")
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("docs", formatter_class=AyudaEnEspanol, help="tus documentos")
-    docs = p.add_subparsers(dest="accion", required=True, parser_class=ParserEnEspanol)
-    a = docs.add_parser("add", formatter_class=AyudaEnEspanol, help="subir un documento")
+    p = sub.add_parser("docs", help="tus documentos")
+    docs = p.add_subparsers(dest="accion", required=True)
+    a = docs.add_parser("add", help="subir un documento")
     a.add_argument("archivo")
     a.set_defaults(func=cmd_docs_add)
-    a = docs.add_parser("list", formatter_class=AyudaEnEspanol, help="listar los documentos")
+    a = docs.add_parser("list", help="listar los documentos")
     a.set_defaults(func=cmd_docs_list)
-    a = docs.add_parser("rm", formatter_class=AyudaEnEspanol, help="eliminar un documento")
+    a = docs.add_parser("rm", help="eliminar un documento")
     a.add_argument("id")
     a.set_defaults(func=cmd_docs_rm)
 
-    p = sub.add_parser(
-        "status", formatter_class=AyudaEnEspanol, help="estado de Byte y sus servicios"
-    )
+    p = sub.add_parser("status", help="estado de Byte y sus servicios")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser(
-        "conversations", formatter_class=AyudaEnEspanol, help="listar conversaciones"
-    )
+    p = sub.add_parser("conversations", help="listar conversaciones")
     p.add_argument("-n", "--limit", type=int, default=20)
     p.set_defaults(func=cmd_conversations)
 

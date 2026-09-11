@@ -19,8 +19,12 @@ uv run python -m cli.byte_cli conversations
 Para escribir `byte` a secas, un alias en tu shell:
 
 ```bash
-alias byte='uv run --project /ruta/a/byte python -m cli.byte_cli'
+alias byte='PYTHONPATH=/ruta/a/byte uv run --project /ruta/a/byte python -m cli.byte_cli'
 ```
+
+El `PYTHONPATH` hace falta: `uv run --project` cambia el entorno pero no el
+directorio, así que sin él Python no encuentra el paquete `cli` cuando el
+comando se llama desde otra carpeta.
 
 No hay entry point instalado a propósito: el proyecto es `package = false`
 (los módulos se importan desde la raíz del repo) y empaquetarlo solo para
