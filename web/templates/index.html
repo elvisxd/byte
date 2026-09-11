@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Byte</title>
+    <!-- CSS y JS en archivos aparte: la CSP no permite inline. -->
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Byte</h1>
+      <p id="estado" class="estado">Sin conectar</p>
+    </header>
+
+    <section id="login">
+      <label for="api-key">API key</label>
+      <input id="api-key" type="password" autocomplete="current-password" />
+      <button id="entrar" type="button">Entrar</button>
+    </section>
+
+    <main id="chat" hidden>
+      <ol id="mensajes" aria-live="polite"></ol>
+      <p id="pasos" class="pasos"></p>
+      <form id="form-mensaje">
+        <textarea id="entrada" rows="3" placeholder="Preguntale algo a Byte..."></textarea>
+        <div class="acciones">
+          <button id="enviar" type="submit">Enviar</button>
+          <button id="detener" type="button" disabled>Detener</button>
+        </div>
+      </form>
+      <p id="fuentes" class="fuentes"></p>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

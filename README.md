@@ -2,7 +2,7 @@
 
 > Un agente de IA propio que corre un modelo open source localmente, capaz de programar, buscar en internet y usar herramientas vía MCP — sin depender de APIs pagas.
 
-**Estado:** fase de diseño cerrada · MVP (Fase 0) en progreso.
+**Estado:** fase de diseño cerrada · MVP (Fase 0) funcionando de punta a punta en local.
 
 ## Stack
 Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + pgvector · MCP · AG-UI · Railway · Go (CLI)
@@ -24,7 +24,95 @@ api/  agent/  tools/  sandbox/  mcp/  rag/  models/  db/  web/  cli/  n8n/  dock
 ```
 
 ## Cómo correrlo
-Pendiente hasta la Fase 0. Copiar `.env.example` a `.env` y completar.
+
+Hace falta [uv](https://docs.astral.sh/uv/) y [Ollama](https://ollama.com) (local o en Docker).
+
+```bash
+# 1. Dependencias (crea el venv con Python 3.12 desde uv.lock)
+uv sync
+
+# 2. Configuración
+cp .env.example .env
+# Editar .env: como mínimo BYTE_API_KEY y BYTE_SECRET_KEY
+#   openssl rand -hex 32   (una para cada una)
+
+# 3. El modelo (gratis, en tu PC)
+ollama pull qwen2.5-coder:7b
+
+# 4. Postgres con pgvector (opcional en el MVP; sin él todo queda en memoria)
+cd docker && docker compose up -d postgres ollama && cd ..
+
+# 5. Levantar la API
+uv run uvicorn api.main:app --reload
+```
+
+- Chat mínimo: http://localhost:8000 (pide la API key y la canjea por una cookie)
+- API y OpenAPI: http://localhost:8000/docs
+- Salud: `curl localhost:8000/api/v1/health`
+
+Sin `DATABASE_URL`, Byte arranca en memoria: sirve para probar, pero las
+conversaciones se pierden al reiniciar (lo avisa en el log). Sin
+`TAVILY_API_KEY`, el agente funciona igual pero sin búsqueda web.
+
+### Probar sin navegador
+
+```bash
+KEY=tu-api-key
+CONV=$(curl -s -X POST localhost:8000/api/v1/conversations \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}' | jq -r .id)
+
+# ?wait=true espera la respuesta completa en un solo JSON
+curl -s -X POST "localhost:8000/api/v1/conversations/$CONV/messages?wait=true" \
+  -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"content":"buscá la última versión de FastAPI"}' | jq
+```
+
+### Tests y calidad
+
+```bash
+uv run pytest -q          # no necesita Ollama, Tavily ni Postgres
+uv run ruff check .
+uv run ruff format .
+uv run pre-commit install # ruff + gitleaks antes de cada commit
+```
+
+## Qué hay hoy (Fase 0)
+
+Implementado:
+- **API** según el contrato: `/health`, `/health/details`, conversaciones (CRUD con
+  paginación por cursor), `POST /conversations/{id}/messages` → `GET /runs/{id}/events`,
+  `POST /runs/{id}/cancel`, `GET /runs/{id}`, `GET /messages/{id}`, `GET /tools`
+- **Streaming SSE con eventos AG-UI** (no nombres propios): `RUN_STARTED`, `STEP_*`,
+  `TOOL_CALL_*`, `TEXT_MESSAGE_*`, `STATE_SNAPSHOT`/`STATE_DELTA`, `RUN_FINISHED`,
+  `RUN_ERROR`; cada evento con `id:` para reconectar con `Last-Event-ID`
+- **Agente LangGraph** con `StateGraph` propio: `retrieve_context` → `agent` →
+  `should_continue` → `tools` → `finalize`, checkpointer con `thread_id = conversation_id`
+- **Búsqueda web (Tavily)** como única herramienta, con argumentos validados por Pydantic
+- **Logging estructurado** con `structlog` y `request_id` en logs y errores
+- **Seguridad de Fase 0**: API key hasheada comparada en tiempo constante, cookie
+  `httpOnly` + `SameSite=Strict` para la web, `events_token` firmado de 60 s de un solo
+  uso ligado al run, rate limiting por credencial, tope de runs concurrentes, timeout y
+  tope de iteraciones por run, resultados de herramientas delimitados como datos no
+  confiables, CSP/HSTS/nosniff, CORS restringido, `gitleaks` y `pip-audit` en CI
+- **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
+- **50 tests** que cubren el ciclo completo del run con dobles de Ollama y Tavily
+  (no hacen falta servicios externos para correrlos)
+
+Pendiente de Fase 0:
+- **Correr el agente contra un Ollama real.** El código y los tests están, pero los
+  tests usan un modelo falso: todavía no se ejecutó una conversación contra Ollama.
+  Primer paso: `qwen2.5-coder:7b`, medir RAM con `num_ctx` explícito; después el
+  30B-A3B
+- Deploy de prueba en Railway con la RAM mínima y medir el costo real
+- Límite de gasto y alertas en Railway (se configura en el dashboard)
+
+Decisiones que se corrieron de fase, a propósito:
+- `POST /conversations/{id}/compact` y el nodo `compact` van con el RAG (Fase 2)
+- `POST /runs/{id}/resume` y el modo seguro (HITL) van con el sandbox (Fase 1): hoy
+  `safe_mode` se acepta y se reporta, pero no hay herramienta peligrosa que aprobar
+- `Idempotency-Key` queda para la Fase 4, junto con el resto del endurecimiento de la API
+- Markdown sanitizado con `nh3`: la página mínima pinta con `textContent`, así que
+  no hay HTML que sanear hasta la Fase 5
 
 ## Licencia
 MIT

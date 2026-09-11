@@ -1,0 +1,32 @@
+# API de Byte. Imagen chica y proceso sin root.
+FROM python:3.12-slim
+
+# uv instala las dependencias desde el lock, sin resolver de nuevo.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+# Capa de dependencias aparte: no se reinstala con cada cambio de código.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY api/ api/
+COPY agent/ agent/
+COPY tools/ tools/
+COPY models/ models/
+COPY db/ db/
+COPY web/ web/
+
+RUN useradd --create-home --uid 10001 byte && chown -R byte:byte /app
+USER byte
+
+EXPOSE 8000
+
+# Un solo worker: el agente guarda estado de los runs en memoria del proceso.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

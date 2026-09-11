@@ -1,0 +1,62 @@
+# Desarrollo local. El modelo corre gratis en la PC; Railway queda para el
+# deploy/demo (docs/plan-asistente-ia-local.md).
+#
+#   cd docker && docker compose up -d postgres ollama
+#   docker compose exec ollama ollama pull qwen2.5-coder:7b
+#
+# Los puertos se publican solo en 127.0.0.1: ni Ollama (que no tiene auth) ni
+# Postgres quedan expuestos a la red local.
+
+name: byte
+
+services:
+  postgres:
+    # Imagen con pgvector: el Postgres pelado no trae la extensión, y el RAG de
+    # la Fase 2 la necesita.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: byte
+      POSTGRES_PASSWORD: byte
+      POSTGRES_DB: byte
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U byte -d byte"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+  # Opcional: la API en contenedor. En el día a día conviene correrla con
+  # `uv run uvicorn api.main:app --reload` para tener recarga en caliente.
+  api:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://byte:byte@postgres:5432/byte
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  ollama-models:
