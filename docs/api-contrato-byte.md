@@ -43,9 +43,12 @@ Body: `{ "content": "Buscá la última versión de FastAPI y armá el endpoint b
 → `202 { "run_id", "message_id", "events_url": "/api/v1/runs/{run_id}/events", "events_token": "<firmado, 60 s, un solo uso>" }`
 Con `?wait=true` espera y devuelve `{ "message": Message, "sources": [...] }` en un solo JSON (tests y scripts).
 Si el run queda esperando aprobación (modo seguro), `?wait=true` responde `202 { "run_id", "status": "paused", "awaiting_approval": { code, reason, resume_token } }`: no hay mensaje final que devolver todavía, y el token viene ahí para poder continuar sin leer el SSE.
+**`409 approval_pending`** si la conversación tiene un run esperando aprobación (modo seguro): hay que resolverlo con `/resume` antes de seguir, para no abandonar la decisión ni dejar el hilo del agente con un pedido de herramienta sin responder. Si el run pausado ya no existe (por ejemplo, se reinició el servicio), la API lo cierra sola como rechazo y deja seguir.
 **`409 conversation_busy`** si la conversación ya tiene un run en curso: dos runs a la vez comparten el hilo del checkpointer (`thread_id = conversation_id`), se pisan el estado y cada uno responde sin ver la pregunta del otro. El tope de runs concurrentes por credencial sigue aplicando entre conversaciones distintas.
 
 **GET `/runs/{run_id}/events`** — `text/event-stream`. Headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`, sin gzip. Cada evento lleva `id:` para que el cliente reconecte con `Last-Event-ID` y retome donde quedó.
+
+Los ids son **crecientes, no necesariamente consecutivos**: el texto se emite token a token y guardar todos los eventos de todos los runs no escala, así que los runs terminados más viejos sueltan sus deltas de texto. Cuando eso pasa, el stream arranca con `STATE_DELTA { replay_incompleto: true }` y el cliente pide el texto definitivo con `GET /messages/{id}` (el `message_id` viene en `RUN_FINISHED`). Un run en curso nunca pierde eventos.
 
 Eventos: **protocolo AG-UI** (en vez de nombres propios). Los que usa Byte:
 

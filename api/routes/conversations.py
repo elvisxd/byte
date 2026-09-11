@@ -134,6 +134,12 @@ async def create_message(
             status_code=413,
         )
 
+    # Los chequeos que pueden rechazar el pedido (aprobación pendiente, run en
+    # curso, tope de concurrencia) van ANTES de guardar: si no, queda un mensaje
+    # del usuario sin ningún run que lo responda. Y si había una aprobación
+    # huérfana, se cierra acá, así sus mensajes quedan antes del nuevo.
+    await ctx.runs.preparar(conversation_id, credential)
+
     user_message = await ctx.repository.add_message(conversation_id, "user", content)
     # Si la conversación todavía no tiene título propio, se usa el primer mensaje.
     conversation = await ctx.repository.get_conversation(conversation_id)

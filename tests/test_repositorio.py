@@ -256,3 +256,33 @@ def test_la_api_entera_sobre_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
         assert cliente.get(f"/api/v1/conversations/{conversacion}", headers=AUTH).status_code == 404
 
     get_settings.cache_clear()
+
+
+@pytest.mark.skipif(not DSN, reason="sin BYTE_TEST_DATABASE_URL")
+async def test_las_migraciones_se_aplican_una_sola_vez() -> None:
+    """Antes se re-ejecutaban todas en cada arranque y funcionaba de casualidad,
+    porque son IF NOT EXISTS. Con un ALTER eso se rompe."""
+    import psycopg
+
+    from db.repository import MIGRATIONS_DIR
+
+    async with await psycopg.AsyncConnection.connect(DSN, autocommit=True) as conn:
+        await conn.execute(
+            "DROP TABLE IF EXISTS schema_migrations, messages, conversations, users CASCADE"
+        )
+
+    esperadas = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql"))
+
+    primero = PostgresRepository(DSN)
+    await primero.startup()
+    await primero.shutdown()
+    segundo = PostgresRepository(DSN)
+    await segundo.startup()
+    await segundo.shutdown()
+
+    async with await psycopg.AsyncConnection.connect(DSN) as conn:
+        cur = await conn.execute("SELECT archivo FROM schema_migrations ORDER BY archivo")
+        registradas = [fila[0] for fila in await cur.fetchall()]
+
+    # Una fila por migración, aunque se haya arrancado dos veces.
+    assert registradas == esperadas

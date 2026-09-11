@@ -32,9 +32,22 @@ logger = get_logger("agent.runner")
 # Cada cuánto se manda un comentario SSE para que no corte el proxy.
 KEEPALIVE_S = 15.0
 # Tope de eventos guardados por run para el replay de reconexión.
-MAX_EVENTS_PER_RUN = 2000
+# El texto se emite token a token: una sola respuesta de 1.024 tokens son ~1.030
+# eventos, y un run puede dar hasta `max_iterations` vueltas. El tope es alto
+# porque hay pocos runs vivos a la vez (`max_concurrent_runs`), y al terminar el
+# run el buffer se compacta (ver `compactar`).
+MAX_EVENTS_PER_RUN = 10_000
 # Cuántos runs terminados se recuerdan (para GET /runs/{id} y reconexiones).
 MAX_RUNS_RETAINED = 200
+
+# Un run en estos estados ya no espera nada de nadie: se puede olvidar.
+# "paused" NO está: ahí hay una persona que todavía puede aprobar.
+ESTADOS_TERMINALES = frozenset({"finished", "cancelled", "error"})
+
+# Cuántos runs terminados conservan sus eventos de texto completos. Son a los
+# que alguien se puede estar reconectando; los más viejos se compactan para que
+# 200 runs recordados no se lleven cientos de MB en tokens.
+RUNS_CON_TEXTO_COMPLETO = 5
 
 
 def _now() -> datetime:
@@ -60,6 +73,9 @@ class Run:
     events: list[Event] = field(default_factory=list)
     done: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
+    # True cuando ya se tiraron los deltas de texto: quien se suscriba después
+    # no puede reconstruir la respuesta desde el stream y hay que avisarle.
+    compactado: bool = False
     _seq: int = 0
     _subscribers: set[asyncio.Queue[Event]] = field(default_factory=set)
     _dropped_events: int = 0
@@ -70,9 +86,11 @@ class Run:
         event = Event(seq=self._seq, type=event_type, data={"runId": self.id, **data})
         self.events.append(event)
         if len(self.events) > MAX_EVENTS_PER_RUN:
-            # Se descartan los más viejos: un replay muy tardío puede quedar incompleto.
+            # Se descartan los más viejos: quien se reconecte pidiendo desde
+            # antes de esto se entera por el aviso de replay incompleto.
             self.events.pop(0)
             self._dropped_events += 1
+            self.compactado = True
         for queue in self._subscribers:
             queue.put_nowait(event)
         if event_type == AGUI.STATE_DELTA and "iteration_count" in data:
@@ -85,6 +103,23 @@ class Run:
 
     def events_after(self, last_seq: int) -> list[Event]:
         return [event for event in self.events if event.seq > last_seq]
+
+    @property
+    def primer_evento_disponible(self) -> int:
+        """Seq del evento más viejo que queda. Si el cliente pide algo anterior,
+        se le perdió contenido y hay que avisarle."""
+        return self.events[0].seq if self.events else 0
+
+    def compactar(self) -> None:
+        """Al terminar el run se tiran los deltas de texto y queda la estructura.
+
+        El texto completo ya está en MESSAGES, así que un cliente que se
+        reconecta tarde lo pide por la API. Esto acota la memoria: se recuerdan
+        hasta MAX_RUNS_RETAINED runs y no pueden quedarse con miles de eventos
+        de tokens cada uno.
+        """
+        self.events = [e for e in self.events if e.type != AGUI.TEXT_MESSAGE_CONTENT]
+        self.compactado = True
 
     def add_subscriber(self) -> asyncio.Queue[Event]:
         queue: asyncio.Queue[Event] = asyncio.Queue()
@@ -107,6 +142,7 @@ class RunManager:
         max_concurrent_runs: int = 2,
         run_timeout_s: int = 180,
         max_iterations: int = 6,
+        resume_ttl_s: int = 3600,
     ) -> None:
         self._graph = graph
         self._repo = repository
@@ -115,6 +151,8 @@ class RunManager:
         self._max_concurrent = max_concurrent_runs
         self._timeout_s = run_timeout_s
         self._max_iterations = max_iterations
+        # Cuánto vive un resume_token: hasta entonces el run pausado no se purga.
+        self._resume_ttl_s = resume_ttl_s
         self._runs: dict[str, Run] = {}
 
     # --- Consulta ---
@@ -151,6 +189,25 @@ class RunManager:
         user_content: str,
         safe_mode: bool = False,
     ) -> Run:
+        await self.preparar(conversation_id, credential_id)
+
+        run = Run(
+            id=f"run_{uuid.uuid4().hex[:12]}",
+            conversation_id=conversation_id,
+            credential_id=credential_id,
+            safe_mode=safe_mode,
+        )
+        self._runs[run.id] = run
+        self._prune()
+        run.task = asyncio.create_task(self._execute(run, user_content=user_content))
+        return run
+
+    async def preparar(self, conversation_id: str, credential_id: str) -> None:
+        """Todo lo que puede rechazar un pedido, antes de que se guarde nada.
+
+        La ruta lo llama antes de persistir el mensaje del usuario: si esto
+        falla después, queda un mensaje sin ningún run que lo responda.
+        """
         # Un run por conversación: dos a la vez comparten el hilo del
         # checkpointer (thread_id = conversation_id), se pisan el estado y cada
         # uno responde sin ver la pregunta del otro.
@@ -167,26 +224,97 @@ class RunManager:
                 status_code=429,
                 headers={"Retry-After": "5"},
             )
-        run = Run(
+        await self._resolver_aprobacion_pendiente(conversation_id, credential_id)
+
+    def pausado_en(self, conversation_id: str, credential_id: str) -> Run | None:
+        """El run de esta conversación que está esperando una decisión humana."""
+        return next(
+            (
+                run
+                for run in self._runs.values()
+                if run.conversation_id == conversation_id
+                and run.credential_id == credential_id
+                and run.status == "paused"
+            ),
+            None,
+        )
+
+    async def _resolver_aprobacion_pendiente(
+        self, conversation_id: str, credential_id: str
+    ) -> None:
+        """Un mensaje nuevo no puede pisar una aprobación pendiente.
+
+        Sin esto, el pedido de ejecutar código quedaba abandonado: el hilo se
+        quedaba con un tool_call sin su ToolMessage (historial inválido para el
+        modelo) y la conversación mostraba dos mensajes del usuario seguidos sin
+        explicación.
+        """
+        pendiente = self.pausado_en(conversation_id, credential_id)
+        if pendiente is not None:
+            # La persona todavía puede decidir: que decida.
+            raise ByteError(
+                "approval_pending",
+                f"El run {pendiente.id} espera tu aprobación. Resolvelo con "
+                f"POST /runs/{pendiente.id}/resume antes de seguir.",
+                status_code=409,
+            )
+
+        # Sin run en memoria pero con el hilo interrumpido: el proceso se
+        # reinició (o pasó el plazo del token). Ya nadie puede aprobar eso, así
+        # que se cierra como rechazo para dejar el historial consistente.
+        config = {"configurable": {"thread_id": conversation_id}}
+        try:
+            snapshot = await self._graph.aget_state(config)
+        except Exception as exc:  # noqa: BLE001 - sin checkpointer no hay nada que cerrar
+            logger.debug("sin_estado_previo", error_type=type(exc).__name__)
+            return
+        if not (snapshot and getattr(snapshot, "interrupts", None)):
+            return
+
+        logger.info("aprobacion_huerfana_cerrada", conversation_id=conversation_id)
+        cierre = Run(
             id=f"run_{uuid.uuid4().hex[:12]}",
             conversation_id=conversation_id,
             credential_id=credential_id,
-            safe_mode=safe_mode,
         )
-        self._runs[run.id] = run
-        self._prune()
-        run.task = asyncio.create_task(self._execute(run, user_content=user_content))
-        return run
+        self._runs[cierre.id] = cierre
+        cierre.task = asyncio.create_task(self._execute(cierre, aprobacion=False))
+        await cierre.done.wait()
+
+    def _compactar_viejos(self) -> None:
+        """Deja los eventos de texto solo en los runs terminados más recientes.
+
+        El texto definitivo vive en MESSAGES, así que un cliente que se
+        reconecta a un run viejo lo pide por la API — y el stream se lo avisa.
+        """
+        terminados = sorted(
+            (r for r in self._runs.values() if r.status in ESTADOS_TERMINALES),
+            key=lambda r: r.finished_at or r.started_at,
+            reverse=True,
+        )
+        for run in terminados[RUNS_CON_TEXTO_COMPLETO:]:
+            if not run.compactado:
+                run.compactar()
+
+    def _purgable(self, run: Run) -> bool:
+        """Un run pausado espera a una persona: no se descarta mientras su
+        `resume_token` pueda seguir siendo válido. Si no, la aprobación
+        pendiente desaparecería sin que nadie se entere."""
+        if run.status in ESTADOS_TERMINALES:
+            return True
+        if run.status == "paused" and run.finished_at:
+            return (_now() - run.finished_at).total_seconds() > self._resume_ttl_s
+        return False
 
     def _prune(self) -> None:
-        """Se olvidan los runs terminados más viejos."""
+        """Se olvidan los runs más viejos que ya no esperan nada."""
         if len(self._runs) <= MAX_RUNS_RETAINED:
             return
-        finished = sorted(
-            (r for r in self._runs.values() if r.finished),
+        olvidables = sorted(
+            (r for r in self._runs.values() if self._purgable(r)),
             key=lambda r: r.finished_at or r.started_at,
         )
-        for run in finished[: len(self._runs) - MAX_RUNS_RETAINED]:
+        for run in olvidables[: len(self._runs) - MAX_RUNS_RETAINED]:
             del self._runs[run.id]
 
     # --- Ejecución ---
@@ -260,6 +388,7 @@ class RunManager:
             log.exception("run_error", error_type=type(exc).__name__)
         finally:
             run.finished_at = _now()
+            self._compactar_viejos()
             run.done.set()
 
     async def _run_graph(
@@ -415,6 +544,22 @@ class RunManager:
         queue = run.add_subscriber()
         sent_seq = last_event_id
         try:
+            # Si el cliente pide desde antes de lo que queda guardado, se perdió
+            # texto: hay que avisarle en vez de seguir como si nada, porque la
+            # respuesta le quedaría cortada sin que se entere.
+            primero = run.primer_evento_disponible
+            hay_hueco = run.compactado or (last_event_id and primero > last_event_id + 1)
+            if hay_hueco:
+                yield Event(
+                    seq=last_event_id,
+                    type=AGUI.STATE_DELTA,
+                    data={
+                        "runId": run.id,
+                        "replay_incompleto": True,
+                        "desde": primero,
+                        "detalle": "faltan eventos: pedí el mensaje final por la API",
+                    },
+                ).to_sse()
             for event in run.events_after(last_event_id):
                 sent_seq = event.seq
                 yield event.to_sse()

@@ -46,7 +46,10 @@ class Settings(BaseSettings):
 
     # --- Límites del agente (seguridad: costos y loops) ---
     max_iterations: int = Field(default=6, alias="BYTE_MAX_ITERATIONS")
-    run_timeout_s: int = Field(default=180, alias="BYTE_RUN_TIMEOUT_S")
+    # 10 minutos, no 3: un run son varias llamadas al modelo, y en CPU un 7B
+    # hace ~5-15 tokens por segundo. Con 3 minutos se cortan runs legítimos en
+    # la primera prueba local. Sigue acotado, que es lo que pide el checklist.
+    run_timeout_s: int = Field(default=600, alias="BYTE_RUN_TIMEOUT_S")
     max_message_chars: int = Field(default=8000, alias="BYTE_MAX_MESSAGE_CHARS")
     max_concurrent_runs: int = Field(default=2, alias="BYTE_MAX_CONCURRENT_RUNS")
     # Tamaño máximo de cada resultado de herramienta inyectado en el prompt.
@@ -62,6 +65,9 @@ class Settings(BaseSettings):
     # Los events_token duran 60 s y son de un solo uso (contrato de la API).
     events_token_ttl_s: int = Field(default=60, alias="BYTE_EVENTS_TOKEN_TTL_S")
     session_ttl_s: int = Field(default=86400, alias="BYTE_SESSION_TTL_S")
+    # Del otro lado del modo seguro hay una persona decidiendo: el token dura
+    # más que el del stream, y mientras tanto el run pausado no se descarta.
+    resume_token_ttl_s: int = Field(default=3600, alias="BYTE_RESUME_TOKEN_TTL_S")
 
     @field_validator("max_message_chars")
     @classmethod
