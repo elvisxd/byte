@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     database_url: str = Field(default="", alias="DATABASE_URL")
     storage: Literal["auto", "memory", "postgres"] = Field(default="auto", alias="BYTE_STORAGE")
 
+    # --- RAG (Fase 2) ---
+    # El modelo de embeddings está atado a la columna vector(768) de la migración
+    # 002: cambiarlo obliga a migrar esa columna y reindexar todo.
+    ollama_embed_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBED_MODEL")
+    # Indexar un documento entero puede ser lento en CPU: se vectoriza por lotes.
+    embed_timeout_s: float = Field(default=60.0, alias="BYTE_EMBED_TIMEOUT_S")
+    embed_batch_size: int = Field(default=16, alias="BYTE_EMBED_BATCH_SIZE")
+    max_document_bytes: int = Field(default=20 * 1024 * 1024, alias="BYTE_MAX_DOCUMENT_BYTES")
+    # Un PDF raro puede colgar al parser: se le pone plazo y se marca en error.
+    document_parse_timeout_s: float = Field(default=30.0, alias="BYTE_DOC_PARSE_TIMEOUT_S")
+    rag_top_k: int = Field(default=5, alias="BYTE_RAG_TOP_K")
+
     # --- Herramientas ---
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
     sandbox_url: str = Field(default="", alias="SANDBOX_URL")
