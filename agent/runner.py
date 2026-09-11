@@ -181,6 +181,18 @@ class RunManager:
             for run in self._runs.values()
         )
 
+    def busy(self, conversation_id: str) -> bool:
+        """Si la conversación tiene algún run vivo, sea de quien sea.
+
+        `active_in` filtra por credencial porque responde "¿este cliente ya
+        tiene un run acá?". Para evitar dos escrituras simultáneas del mismo
+        `summary` hay que mirar la conversación entera.
+        """
+        return any(
+            run.conversation_id == conversation_id and not run.finished
+            for run in self._runs.values()
+        )
+
     # --- Creación ---
     async def start(
         self,
@@ -410,6 +422,8 @@ class RunManager:
                 "thread_id": run.conversation_id,
                 "emitter": run,
                 "safe_mode": run.safe_mode,
+                # Para que compact pueda leer el resumen previo y guardar el nuevo.
+                "repository": self._repo,
             },
             "recursion_limit": self._max_iterations * 2 + 10,
         }
@@ -432,6 +446,56 @@ class RunManager:
             "tools_used": None,
         }
         return await self._graph.ainvoke(inputs, config=config)
+
+    async def compactar(self, conversation_id: str, llm: Any, dejar: int = 4) -> tuple[str, int]:
+        """Compacta el hilo del checkpointer: resume lo viejo y lo saca.
+
+        Es la versión manual de lo que `retrieve_context` hace solo al pasar el
+        ~60% del contexto, y opera sobre la misma fuente: el estado del grafo,
+        que es lo que realmente se le manda al modelo. Resumir MESSAGES en vez
+        de esto dejaría el hilo intacto y el contexto no se liberaría.
+
+        Devuelve (resumen, cuántos mensajes se compactaron). Si no hay nada que
+        compactar, el contador vuelve en 0.
+        """
+        from agent.compact import resumir
+
+        config = {"configurable": {"thread_id": conversation_id}}
+        try:
+            snapshot = await self._graph.aget_state(config)
+        except Exception as exc:  # noqa: BLE001 - sin checkpointer no hay hilo
+            logger.debug("sin_estado_previo", error_type=type(exc).__name__)
+            return ("", 0)
+
+        mensajes = list((snapshot.values or {}).get("messages") or []) if snapshot else []
+        # Se dejan los últimos: compactar todo borraría el turno en curso y la
+        # conversación perdería el hilo inmediato.
+        viejos = mensajes[:-dejar] if len(mensajes) > dejar else []
+        if not viejos:
+            return ("", 0)
+
+        conversacion = await self._repo.get_conversation(conversation_id)
+        previo = conversacion.summary if conversacion else None
+        resumen = await resumir(llm, viejos, previo)
+        if resumen is None:
+            # Sin resumen no se saca nada del hilo: perder los mensajes sin
+            # nada que los reemplace sería peor que no compactar.
+            raise ByteError(
+                "compactacion_fallida",
+                "No se pudo generar el resumen (¿el modelo responde?)",
+                status_code=503,
+            )
+
+        from langchain_core.messages import RemoveMessage
+
+        # Sacarlos del hilo es lo que libera contexto: sin esto el run siguiente
+        # mandaría todo el historial **más** el resumen.
+        await self._graph.aupdate_state(
+            config, {"messages": [RemoveMessage(id=m.id) for m in viejos if m.id]}
+        )
+        await self._repo.set_summary(conversation_id, resumen, None)
+        logger.info("compactacion_manual", conversation_id=conversation_id, mensajes=len(viejos))
+        return (resumen, len(viejos))
 
     async def _thread_has_state(self, config: dict[str, Any]) -> bool:
         try:

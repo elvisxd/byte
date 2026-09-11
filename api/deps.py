@@ -27,6 +27,8 @@ class AppContext:
     checkpointer: Any = None
     # None cuando Byte arranca sin Postgres: /documents y /search devuelven 503.
     rag: Any = None
+    # El modelo sin bind_tools, para el /compact manual.
+    llm: Any = None
 
 
 def get_context(request: Request) -> AppContext:

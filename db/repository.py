@@ -68,6 +68,9 @@ class Repository(Protocol):
         self, limit: int, cursor: str | None
     ) -> tuple[list[ConversationListItem], str | None]: ...
     async def set_title(self, conversation_id: str, title: str) -> Conversation | None: ...
+    async def set_summary(
+        self, conversation_id: str, summary: str, up_to_message_id: str | None
+    ) -> Conversation | None: ...
     async def delete_conversation(self, conversation_id: str) -> bool: ...
 
     async def add_message(
@@ -159,6 +162,21 @@ class MemoryRepository:
             if conversation is None:
                 return None
             updated = conversation.model_copy(update={"title": title, "updated_at": _now()})
+            self._conversations[conversation_id] = updated
+            return updated
+
+    async def set_summary(
+        self, conversation_id: str, summary: str, up_to_message_id: str | None
+    ) -> Conversation | None:
+        async with self._lock:
+            conversation = self._conversations.get(conversation_id)
+            if conversation is None:
+                return None
+            # updated_at no se toca: compactar es mantenimiento interno y no
+            # debería reordenar el sidebar como si el usuario hubiera escrito.
+            updated = conversation.model_copy(
+                update={"summary": summary, "summary_up_to_message_id": up_to_message_id}
+            )
             self._conversations[conversation_id] = updated
             return updated
 
@@ -395,6 +413,22 @@ class PostgresRepository:
                 f"""UPDATE conversations SET title = %s, updated_at = now()
                     WHERE id = %s RETURNING {self._CONVERSATION_COLS}""",
                 (title, conversation_id),
+            )
+            row = await cur.fetchone()
+        return self._to_conversation(row) if row else None
+
+    async def set_summary(
+        self, conversation_id: str, summary: str, up_to_message_id: str | None
+    ) -> Conversation | None:
+        if not _is_uuid(conversation_id):
+            return None
+        # updated_at no se toca: compactar es mantenimiento interno y no debería
+        # reordenar el sidebar como si el usuario hubiera escrito algo.
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                f"""UPDATE conversations SET summary = %s, summary_up_to_message_id = %s
+                    WHERE id = %s RETURNING {self._CONVERSATION_COLS}""",
+                (summary, up_to_message_id, conversation_id),
             )
             row = await cur.fetchone()
         return self._to_conversation(row) if row else None

@@ -8,6 +8,7 @@ from api.deps import Context, CredentialId, limiter, runs_limit
 from api.errors import ByteError
 from db.repository import title_from_content
 from models.schemas import (
+    CompactResult,
     Conversation,
     ConversationDetail,
     ConversationList,
@@ -170,3 +171,43 @@ async def create_message(
         events_url=f"/api/v1/runs/{run.id}/events",
         events_token=ctx.tokens.issue_events_token(run.id),
     )
+
+
+@router.post("/conversations/{conversation_id}/compact", response_model=CompactResult)
+@limiter.limit(runs_limit)
+async def compact_conversation(
+    request: Request,
+    conversation_id: str,
+    ctx: Context,
+    _credential: CredentialId,
+) -> CompactResult:
+    """Fuerza la compactación del historial.
+
+    Adelanta lo que `retrieve_context` hace solo al pasar el ~60% del contexto:
+    resume los mensajes viejos y los saca del hilo del agente. Los originales
+    siguen en MESSAGES, así que la UI los muestra igual; lo que cambia es lo que
+    se le manda al modelo.
+
+    Responde sincrónico (200, no 202): resumir es una sola llamada al modelo y
+    el resultado se devuelve en el momento.
+    """
+    await _require_conversation(ctx, conversation_id)
+    if ctx.llm is None:
+        raise ByteError("modelo_no_configurado", "No hay modelo para resumir", status_code=503)
+    # Cualquier run vivo, no solo los de esta credencial: dos escrituras
+    # simultáneas del mismo summary se pisarían.
+    if ctx.runs.busy(conversation_id):
+        raise ByteError(
+            "conversation_busy",
+            "Ya hay un run en curso en esta conversación",
+            status_code=409,
+        )
+
+    resumen, compactados = await ctx.runs.compactar(conversation_id, ctx.llm)
+    if not compactados:
+        raise ByteError(
+            "nada_para_compactar",
+            "La conversación no tiene historial viejo para compactar",
+            status_code=422,
+        )
+    return CompactResult(summary=resumen, compacted_messages=compactados)

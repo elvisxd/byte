@@ -6,7 +6,7 @@ Permiten testear el grafo y el streaming SSE sin Ollama ni Tavily reales.
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 
 def text_turn(text: str, *, chunk_size: int = 4) -> list[AIMessageChunk]:
@@ -35,6 +35,9 @@ class FakeLLM:
         self._turns = list(turns)
         self.calls = 0
         self.bound_tools: list[dict[str, Any]] = []
+        # Para la compactación, que llama a ainvoke en vez de astream.
+        self.invocaciones: list[list[Any]] = []
+        self.respuesta_invoke = "Resumen de lo hablado."
 
     def bind_tools(self, tools: list[dict[str, Any]]) -> "FakeLLM":
         self.bound_tools = tools
@@ -45,6 +48,11 @@ class FakeLLM:
         self.calls += 1
         for chunk in turn:
             yield chunk
+
+    async def ainvoke(self, messages: list[Any], **_kwargs: Any) -> AIMessage:
+        """Lo usa la compactación, que pide un texto y no un stream."""
+        self.invocaciones.append(messages)
+        return AIMessage(content=self.respuesta_invoke)
 
 
 class FakeTavily:
