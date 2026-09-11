@@ -5,6 +5,7 @@ Cliente de línea de comandos.
   `api/` ni de `agent/`, así que sirve igual contra una instancia remota
 
 ```bash
+uv run python -m cli.byte_cli            # la bienvenida: estado y qué podés hacer
 uv run python -m cli.byte_cli status    # estado de Byte y sus servicios
 uv run python -m cli.byte_cli ask "cómo creo un endpoint en FastAPI"
 uv run python -m cli.byte_cli ask --safe "ejecutá código que ..."  # pide confirmación
@@ -28,8 +29,10 @@ ahorrar unas teclas no vale el cambio.
 La API key sale de `BYTE_API_KEY`, o del `.env` del proyecto si se corre desde
 el repo. `BYTE_URL` apunta a otra instancia (por defecto `localhost:8000`).
 
-Los colores se apagan solos cuando la salida no es una terminal, así que
-`byte ask ... > archivo` guarda texto limpio. `byte run` propaga el código de
+Mientras el modelo responde gira un spinner con el tiempo transcurrido; va
+sobre stderr, así que no ensucia la salida. Los colores y el spinner se apagan
+solos cuando no hay terminal, así que `byte ask ... > archivo` guarda texto
+limpio. `byte run` propaga el código de
 salida del sandbox, para encadenar en scripts.
 
 ## El de Go (Fase 6)

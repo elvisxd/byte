@@ -10,7 +10,10 @@ igual contra una instancia remota que contra la local.
 
 import argparse
 import os
+import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,8 @@ import httpx
 # Paleta de la identidad, en ANSI (docs/prompts-canva-byte.md): prompt ámbar,
 # respuestas en crema, estado en gris.
 AMBAR = "\033[38;5;214m"
+AZUL = "\033[38;5;61m"
+CREMA = "\033[38;5;223m"
 GRIS = "\033[38;5;245m"
 ROJO = "\033[38;5;203m"
 VERDE = "\033[38;5;71m"
@@ -37,6 +42,55 @@ def _color(texto: str, codigo: str) -> str:
 def _error(mensaje: str) -> int:
     print(_color(f"✗ {mensaje}", ROJO), file=sys.stderr)
     return 1
+
+
+class Pensando:
+    """Spinner mientras el modelo responde, con el tiempo que lleva.
+
+    Va en un hilo porque la petición HTTP bloquea el principal, y sobre stderr
+    para no ensuciar la salida que alguien pueda estar redirigiendo a un
+    archivo. Sin terminal no dibuja nada.
+    """
+
+    CUADROS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(self, texto: str = "pensando") -> None:
+        self._texto = texto
+        self._activo = False
+        self._hilo: threading.Thread | None = None
+        self._encendido = sys.stderr.isatty()
+
+    def __enter__(self) -> "Pensando":
+        if not self._encendido:
+            return self
+        self._activo = True
+        sys.stderr.write("\033[?25l")  # esconde el cursor mientras gira
+        self._hilo = threading.Thread(target=self._girar, daemon=True)
+        self._hilo.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if not self._encendido:
+            return
+        self._activo = False
+        if self._hilo:
+            self._hilo.join(timeout=0.5)
+        # Borra la línea del spinner y devuelve el cursor.
+        sys.stderr.write("\r\033[2K\033[?25h")
+        sys.stderr.flush()
+
+    def _girar(self) -> None:
+        arranque = time.monotonic()
+        i = 0
+        while self._activo:
+            cuadro = self.CUADROS[i % len(self.CUADROS)]
+            segundos = time.monotonic() - arranque
+            sys.stderr.write(
+                f"\r\033[2K{AMBAR}{cuadro}{FIN} {GRIS}{self._texto}… {segundos:.0f}s{FIN}"
+            )
+            sys.stderr.flush()
+            time.sleep(0.08)
+            i += 1
 
 
 def _mensaje_de_error(respuesta: httpx.Response) -> str:
@@ -88,6 +142,52 @@ def _config() -> tuple[str, str]:
     return url, clave
 
 
+# --- Bienvenida ---
+
+# La mascota en bloques: orejas, cabeza con los ojos en negativo, y el collar
+# con la etiqueta ámbar. Mismo espíritu que el logo SVG de la web.
+MASCOTA = ["▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝▝  "]
+
+
+def _bienvenida(byte: Byte, url: str) -> int:
+    """Lo que se ve al escribir `byte` sin comando."""
+    ancho = min(shutil.get_terminal_size((88, 24)).columns, 88)
+    linea = "─" * (ancho - 2)
+
+    def fila(texto: str = "", color: str = "") -> None:
+        # El padding se calcula sobre el texto sin códigos ANSI, que no ocupan
+        # ancho en pantalla pero sí caracteres en el string.
+        relleno = " " * max(0, ancho - 4 - len(texto))
+        print(f"│ {_color(texto, color) if color else texto}{relleno} │")
+
+    print(_color(f"╭{linea}╮", AZUL))
+    fila()
+    for i, parte in enumerate(MASCOTA):
+        centrada = parte.center(ancho - 4)
+        fila(centrada, AMBAR if i == 2 else AZUL)
+    fila()
+    fila("  Byte — tu agente de IA, corriendo local", NEGRITA)
+    fila()
+
+    try:
+        salud = byte.pedir("GET", "/health/details")
+        herramientas = byte.pedir("GET", "/tools")["tools"]
+        punto = "●" if salud["status"] == "ok" else "◐"
+        fila(f"  {punto} {salud['model']} · {url}", VERDE if salud["status"] == "ok" else AMBAR)
+        fila(f"    {', '.join(t['name'] for t in herramientas)}", GRIS)
+    except Exception:  # noqa: BLE001 - la bienvenida no puede fallar por esto
+        fila("  ○ sin conexión con la API", GRIS)
+        fila(f"    {url}", GRIS)
+
+    fila()
+    fila('  byte ask "..."        preguntarle algo', GRIS)
+    fila("  byte docs add x.pdf   sumar un documento", GRIS)
+    fila("  byte --help           todos los comandos", GRIS)
+    fila()
+    print(_color(f"╰{linea}╯", AZUL))
+    return 0
+
+
 # --- Comandos ---
 
 
@@ -99,17 +199,13 @@ def cmd_ask(byte: Byte, args: argparse.Namespace) -> int:
     token, sí va a usar los eventos.
     """
     conversacion = args.conversation or byte.pedir("POST", "/conversations", json={})["id"]
-    if not sys.stdout.isatty():
-        pass  # sin terminal no se anuncia nada: la salida es solo la respuesta
-    else:
-        print(_color("· pensando…", GRIS), file=sys.stderr)
-
-    datos = byte.pedir(
-        "POST",
-        f"/conversations/{conversacion}/messages",
-        params={"wait": "true"},
-        json={"content": args.pregunta, "safe_mode": args.safe},
-    )
+    with Pensando():
+        datos = byte.pedir(
+            "POST",
+            f"/conversations/{conversacion}/messages",
+            params={"wait": "true"},
+            json={"content": args.pregunta, "safe_mode": args.safe},
+        )
 
     if datos.get("status") == "paused":
         # Modo seguro: el run espera una decisión humana. Se muestra el código
@@ -237,7 +333,8 @@ def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="byte", description="Byte: tu agente de IA local, desde la terminal."
     )
-    sub = parser.add_subparsers(dest="comando", required=True)
+    # Sin `required`: `byte` a secas muestra la bienvenida, como Claude Code.
+    sub = parser.add_subparsers(dest="comando")
 
     p = sub.add_parser("ask", help="preguntarle algo al agente")
     p.add_argument("pregunta")
@@ -296,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with Byte(url, clave) as byte:
+            if args.comando is None:
+                return _bienvenida(byte, url)
             return int(args.func(byte, args))
     except httpx.ConnectError:
         return _error(f"no responde {url} — ¿está levantada la API?")

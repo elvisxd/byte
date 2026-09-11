@@ -89,3 +89,48 @@ def test_sin_api_key_no_arranca(
 def test_los_colores_se_apagan_sin_terminal() -> None:
     """La salida redirigida a un archivo no debería tener códigos de escape."""
     assert byte_cli._color("hola", byte_cli.AMBAR) == "hola"
+
+
+# --- Bienvenida y spinner ---
+
+
+def test_sin_comando_muestra_la_bienvenida(cli, capsys: pytest.CaptureFixture[str]) -> None:
+    """`byte` a secas no es un error de uso: muestra qué es y cómo empezar."""
+    assert cli() == 0
+    salida = capsys.readouterr().out
+    assert "Byte" in salida
+    assert "byte ask" in salida
+    # El marco tiene que cerrar: si las filas no alinean, se ve roto.
+    lineas = [ln for ln in salida.splitlines() if ln.startswith(("│", "╭", "╰"))]
+    assert len({len(ln) for ln in lineas}) == 1, "las filas del marco no alinean"
+
+
+def test_la_bienvenida_aguanta_una_api_caida(
+    cli, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Es lo primero que alguien corre: si la API no está, tiene que decirlo,
+    no explotar con un traceback."""
+
+    def caida(self: byte_cli.Byte, *_: object, **__: object) -> object:
+        raise RuntimeError("no responde")
+
+    monkeypatch.setattr(byte_cli.Byte, "pedir", caida)
+    assert cli() == 0
+    assert "sin conexión" in capsys.readouterr().out
+
+
+def test_el_spinner_no_dibuja_sin_terminal(capsys: pytest.CaptureFixture[str]) -> None:
+    """Redirigir la salida a un archivo no debería llenarlo de códigos ANSI."""
+    with byte_cli.Pensando():
+        pass
+    assert capsys.readouterr().err == ""
+
+
+def test_el_spinner_devuelve_el_cursor_aunque_falle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Si el cursor queda escondido, la terminal se rompe para todo lo demás."""
+    monkeypatch.setattr(byte_cli.sys.stderr, "isatty", lambda: True)
+    with pytest.raises(ValueError, match="algo falló"), byte_cli.Pensando():
+        raise ValueError("algo falló")
+    assert "\033[?25h" in capsys.readouterr().err
