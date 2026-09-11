@@ -1,16 +1,56 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  calidad:
+    name: Lint y tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
-      - run: pip install ruff pytest
-      - run: ruff check .
-      - run: pytest
+          enable-cache: true
+
+      - name: Instalar dependencias desde el lock
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Formato
+        run: uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest -q
+
+  seguridad:
+    name: Secretos y dependencias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks necesita el historial completo para revisar los commits.
+          fetch-depth: 0
+
+      - name: Buscar secretos (gitleaks)
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source /repo --no-banner --redact --verbose
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Auditar dependencias de producción
+        run: |
+          uv export --frozen --no-dev --no-emit-project \
+            --format requirements-txt > /tmp/requirements-audit.txt
+          uv run --with pip-audit pip-audit -r /tmp/requirements-audit.txt --strict
