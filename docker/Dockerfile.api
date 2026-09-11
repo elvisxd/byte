@@ -25,6 +25,7 @@ COPY agent/ agent/
 COPY tools/ tools/
 COPY models/ models/
 COPY db/ db/
+COPY rag/ rag/
 COPY web/ web/
 
 RUN useradd --create-home --uid 10001 byte && chown -R byte:byte /app

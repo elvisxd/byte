@@ -119,3 +119,53 @@ def test_sin_credencial(crear_cliente: Callable[..., TestClient]) -> None:
     cliente = crear_cliente(turns=[text_turn("ok")])
     conversacion = _conversacion_con_historial(cliente, turnos=2)
     assert cliente.post(f"/api/v1/conversations/{conversacion}/compact").status_code == 401
+
+
+def test_el_system_prompt_sobrevive_a_la_compactacion(
+    crear_cliente: Callable[..., TestClient],
+) -> None:
+    """El system prompt vive al principio del hilo y no se reinyecta: sacarlo
+    una vez lo pierde para siempre, con las reglas anti-inyección adentro."""
+    from langchain_core.messages import SystemMessage
+
+    cliente = crear_cliente(turns=[text_turn("ok")])
+    conversacion = _conversacion_con_historial(cliente, turnos=5)
+
+    antes = _mensajes_del_hilo(cliente, conversacion)
+    assert isinstance(antes[0], SystemMessage), "el hilo tiene que arrancar con el system prompt"
+
+    cliente.post(f"/api/v1/conversations/{conversacion}/compact", headers=AUTH)
+
+    despues = _mensajes_del_hilo(cliente, conversacion)
+    assert any(isinstance(m, SystemMessage) for m in despues), (
+        "la compactación borró el system prompt: la conversación pierde sus reglas"
+    )
+
+
+def test_no_deja_un_tool_message_huerfano(crear_cliente: Callable[..., TestClient]) -> None:
+    """Un ToolMessage sin el AIMessage que lo pidió rompe el pareo de
+    tool_call_id y Ollama rechaza la conversación entera."""
+    import json
+
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    from tests.fakes import tool_turn
+
+    cliente = crear_cliente(
+        turns=[tool_turn("code_exec", json.dumps({"code": "print(1)"})), text_turn("listo")],
+        con_sandbox=True,
+        con_busqueda=False,
+    )
+    conversacion = _conversacion_con_historial(cliente, turnos=4)
+
+    cliente.post(f"/api/v1/conversations/{conversacion}/compact", headers=AUTH)
+
+    mensajes = _mensajes_del_hilo(cliente, conversacion)
+    pedidos = {
+        llamada["id"]
+        for m in mensajes
+        if isinstance(m, AIMessage)
+        for llamada in (m.tool_calls or [])
+    }
+    respondidos = {m.tool_call_id for m in mensajes if isinstance(m, ToolMessage)}
+    assert respondidos <= pedidos, f"ToolMessage sin su AIMessage: {respondidos - pedidos}"

@@ -10,6 +10,7 @@ Toda consulta filtra por user_id (docs/seguridad-byte.md): los documentos de un
 usuario no pueden aparecer en la búsqueda de otro.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +52,19 @@ def _vector_literal(vector: list[float]) -> str:
     Se formatea a mano para no sumar el paquete `pgvector` solo por esto.
     """
     return "[" + ",".join(repr(float(x)) for x in vector) + "]"
+
+
+def _es_uuid(value: str) -> bool:
+    """Un id inválido en una columna uuid explota como error 500.
+
+    Mismo guard que db/repository.py: los ids llegan de la URL, así que
+    cualquiera puede mandar cualquier cosa.
+    """
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 class DocumentStore:
@@ -99,6 +113,21 @@ class DocumentStore:
                 (len(chunks), document_id),
             )
 
+    async def recuperar_huerfanos(self) -> int:
+        """Cierra los documentos que quedaron indexándose cuando se cayó el proceso.
+
+        Las tareas de ingesta viven en memoria: si Byte se reinicia a mitad, el
+        documento queda en 'processing' para siempre. La búsqueda los ignora
+        (filtra por 'indexed'), así que sin esto son invisibles y eternos.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "UPDATE documents SET status = 'error', "
+                "error_message = 'la indexación se interrumpió; volvé a subir el archivo' "
+                "WHERE status = 'processing'"
+            )
+        return cur.rowcount
+
     async def mark_error(self, document_id: str, mensaje: str) -> None:
         async with self._pool.connection() as conn:
             await conn.execute(
@@ -109,6 +138,8 @@ class DocumentStore:
             )
 
     async def get(self, document_id: str, user_id: str | None) -> Document | None:
+        if not _es_uuid(document_id):
+            return None
         async with self._pool.connection() as conn:
             cur = await conn.execute(
                 """
@@ -142,6 +173,8 @@ class DocumentStore:
 
     async def delete(self, document_id: str, user_id: str | None) -> bool:
         """Borra el documento; los chunks se van por el ON DELETE CASCADE."""
+        if not _es_uuid(document_id):
+            return False
         async with self._pool.connection() as conn:
             cur = await conn.execute(
                 "DELETE FROM documents WHERE id = %s AND user_id IS NOT DISTINCT FROM %s",

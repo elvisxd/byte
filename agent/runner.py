@@ -54,6 +54,35 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _elegibles_para_compactar(mensajes: list[Any], dejar: int) -> list[Any]:
+    """Qué mensajes se pueden sacar del hilo al compactar.
+
+    Dos invariantes que un `mensajes[:-N]` a secas rompe:
+
+    - **El system prompt se queda.** Vive al principio del hilo y no se
+      reinyecta: `_seed_history` solo corre cuando el hilo está vacío, así que
+      sacarlo una vez lo pierde para siempre, con las reglas de seguridad
+      adentro. `trim_messages(include_system=True)` ya lo protege en el recorte
+      automático; acá hay que hacerlo a mano.
+    - **Un ToolMessage no se separa de su AIMessage.** Si el corte cae entre
+      medio, el hilo arranca con un `tool` sin el `assistant` que lo pidió y
+      Ollama rechaza la conversación entera. Es el mismo pareo que cuida
+      `_seed_history` al sembrar.
+    """
+    from langchain_core.messages import SystemMessage, ToolMessage
+
+    if len(mensajes) <= dejar:
+        return []
+
+    corte = len(mensajes) - dejar
+    # Un ToolMessage justo después del corte quedaría huérfano: se retrocede
+    # hasta dejar su AIMessage del lado que se conserva.
+    while corte > 0 and isinstance(mensajes[corte], ToolMessage):
+        corte -= 1
+
+    return [m for m in mensajes[:corte] if not isinstance(m, SystemMessage)]
+
+
 @dataclass
 class Run:
     """Estado de un run y su bus de eventos."""
@@ -470,7 +499,7 @@ class RunManager:
         mensajes = list((snapshot.values or {}).get("messages") or []) if snapshot else []
         # Se dejan los últimos: compactar todo borraría el turno en curso y la
         # conversación perdería el hilo inmediato.
-        viejos = mensajes[:-dejar] if len(mensajes) > dejar else []
+        viejos = _elegibles_para_compactar(mensajes, dejar)
         if not viejos:
             return ("", 0)
 
@@ -493,7 +522,10 @@ class RunManager:
         await self._graph.aupdate_state(
             config, {"messages": [RemoveMessage(id=m.id) for m in viejos if m.id]}
         )
-        await self._repo.set_summary(conversation_id, resumen, None)
+        # El marcador que ya había se respeta: pasarle None lo borraría, y la UI
+        # perdería el "compactada hasta acá" que dejó la compactación automática.
+        marcador = conversacion.summary_up_to_message_id if conversacion else None
+        await self._repo.set_summary(conversation_id, resumen, marcador)
         logger.info("compactacion_manual", conversation_id=conversation_id, mensajes=len(viejos))
         return (resumen, len(viejos))
 
