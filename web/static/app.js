@@ -15,6 +15,11 @@ const el = {
   mensajes: document.getElementById("mensajes"),
   pasos: document.getElementById("pasos"),
   form: document.getElementById("form-mensaje"),
+  aprobacion: document.getElementById("aprobacion"),
+  aprobacionMotivo: document.getElementById("aprobacion-motivo"),
+  aprobacionCodigo: document.getElementById("aprobacion-codigo"),
+  aprobar: document.getElementById("aprobar"),
+  rechazar: document.getElementById("rechazar"),
   entrada: document.getElementById("entrada"),
   enviar: document.getElementById("enviar"),
   detener: document.getElementById("detener"),
@@ -24,6 +29,10 @@ const el = {
 let conversationId = null;
 let runId = null;
 let stream = null;
+// Para retomar el stream donde quedó cuando el run se pausa y se reanuda.
+let ultimoEventoId = 0;
+let pendiente = null;
+let destinoActual = null;
 
 const PASOS = {
   retrieve_context: "Preparando contexto...",
@@ -102,11 +111,18 @@ async function mostrarEstado() {
   }
 }
 
-function escuchar(eventsUrl, destino) {
-  stream = new EventSource(eventsUrl, { withCredentials: true });
-  let texto = "";
+function escuchar(eventsUrl, destino, desdeId = 0) {
+  const url = desdeId > 0 ? `${eventsUrl}?last_event_id=${desdeId}` : eventsUrl;
+  stream = new EventSource(url, { withCredentials: true });
+  destinoActual = destino;
+  let texto = destino.textContent || "";
 
-  const on = (tipo, manejador) => stream.addEventListener(tipo, manejador);
+  const on = (tipo, manejador) =>
+    stream.addEventListener(tipo, (evento) => {
+      // El id sirve para retomar sin repetir si el run se pausa.
+      if (evento.lastEventId) ultimoEventoId = Number(evento.lastEventId);
+      manejador(evento);
+    });
 
   on("STEP_STARTED", (evento) => {
     const paso = JSON.parse(evento.data).stepName;
@@ -119,8 +135,24 @@ function escuchar(eventsUrl, destino) {
     texto += JSON.parse(evento.data).delta;
     destino.textContent = texto;
   });
+  on("STATE_DELTA", (evento) => {
+    const datos = JSON.parse(evento.data);
+    if (datos.awaiting_approval) {
+      mostrarAprobacion(datos.awaiting_approval);
+    } else if ("awaiting_approval" in datos) {
+      el.aprobacion.hidden = true;
+      pendiente = null;
+    }
+  });
   on("RUN_FINISHED", (evento) => {
     const datos = JSON.parse(evento.data);
+    if (datos.status === "paused") {
+      // El run sigue vivo esperando la decisión: no se limpia el estado.
+      stream.close();
+      stream = null;
+      el.pasos.textContent = "Esperando tu confirmación...";
+      return;
+    }
     if (datos.status === "cancelled") {
       destino.textContent = texto + (texto ? "\n" : "") + "[detenido]";
     }
@@ -163,6 +195,8 @@ async function enviar(evento) {
   el.enviar.disabled = true;
   el.detener.disabled = false;
   el.fuentes.textContent = "";
+  el.aprobacion.hidden = true;
+  ultimoEventoId = 0;
   const destino = burbuja("assistant", "");
 
   try {
@@ -175,6 +209,42 @@ async function enviar(evento) {
   } catch (error) {
     destino.textContent = "[error: " + error.message + "]";
     terminar();
+  }
+}
+
+function mostrarAprobacion(datos) {
+  pendiente = datos;
+  const motivos = {
+    web_y_codigo_en_el_mismo_run:
+      "Este run leyó páginas web y ahora quiere ejecutar código. Revisá el código antes de aprobar.",
+    modo_seguro_activado: "Pediste modo seguro: confirmá antes de ejecutar.",
+  };
+  el.aprobacionMotivo.textContent = motivos[datos.reason] || datos.reason || "";
+  // textContent, nunca innerHTML: esto es código que escribió el modelo.
+  el.aprobacionCodigo.textContent = datos.code || "(sin código)";
+  el.aprobacion.hidden = false;
+  el.aprobar.disabled = false;
+  el.rechazar.disabled = false;
+}
+
+async function decidir(aprobar) {
+  if (!pendiente || !runId) return;
+  el.aprobar.disabled = true;
+  el.rechazar.disabled = true;
+  const token = pendiente.resume_token;
+  try {
+    await pedir(`/runs/${runId}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ resume_token: token, approve: aprobar }),
+    });
+    el.aprobacion.hidden = true;
+    pendiente = null;
+    // Mismo run: se retoma el stream desde el último evento visto.
+    escuchar(`${API}/runs/${runId}/events`, destinoActual, ultimoEventoId);
+  } catch (error) {
+    el.pasos.textContent = "No se pudo continuar: " + error.message;
+    el.aprobar.disabled = false;
+    el.rechazar.disabled = false;
   }
 }
 
@@ -194,6 +264,8 @@ el.apiKey.addEventListener("keydown", (e) => {
 });
 el.form.addEventListener("submit", enviar);
 el.detener.addEventListener("click", detener);
+el.aprobar.addEventListener("click", () => decidir(true));
+el.rechazar.addEventListener("click", () => decidir(false));
 el.entrada.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) el.form.requestSubmit();
 });

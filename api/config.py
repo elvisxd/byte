@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # --- Herramientas ---
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
     sandbox_url: str = Field(default="", alias="SANDBOX_URL")
+    # Token interno compartido con el servicio sandbox. Sin él no se registra la
+    # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
+    sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")
 
     # --- Límites del agente (seguridad: costos y loops) ---
     max_iterations: int = Field(default=6, alias="BYTE_MAX_ITERATIONS")

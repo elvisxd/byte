@@ -2,7 +2,7 @@
 
 > Un agente de IA propio que corre un modelo open source localmente, capaz de programar, buscar en internet y usar herramientas vía MCP — sin depender de APIs pagas.
 
-**Estado:** fase de diseño cerrada · MVP (Fase 0) funcionando de punta a punta en local.
+**Estado:** MVP (Fase 0) y ejecución de código en sandbox (Fase 1) funcionando de punta a punta en local.
 
 ## Stack
 Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + pgvector · MCP · AG-UI · Railway · Go (CLI)
@@ -39,10 +39,15 @@ cp .env.example .env
 # 3. El modelo (gratis, en tu PC)
 ollama pull qwen2.5-coder:7b
 
-# 4. Postgres con pgvector (opcional en el MVP; sin él todo queda en memoria)
+# 4. El sandbox de ejecución de código (en otra terminal)
+cd sandbox && npm install
+SANDBOX_TOKEN=$(openssl rand -hex 32) npm start   # el mismo token va en .env
+cd ..
+
+# 5. Postgres con pgvector (opcional; sin él todo queda en memoria)
 cd docker && docker compose up -d postgres ollama && cd ..
 
-# 5. Levantar la API
+# 6. Levantar la API
 uv run uvicorn api.main:app --reload
 ```
 
@@ -52,8 +57,9 @@ uv run uvicorn api.main:app --reload
 
 Sin `DATABASE_URL`, Byte arranca en memoria: sirve para probar, pero las
 conversaciones se pierden al reiniciar (lo avisa en el log). Con `BYTE_ENV=prod`
-directamente no arranca sin Postgres. Sin `TAVILY_API_KEY`, el agente funciona
-igual pero sin búsqueda web.
+directamente no arranca sin Postgres. Sin `TAVILY_API_KEY` el agente funciona
+igual pero sin búsqueda web, y sin `SANDBOX_URL`/`SANDBOX_TOKEN`, sin ejecutar
+código.
 
 ### Probar sin navegador
 
@@ -75,9 +81,30 @@ uv run pytest -q          # no necesita Ollama, Tavily ni Postgres
 uv run ruff check .
 uv run ruff format .
 uv run pre-commit install # ruff + gitleaks antes de cada commit
+
+cd sandbox && npm test    # incluye la suite de escape del sandbox
 ```
 
-## Qué hay hoy (Fase 0)
+## Qué hay hoy
+
+### Fase 1 — ejecución de código
+
+- **Servicio `sandbox/`** (Node + Pyodide): corre el código que escribe el
+  agente dentro de WebAssembly, con un intérprete nuevo por ejecución. Cada capa
+  de aislamiento se verificó contra un Pyodide sin endurecer, donde el vector
+  **funcionaba** — el detalle y la tabla completa están en
+  [`sandbox/README.md`](sandbox/README.md)
+- **`POST /execute`** para ejecutar directo (lo que va a usar `byte run`), y
+  `code_exec` como segunda herramienta del agente
+- **Modo seguro (HITL)**: si en el mismo run hubo búsqueda web y el agente
+  quiere ejecutar código, el run se **detiene** y espera confirmación humana,
+  aunque nadie lo haya pedido. La combinación "contenido de terceros + ejecutar
+  código" es justo la que permite que una inyección indirecta llegue a correr
+  algo. Se modela como estado AG-UI (`awaiting_approval`) y se retoma con
+  `POST /runs/{id}/resume`, en el mismo run, desde el checkpoint
+- **`evals/`** con 10 tareas para detectar regresiones del agente
+
+### Fase 0 — el MVP
 
 Implementado:
 - **API** según el contrato: `/health`, `/health/details`, conversaciones (CRUD con
@@ -100,8 +127,8 @@ Implementado:
 - **`BYTE_ENV=prod` no arranca sin Postgres**: el checkpointer nunca queda en memoria
   en producción, como pide el plan
 - **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
-- **64 tests** que cubren el ciclo completo del run con dobles de Ollama y Tavily
-  (no hacen falta servicios externos para correrlos)
+- **95 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
+  sandbox: no hacen falta servicios externos para correrlos
 
 Pendiente de Fase 0:
 - **Correr el agente contra un Ollama real.** El código y los tests están, pero los

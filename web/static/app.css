@@ -87,3 +87,25 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Modo seguro: confirmación antes de ejecutar código. */
+.aprobacion {
+  border: 2px solid var(--borde);
+  border-radius: 0.5rem;
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+}
+.aprobacion h2 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+.aprobacion pre {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem;
+  background: #8881;
+  border-radius: 0.4rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

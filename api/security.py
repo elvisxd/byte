@@ -51,11 +51,21 @@ class Credentials:
 class TokenService:
     """Tokens firmados: cookie de sesión y events_token de un solo uso."""
 
-    def __init__(self, secret_key: str, events_ttl_s: int, session_ttl_s: int) -> None:
+    def __init__(
+        self,
+        secret_key: str,
+        events_ttl_s: int,
+        session_ttl_s: int,
+        resume_ttl_s: int = 3600,
+    ) -> None:
         self._session_signer = TimestampSigner(secret_key, salt="byte-session")
         self._events_signer = TimestampSigner(secret_key, salt="byte-events")
+        self._resume_signer = TimestampSigner(secret_key, salt="byte-resume")
         self._events_ttl_s = events_ttl_s
         self._session_ttl_s = session_ttl_s
+        # Del otro lado hay una persona decidiendo: el token de reanudar dura
+        # bastante más que el del stream.
+        self._resume_ttl_s = resume_ttl_s
         # Nonces ya canjeados: garantiza el "un solo uso".
         self._spent: dict[str, float] = {}
 
@@ -94,9 +104,34 @@ class TokenService:
         self._spent[nonce] = time.monotonic()
         return True
 
+    # --- resume_token (modo seguro / HITL) ---
+    def issue_resume_token(self, run_id: str, credential_id: str) -> str:
+        """Aleatorio, firmado, de un solo uso y ligado al run y a la credencial."""
+        nonce = secrets.token_urlsafe(16)
+        return self._resume_signer.sign(f"{run_id}:{credential_id}:{nonce}").decode()
+
+    def verify_resume_token(self, token: str | None, run_id: str, credential_id: str) -> bool:
+        if not token:
+            return False
+        try:
+            raw = self._resume_signer.unsign(token, max_age=self._resume_ttl_s).decode()
+        except (BadSignature, SignatureExpired):
+            return False
+        partes = raw.split(":")
+        if len(partes) != 3:
+            return False
+        token_run_id, token_credential_id, nonce = partes
+        if token_run_id != run_id or token_credential_id != credential_id or not nonce:
+            return False
+        self._prune_spent()
+        if nonce in self._spent:
+            return False
+        self._spent[nonce] = time.monotonic()
+        return True
+
     def _prune_spent(self) -> None:
         """Los nonces solo importan mientras el token podría seguir vigente."""
-        cutoff = time.monotonic() - self._events_ttl_s
+        cutoff = time.monotonic() - max(self._events_ttl_s, self._resume_ttl_s)
         for nonce, seen_at in list(self._spent.items()):
             if seen_at < cutoff:
                 del self._spent[nonce]

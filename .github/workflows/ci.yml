@@ -49,14 +49,35 @@ jobs:
       - name: Construir la imagen de la API
         run: docker build -f docker/Dockerfile.api -t byte-api:ci .
 
+      - name: Construir la imagen del sandbox
+        run: docker build -f docker/Dockerfile.sandbox -t byte-sandbox:ci .
+
+      - name: El sandbox arranca y ejecuta Python
+        run: |
+          # Las credenciales de prueba se generan al vuelo: así no hay ningún
+          # literal con pinta de secreto en el repo (gitleaks los marca, y hace
+          # bien: no se puede distinguir de uno real mirando el archivo).
+          TOKEN="$(openssl rand -hex 16)"
+          docker run --rm -d --name sandbox-ci \
+            -e SANDBOX_TOKEN="$TOKEN" -p 3000:3000 byte-sandbox:ci
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/health && break
+            sleep 1
+          done
+          curl -sf -X POST http://127.0.0.1:3000/execute \
+            -H "X-Internal-Token: $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"code":"print(6*7)"}' | grep -q '"stdout":"42' \
+            || { docker logs sandbox-ci; exit 1; }
+          docker rm -f sandbox-ci
+
       - name: La app importa dentro de la imagen
         run: docker run --rm byte-api:ci python -c "import api.main; print('import ok')"
 
       - name: La API responde en /health
         run: |
           docker run --rm -d --name byte-ci \
-            -e BYTE_API_KEY=clave-de-ci \
-            -e BYTE_SECRET_KEY=0123456789abcdef0123456789abcdef \
+            -e BYTE_API_KEY="$(openssl rand -hex 8)" \
+            -e BYTE_SECRET_KEY="$(openssl rand -hex 16)" \
             -e BYTE_STORAGE=memory \
             -p 8000:8000 byte-api:ci
           for _ in $(seq 1 30); do
@@ -66,6 +87,26 @@ jobs:
           curl -sf http://127.0.0.1:8000/api/v1/health
           docker logs byte-ci | tail -5
           docker rm -f byte-ci
+
+  sandbox:
+    name: Sandbox (Pyodide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sandbox/package-lock.json
+
+      - name: Instalar dependencias desde el lock
+        run: npm ci
+        working-directory: sandbox
+
+      - name: Tests del sandbox (incluye los de escape)
+        run: npm test
+        working-directory: sandbox
 
   seguridad:
     name: Secretos y dependencias

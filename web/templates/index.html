@@ -22,6 +22,16 @@
     <main id="chat" hidden>
       <ol id="mensajes" aria-live="polite"></ol>
       <p id="pasos" class="pasos"></p>
+
+      <section id="aprobacion" class="aprobacion" hidden>
+        <h2>Byte quiere ejecutar código</h2>
+        <p id="aprobacion-motivo" class="pasos"></p>
+        <pre id="aprobacion-codigo"></pre>
+        <div class="acciones">
+          <button id="aprobar" type="button">Aprobar y ejecutar</button>
+          <button id="rechazar" type="button">Rechazar</button>
+        </div>
+      </section>
       <form id="form-mensaje">
         <textarea id="entrada" rows="3" placeholder="Preguntale algo a Byte..."></textarea>
         <div class="acciones">

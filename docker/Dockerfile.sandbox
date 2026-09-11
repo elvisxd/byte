@@ -1,0 +1,27 @@
+# Servicio sandbox: ejecuta el código del agente dentro de Pyodide (WASM).
+#
+# Los dos flags del CMD son parte de la seguridad, no una optimización:
+# sin ellos el propio servicio se niega a arrancar (ver sandbox/server.mjs).
+FROM node:22-slim
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# Capa de dependencias aparte: no se reinstala con cada cambio de código.
+COPY sandbox/package.json sandbox/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY sandbox/server.mjs ./
+COPY sandbox/lib/ ./lib/
+
+RUN useradd --create-home --uid 10001 sandbox && chown -R sandbox:sandbox /app
+USER sandbox
+
+EXPOSE 3000
+
+# --disallow-code-generation-from-strings: sin eval no hay escape por
+#   import('node:fs') al filesystem del host.
+# --wasm-max-mem-pages=6144: 384 MB de tope al heap WASM (resourceLimits del
+#   worker no cubre esa memoria).
+CMD ["node", "--disallow-code-generation-from-strings", "--wasm-max-mem-pages=6144", "server.mjs"]

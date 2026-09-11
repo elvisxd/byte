@@ -37,6 +37,23 @@ services:
       - ollama-models:/root/.ollama
     restart: unless-stopped
 
+  sandbox:
+    # Ejecuta el código que genera el agente. No recibe el .env: corre sin
+    # secretos a propósito (docs/seguridad-byte.md), solo con su token interno.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sandbox
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?definí SANDBOX_TOKEN en tu .env}
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # Opcional: la API en contenedor. En el día a día conviene correrla con
   # `uv run uvicorn api.main:app --reload` para tener recarga en caliente.
   api:
@@ -48,12 +65,15 @@ services:
     environment:
       DATABASE_URL: postgresql://byte:byte@postgres:5432/byte
       OLLAMA_BASE_URL: http://ollama:11434
+      SANDBOX_URL: http://sandbox:3000
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       ollama:
+        condition: service_started
+      sandbox:
         condition: service_started
     restart: unless-stopped
 

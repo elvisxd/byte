@@ -9,7 +9,7 @@ Seguridad:
 from pydantic import BaseModel, Field
 
 from api.logging import get_logger
-from tools.base import Tool, ToolRegistry, ToolResult, wrap_untrusted
+from tools.base import Tool, ToolResult, wrap_untrusted
 
 logger = get_logger("tools.web_search")
 
@@ -95,20 +95,3 @@ def build_web_search_tool(
         run=run,
         source="builtin",
     )
-
-
-def build_registry(
-    tavily_api_key: str, max_result_chars: int, max_query_chars: int
-) -> ToolRegistry:
-    """Registra las herramientas disponibles según la configuración.
-
-    Sin TAVILY_API_KEY el agente arranca igual, solo sin búsqueda web.
-    """
-    registry = ToolRegistry()
-    if tavily_api_key:
-        registry.add(build_web_search_tool(tavily_api_key, max_result_chars, max_query_chars))
-    else:
-        logger.warning(
-            "sin_tavily_api_key", detail="el agente arranca sin búsqueda web (solo conversación)"
-        )
-    return registry

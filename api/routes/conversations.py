@@ -13,6 +13,7 @@ from models.schemas import (
     ConversationList,
     CreateConversationRequest,
     CreateMessageRequest,
+    MessagePaused,
     MessageResult,
     PatchConversationRequest,
     RunAccepted,
@@ -99,7 +100,11 @@ async def delete_conversation(
     # OpenAPI sirva para generar clientes tipados (el CLI en Go, Fase 6).
     response_model=None,
     responses={
-        202: {"model": RunAccepted, "description": "Run creado: seguirlo por SSE"},
+        202: {
+            "model": RunAccepted,
+            "description": "Run creado: seguirlo por SSE. Con ?wait=true y modo seguro, "
+            "el run queda en pausa y se devuelve MessagePaused.",
+        },
         200: {"model": MessageResult, "description": "Con ?wait=true: mensaje final"},
     },
 )
@@ -141,6 +146,12 @@ async def create_message(
         await ctx.runs.wait(run)
         if run.status == "error":
             raise ByteError("run_failed", "El run terminó con error", status_code=500)
+        if run.status == "paused":
+            # Modo seguro: no hay mensaje que devolver todavía. Se responde con
+            # lo que hace falta para decidir y continuar por /resume.
+            pendiente = dict(run.awaiting or {})
+            pendiente["resume_token"] = ctx.tokens.issue_resume_token(run.id, credential)
+            return MessagePaused(run_id=run.id, status="paused", awaiting_approval=pendiente)
         message = await ctx.repository.get_message(run.message_id) if run.message_id else None
         if message is None:
             raise ByteError("run_failed", "El run no produjo respuesta", status_code=500)

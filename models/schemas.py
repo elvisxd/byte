@@ -85,11 +85,59 @@ class MessageResult(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ResumeRequest(BaseModel):
+    """Decisión del usuario sobre lo que el run dejó esperando (modo seguro)."""
+
+    resume_token: str = Field(min_length=1, max_length=512)
+    approve: bool
+
+
+class RunResumed(BaseModel):
+    """Respuesta de POST /runs/{id}/resume."""
+
+    run_id: str
+
+
+class MessagePaused(BaseModel):
+    """Respuesta de POST .../messages?wait=true cuando el run queda esperando.
+
+    Con modo seguro no hay mensaje final que devolver: el run se detuvo y
+    necesita una decisión humana. El `resume_token` viene adentro de
+    `awaiting_approval` para que un script pueda seguir sin leer el SSE.
+    """
+
+    run_id: str
+    status: Literal["paused"]
+    awaiting_approval: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunState(BaseModel):
     status: RunStatusValue
     iterations: int
     started_at: datetime
     finished_at: datetime | None = None
+
+
+# Topes de /execute (docs/api-contrato-byte.md).
+MAX_EXECUTE_CODE_CHARS = 50 * 1024
+MAX_EXECUTE_TIMEOUT_S = 30
+
+
+class ExecuteRequest(BaseModel):
+    """Ejecución directa de código, sin pasar por el agente (CLI y scripts)."""
+
+    language: Literal["python"] = "python"
+    # El tope se valida en la ruta para poder responder 413 y no 422.
+    code: str = Field(min_length=1)
+    timeout_s: int = Field(default=10, ge=1, le=MAX_EXECUTE_TIMEOUT_S)
+
+
+class ExecuteResult(BaseModel):
+    stdout: str
+    stderr: str
+    exit_code: int
+    duration_ms: int
+    truncated: bool = False
 
 
 class SessionRequest(BaseModel):

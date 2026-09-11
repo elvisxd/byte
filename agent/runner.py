@@ -55,6 +55,8 @@ class Run:
     finished_at: datetime | None = None
     message_id: str | None = None
     sources: list[dict[str, Any]] = field(default_factory=list)
+    # Lo que el run dejó esperando confirmación humana (modo seguro).
+    awaiting: dict[str, Any] | None = None
     events: list[Event] = field(default_factory=list)
     done: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
@@ -100,6 +102,7 @@ class RunManager:
         self,
         graph: Any,
         repository: Repository,
+        tokens: Any,
         *,
         max_concurrent_runs: int = 2,
         run_timeout_s: int = 180,
@@ -107,6 +110,8 @@ class RunManager:
     ) -> None:
         self._graph = graph
         self._repo = repository
+        # TokenService: firma los resume_token del modo seguro.
+        self._tokens = tokens
         self._max_concurrent = max_concurrent_runs
         self._timeout_s = run_timeout_s
         self._max_iterations = max_iterations
@@ -170,7 +175,7 @@ class RunManager:
         )
         self._runs[run.id] = run
         self._prune()
-        run.task = asyncio.create_task(self._execute(run, user_content))
+        run.task = asyncio.create_task(self._execute(run, user_content=user_content))
         return run
 
     def _prune(self) -> None:
@@ -185,16 +190,36 @@ class RunManager:
             del self._runs[run.id]
 
     # --- Ejecución ---
-    async def _execute(self, run: Run, user_content: str) -> None:
+    async def _execute(
+        self,
+        run: Run,
+        *,
+        user_content: str | None = None,
+        aprobacion: bool | None = None,
+    ) -> None:
+        """Corre el grafo, ya sea desde el principio o retomando una aprobación."""
         log = logger.bind(run_id=run.id, conversation_id=run.conversation_id)
-        run.emit(
-            AGUI.RUN_STARTED,
-            {"threadId": run.conversation_id, "safeMode": run.safe_mode},
-        )
-        log.info("run_iniciado", chars=len(user_content))
+        if aprobacion is None:
+            run.emit(
+                AGUI.RUN_STARTED,
+                {"threadId": run.conversation_id, "safeMode": run.safe_mode},
+            )
+            log.info("run_iniciado", chars=len(user_content or ""))
+        else:
+            # No se emite otro RUN_STARTED: es el mismo run. Que ya no espera
+            # nada es parte del estado compartido.
+            run.awaiting = None
+            run.emit(AGUI.STATE_DELTA, {"awaiting_approval": None, "approved": aprobacion})
+            log.info("run_reanudado", aprobado=aprobacion)
         try:
             async with asyncio.timeout(self._timeout_s):
-                final_state = await self._run_graph(run, user_content)
+                final_state = await self._run_graph(
+                    run, user_content=user_content, aprobacion=aprobacion
+                )
+
+            if self._pausar_si_espera_aprobacion(run, final_state, log):
+                return
+
             await self._persist(run, final_state)
             run.status = "finished"
             run.emit(
@@ -237,7 +262,13 @@ class RunManager:
             run.finished_at = _now()
             run.done.set()
 
-    async def _run_graph(self, run: Run, user_content: str) -> dict[str, Any]:
+    async def _run_graph(
+        self,
+        run: Run,
+        *,
+        user_content: str | None = None,
+        aprobacion: bool | None = None,
+    ) -> dict[str, Any]:
         """Arma el estado de entrada y ejecuta el grafo.
 
         El hilo del checkpointer (`thread_id = conversation_id`) es el historial
@@ -246,11 +277,21 @@ class RunManager:
         verdad. Si ya tiene estado, alcanza con mandar el mensaje nuevo.
         """
         config: dict[str, Any] = {
-            "configurable": {"thread_id": run.conversation_id, "emitter": run},
+            "configurable": {
+                "thread_id": run.conversation_id,
+                "emitter": run,
+                "safe_mode": run.safe_mode,
+            },
             "recursion_limit": self._max_iterations * 2 + 10,
         }
+        if aprobacion is not None:
+            # El grafo retoma exactamente donde quedó el interrupt.
+            from langgraph.types import Command
+
+            return await self._graph.ainvoke(Command(resume=aprobacion), config=config)
+
         if await self._thread_has_state(config):
-            messages: list[Any] = [HumanMessage(content=user_content)]
+            messages: list[Any] = [HumanMessage(content=user_content or "")]
         else:
             messages = [SystemMessage(content=SYSTEM_PROMPT), *await self._seed_history(run)]
 
@@ -331,6 +372,42 @@ class RunManager:
                 },
             )
             run.message_id = saved.id
+
+    def _pausar_si_espera_aprobacion(self, run: Run, final_state: dict[str, Any], log: Any) -> bool:
+        """Si el grafo se detuvo en un interrupt, deja el run en "paused".
+
+        AG-UI no tiene evento de aprobación: se modela como estado, igual que
+        dice el contrato. El cliente muestra el código, el usuario decide, y
+        vuelve por POST /runs/{id}/resume.
+        """
+        interrupciones = final_state.get("__interrupt__") or []
+        if not interrupciones:
+            return False
+
+        pendiente = dict(getattr(interrupciones[0], "value", {}) or {})
+        run.awaiting = pendiente
+        run.status = "paused"
+        run.iterations = int(final_state.get("iterations") or run.iterations)
+        resume_token = self._tokens.issue_resume_token(run.id, run.credential_id)
+        run.emit(
+            AGUI.STATE_DELTA,
+            {"awaiting_approval": {**pendiente, "resume_token": resume_token}},
+        )
+        run.emit(
+            AGUI.RUN_FINISHED,
+            {"status": "paused", "threadId": run.conversation_id},
+        )
+        log.info("run_en_pausa", motivo=pendiente.get("reason"), tool=pendiente.get("tool"))
+        return True
+
+    async def resume(self, run: Run, aprobacion: bool) -> None:
+        """Retoma un run pausado con la decisión del usuario."""
+        if run.status != "paused":
+            raise ByteError("conflict", "El run no está esperando aprobación", status_code=409)
+        run.status = "running"
+        run.finished_at = None
+        run.done = asyncio.Event()
+        run.task = asyncio.create_task(self._execute(run, aprobacion=aprobacion))
 
     # --- Observación ---
     async def stream(self, run: Run, last_event_id: int = 0) -> AsyncIterator[str]:

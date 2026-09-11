@@ -111,3 +111,32 @@ class OllamaCaidoLLM:
 
         raise httpx.ConnectError("conexión rechazada")
         yield AIMessageChunk(content="")  # pragma: no cover
+
+
+class FakeSandbox:
+    """Doble del servicio sandbox: devuelve `resultado` sin ejecutar nada."""
+
+    def __init__(self, resultado: dict[str, Any] | None = None) -> None:
+        self.resultado = resultado or {
+            "stdout": "42\n",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 7,
+            "truncated": False,
+        }
+        self.pedidos: list[dict[str, Any]] = []
+
+    async def post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> Any:
+        self.pedidos.append({"url": url, "json": json, "headers": headers})
+
+        class _Respuesta:
+            def __init__(self, datos: dict[str, Any]) -> None:
+                self._datos = datos
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, Any]:
+                return self._datos
+
+        return _Respuesta(self.resultado)

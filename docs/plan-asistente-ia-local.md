@@ -107,11 +107,11 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 ## Fases de escalado (después del MVP, en orden)
 
 ### Fase 1 — Segunda herramienta: ejecución de código (estimación: 1-2 semanas)
-- [ ] Servicio `sandbox/` en Node/Deno con Pyodide (WASM) desplegado en Railway
-- [ ] `tools/code_exec.py` como cliente de ese sandbox, con timeout y límite de salida
-- [ ] Endurecer el sandbox según `seguridad-byte.md` (sin red, sin secretos, intérprete nuevo por ejecución) y modo seguro automático cuando hubo web + código en el mismo run
-- [ ] Probar el agente resolviendo tareas reales de programación
-- [ ] Armar `evals/` con ~10 tareas de prueba
+- [~] Servicio `sandbox/` en Node con Pyodide (WASM) — **construido y con 25 tests propios; el deploy en Railway queda para la Fase 7.** Se eligió Node sobre Deno por `worker_threads` con límites de memoria y porque es lo que se pudo verificar de punta a punta
+- [x] `tools/code_exec.py` como cliente de ese sandbox, con timeout y límite de salida
+- [x] Endurecer el sandbox según `seguridad-byte.md` (sin red, sin secretos, intérprete nuevo por ejecución) y modo seguro automático cuando hubo web + código en el mismo run
+- [ ] Probar el agente resolviendo tareas reales de programación — **pendiente: necesita Ollama corriendo. Los evals están listos para eso**
+- [x] Armar `evals/` con ~10 tareas de prueba
 
 ### Fase 2 — Memoria y RAG (estimación: 2-3 semanas)
 - [ ] Postgres con imagen `pgvector/pgvector`; índice HNSW; tabla `DOCUMENT_CHUNKS` con vector(768) para `nomic-embed-text`

@@ -1,0 +1,10 @@
+# Findings de gitleaks que son falsos positivos, con su razón.
+#
+# El formato es <commit>:<archivo>:<regla>:<línea>, así que cada línea ignora
+# UN hallazgo puntual y nada más: no silencia la regla ni el archivo.
+#
+# BYTE_SECRET_KEY de juguete en el job `imagen` del CI, que solo existía para
+# que el contenedor arrancara en la verificación. El literal ya se reemplazó por
+# `openssl rand`, pero el commit quedó en main (PR #7) y gitleaks escanea todo
+# el historial. La clave nunca dio acceso a nada.
+9272e29346ec029a17a11bc432ca3b6b3759371f:.github/workflows/ci.yml:generic-api-key:59

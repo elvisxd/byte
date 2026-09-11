@@ -25,12 +25,12 @@ from api.config import Settings, get_settings
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
-from api.routes import conversations, health, runs, session, tools
+from api.routes import conversations, execute, health, runs, session, tools
 from api.security import Credentials, TokenService, resolve_secret_key, security_headers
 from db.repository import Repository, build_repository
 from models.schemas import ErrorEnvelope
 from tools.base import ToolRegistry
-from tools.web_search import build_registry
+from tools.registry import build_registry
 
 logger = get_logger("api")
 
@@ -91,11 +91,7 @@ def create_app(
 
         async with AsyncExitStack() as stack:
             checkpointer = await _build_checkpointer(resolved_settings, stack)
-            tool_registry = registry or build_registry(
-                resolved_settings.tavily_api_key,
-                resolved_settings.max_tool_result_chars,
-                resolved_settings.max_search_query_chars,
-            )
+            tool_registry = registry or build_registry(resolved_settings)
             graph = build_graph(
                 llm or build_llm(resolved_settings),
                 tool_registry,
@@ -104,9 +100,15 @@ def create_app(
                 num_ctx=resolved_settings.ollama_num_ctx,
                 checkpointer=checkpointer,
             )
+            tokens = TokenService(
+                resolve_secret_key(resolved_settings),
+                resolved_settings.events_token_ttl_s,
+                resolved_settings.session_ttl_s,
+            )
             run_manager = RunManager(
                 graph,
                 repo,
+                tokens,
                 max_concurrent_runs=resolved_settings.max_concurrent_runs,
                 run_timeout_s=resolved_settings.run_timeout_s,
                 max_iterations=resolved_settings.max_iterations,
@@ -114,11 +116,7 @@ def create_app(
             app.state.ctx = AppContext(
                 settings=resolved_settings,
                 credentials=credentials,
-                tokens=TokenService(
-                    resolve_secret_key(resolved_settings),
-                    resolved_settings.events_token_ttl_s,
-                    resolved_settings.session_ttl_s,
-                ),
+                tokens=tokens,
                 repository=repo,
                 runs=run_manager,
                 registry=tool_registry,
@@ -215,7 +213,14 @@ def create_app(
             (503, "Servicio o modelo no disponible"),
         )
     }
-    for router in (health.router, session.router, conversations.router, runs.router, tools.router):
+    for router in (
+        health.router,
+        session.router,
+        conversations.router,
+        runs.router,
+        tools.router,
+        execute.router,
+    ):
         app.include_router(router, prefix="/api/v1", responses=errores_comunes)
 
     static_dir = WEB_DIR / "static"

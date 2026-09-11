@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage, trim_messages
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from agent.events import AGUI
@@ -32,6 +33,29 @@ CHARS_PER_TOKEN = 4
 # El historial no puede comerse todo el contexto: hay que dejar lugar a los
 # resultados de herramientas y a la respuesta.
 HISTORY_CONTEXT_RATIO = 0.6
+
+# Herramientas que pueden pedir confirmación humana antes de correr.
+HERRAMIENTAS_SENSIBLES = frozenset({"code_exec"})
+
+
+def requiere_aprobacion(pedidas: list[str], ya_usadas: list[str], safe_mode: bool) -> str | None:
+    """Devuelve el motivo por el que hace falta aprobación humana, o None.
+
+    La regla del contrato: el modo seguro se activa **automáticamente** si en el
+    mismo run hubo búsqueda web y el agente quiere ejecutar código, aunque el
+    usuario no lo haya pedido. El razonamiento es de `docs/seguridad-byte.md`:
+    contenido de terceros (la web) más ejecución de código es la combinación que
+    permite que una inyección indirecta termine corriendo algo.
+    """
+    if not HERRAMIENTAS_SENSIBLES & set(pedidas):
+        return None
+    if safe_mode:
+        return "modo_seguro_activado"
+    # Se cuentan también las de este mismo turno: el modelo puede pedir buscar y
+    # ejecutar en la misma tanda.
+    if "web_search" in set(ya_usadas) | set(pedidas):
+        return "web_y_codigo_en_el_mismo_run"
+    return None
 
 
 class Emitter(Protocol):
@@ -162,13 +186,59 @@ def build_graph(
         los lee y puede probar otra estrategia.
         """
         emitter = _emitter(config)
-        emitter.emit(AGUI.STEP_STARTED, {"stepName": "tools"})
         last = state["messages"][-1]
+        llamadas = list(getattr(last, "tool_calls", []) or [])
+
+        # La decisión de aprobación va ANTES de ejecutar cualquier herramienta:
+        # al reanudar, LangGraph vuelve a correr el nodo entero desde arriba, así
+        # que nada que tenga efecto puede quedar antes del interrupt (ni una
+        # búsqueda, ni un evento, que saldría duplicado).
+        configurable = config.get("configurable") or {}
+        motivo = requiere_aprobacion(
+            [c["name"] for c in llamadas],
+            state["tools_used"],
+            bool(configurable.get("safe_mode")),
+        )
+        if motivo:
+            sensible = next(
+                (c for c in llamadas if c["name"] in HERRAMIENTAS_SENSIBLES), llamadas[0]
+            )
+            # El run se detiene acá. El runner emite awaiting_approval con el
+            # resume_token y cierra con RUN_FINISHED status "paused".
+            aprobado = interrupt(
+                {
+                    "reason": motivo,
+                    "tool": sensible["name"],
+                    "code": str(sensible.get("args", {}).get("code", "")),
+                }
+            )
+            if not aprobado:
+                emitter.emit(AGUI.STEP_STARTED, {"stepName": "tools"})
+                rechazos: list[AnyMessage] = [
+                    ToolMessage(
+                        content=(
+                            "El usuario no aprobó esta ejecución. No la reintentes: "
+                            "explicá qué querías hacer y por qué, o resolvelo sin ejecutar código."
+                        ),
+                        tool_call_id=c["id"],
+                        name=c["name"],
+                    )
+                    for c in llamadas
+                ]
+                for c in llamadas:
+                    emitter.emit(
+                        AGUI.TOOL_CALL_RESULT,
+                        {"toolCallId": c["id"], "ok": False, "error": "rechazado_por_el_usuario"},
+                    )
+                emitter.emit(AGUI.STEP_FINISHED, {"stepName": "tools", "ejecutadas": 0})
+                return {"messages": rechazos}
+
+        emitter.emit(AGUI.STEP_STARTED, {"stepName": "tools"})
         out: list[AnyMessage] = []
         sources: list[dict[str, Any]] = []
         used: list[str] = []
 
-        for call in getattr(last, "tool_calls", []) or []:
+        for call in llamadas:
             name = call["name"]
             tool = registry.get(name)
             if tool is None:
