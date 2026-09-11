@@ -4,43 +4,123 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Byte</title>
+    <link rel="icon" href="/static/byte.svg" type="image/svg+xml" />
     <!-- CSS y JS en archivos aparte: la CSP no permite inline. -->
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
-    <header>
-      <h1>Byte</h1>
-      <p id="estado" class="estado">Sin conectar</p>
-    </header>
-
-    <section id="login">
-      <label for="api-key">API key</label>
-      <input id="api-key" type="password" autocomplete="current-password" />
-      <button id="entrar" type="button">Entrar</button>
-    </section>
-
-    <main id="chat" hidden>
-      <ol id="mensajes" aria-live="polite"></ol>
-      <p id="pasos" class="pasos"></p>
-
-      <section id="aprobacion" class="aprobacion" hidden>
-        <h2>Byte quiere ejecutar código</h2>
-        <p id="aprobacion-motivo" class="pasos"></p>
-        <pre id="aprobacion-codigo"></pre>
-        <div class="acciones">
-          <button id="aprobar" type="button">Aprobar y ejecutar</button>
-          <button id="rechazar" type="button">Rechazar</button>
-        </div>
-      </section>
-      <form id="form-mensaje">
-        <textarea id="entrada" rows="3" placeholder="Preguntale algo a Byte..."></textarea>
-        <div class="acciones">
-          <button id="enviar" type="submit">Enviar</button>
-          <button id="detener" type="button" disabled>Detener</button>
-        </div>
+    <!-- Ingreso: la API key se canjea por una cookie httpOnly. -->
+    <div id="ingreso" class="ingreso">
+      <form id="form-ingreso">
+        <img src="/static/byte.svg" alt="" />
+        <h1>Byte</h1>
+        <!-- Sin la clase `estado`: ahí el punto de color indicaría una salud
+             que todavía no se puede consultar (hace falta la cookie). -->
+        <p class="subtitulo">Tu asistente, corriendo local</p>
+        <input
+          id="api-key"
+          type="password"
+          autocomplete="current-password"
+          placeholder="API key"
+          aria-label="API key"
+        />
+        <button type="submit" class="primario">Entrar</button>
+        <p id="error-ingreso" class="error" role="alert"></p>
       </form>
-      <p id="fuentes" class="fuentes"></p>
-    </main>
+    </div>
+
+    <div id="app" class="app" hidden>
+      <aside class="sidebar">
+        <div class="marca">
+          <img src="/static/byte.svg" alt="" />
+          <h1>Byte</h1>
+        </div>
+        <p id="estado" class="estado">Conectando…</p>
+
+        <button id="nueva" type="button" class="acento">Nueva conversación</button>
+
+        <nav class="nav" aria-label="Secciones">
+          <button id="ver-chat" type="button" aria-current="page">Conversaciones</button>
+          <button id="ver-docs" type="button">Tus documentos</button>
+        </nav>
+
+        <!-- Las conversaciones se agrupan por fecha (Hoy / Ayer / …). -->
+        <div id="historial"></div>
+      </aside>
+
+      <!-- Pantalla 1: chat -->
+      <main id="pantalla-chat" class="panel">
+        <div class="chat">
+          <ol id="mensajes" class="mensajes" aria-live="polite"></ol>
+          <p id="pasos" class="pasos" aria-live="polite"></p>
+          <p id="fuentes" class="fuentes"></p>
+        </div>
+
+        <div class="redactor">
+          <!-- Modo seguro: la aprobación humana antes de ejecutar código. -->
+          <section id="aprobacion" class="aprobacion" hidden>
+            <h2>Byte quiere ejecutar código</h2>
+            <p id="aprobacion-motivo" class="estado"></p>
+            <pre id="aprobacion-codigo"></pre>
+            <div class="acciones">
+              <button id="aprobar" type="button" class="primario">Aprobar y ejecutar</button>
+              <button id="rechazar" type="button">Rechazar</button>
+            </div>
+          </section>
+
+          <form id="form-mensaje">
+            <textarea
+              id="entrada"
+              rows="1"
+              placeholder="Escribí un mensaje"
+              aria-label="Mensaje"
+            ></textarea>
+            <button id="detener" type="button" disabled>Detener</button>
+            <button
+              id="enviar"
+              type="submit"
+              class="primario enviar"
+              aria-label="Enviar"
+              title="Enviar"
+            >
+              ↑
+            </button>
+          </form>
+        </div>
+      </main>
+
+      <!-- Pantalla 2: documentos -->
+      <main id="pantalla-docs" class="panel" hidden>
+        <div class="contenido">
+          <h2>Tus documentos</h2>
+
+          <button id="soltar" type="button" class="soltar">
+            <strong>Arrastrá tus archivos acá o hacé clic para subir</strong>
+            PDF, TXT o Markdown · hasta 20 MB
+          </button>
+          <input id="archivo" type="file" accept=".pdf,.txt,.md,.markdown" hidden />
+
+          <p id="error-docs" class="error" role="alert"></p>
+
+          <table class="documentos" id="tabla-docs" hidden>
+            <thead>
+              <tr>
+                <th scope="col">Nombre</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Fragmentos</th>
+                <th scope="col">Tamaño</th>
+                <th scope="col"><span class="visually-hidden">Acciones</span></th>
+              </tr>
+            </thead>
+            <tbody id="lista-docs"></tbody>
+          </table>
+
+          <p id="sin-docs" class="vacio" hidden>
+            Todavía no subiste documentos. Cuando lo hagas, Byte va a poder responder sobre ellos.
+          </p>
+        </div>
+      </main>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>

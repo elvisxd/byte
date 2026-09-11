@@ -200,8 +200,15 @@ def test_cookie_de_sesion_manipulada(cliente: TestClient) -> None:
     # "testserver.local" y la nueva con dominio vacío), las manda a las dos y
     # cuál gana depende del orden. Así el test sería no determinista.
     cliente.cookies.clear()
-    ultimo = cookie[-1]
-    manipulada = cookie[:-1] + ("A" if ultimo != "A" else "B")
+    # Se toca el payload, no el final de la firma. La firma va en base64url y
+    # sus últimos bits son de relleno: cambiar el último carácter da, una de
+    # cada tres veces, otra cadena que decodifica a los mismos bytes y sigue
+    # validando. El test fallaba de forma intermitente por eso.
+    payload, punto, firma = cookie.partition(".")
+    assert punto, "la cookie de sesión debería venir firmada"
+    primero = payload[0]
+    manipulada = ("A" if primero != "A" else "B") + payload[1:] + punto + firma
+
     respuesta = cliente.get(
         "/api/v1/conversations", headers={"Cookie": f"{SESSION_COOKIE}={manipulada}"}
     )

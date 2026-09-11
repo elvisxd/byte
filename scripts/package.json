@@ -1,0 +1,7 @@
+{
+  "name": "byte-capturas",
+  "private": true,
+  "type": "module",
+  "description": "Capturas de la web con Playwright. Aparte del proyecto: no es dependencia de Byte.",
+  "dependencies": { "playwright": "^1.63.0" }
+}

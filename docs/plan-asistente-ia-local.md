@@ -136,10 +136,10 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 - [ ] Ampliar la cobertura de tests (el CI con pytest existe desde el MVP)
 
 ### Fase 5 — Frontend real con la identidad Byte (estimación: 2-3 semanas)
-- [ ] Evolucionar la página HTML mínima a FastAPI + Jinja + HTMX (o React), consumiendo el streaming SSE
-- [ ] Implementar las 3 pantallas diseñadas en Canva: chat, historial (agrupado por `updated_at`), carga de documentos (con `status` y progreso)
-- [ ] Indicador de escritura animado y estado "En línea" leyendo `/health/details`
-- [ ] Marcador visual de "conversación compactada" en el chat
+- [x] Evolucionar la página HTML mínima a FastAPI + Jinja con la identidad Byte, consumiendo el streaming SSE (sin HTMX: el chat ya tenía resuelta la reconexión con `Last-Event-ID`)
+- [x] Las pantallas diseñadas en Canva: chat, historial agrupado por `updated_at` (Hoy / Ayer / Esta semana) en la sidebar, y carga de documentos con arrastrar y soltar y `status` en etiquetas. Sin barra de progreso: la ingesta no reporta avance parcial, así que el estado es de tres valores
+- [x] Indicador de escritura animado (respeta `prefers-reduced-motion`) y estado "En línea" leyendo `/health/details` cada 30 s
+- [x] Marcador visual de "conversación compactada" en el chat, desde `summary_up_to_message_id`
 
 ### Fase 6 — CLI en Go (v2) (estimación: depende del aprendizaje de Go)
 - [ ] Sacar el certificado/base de Go
