@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from api.deps import Context, CredentialId, credential_from_request
 from api.errors import ByteError
-from models.schemas import Message, RunState
+from models.schemas import Message, ResumeRequest, RunResumed, RunState
 
 router = APIRouter(tags=["runs"])
 
@@ -61,6 +61,31 @@ async def cancel_run(run_id: str, ctx: Context, credential: CredentialId) -> Res
     run = ctx.runs.require(run_id, credential)
     await ctx.runs.cancel(run)
     return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/runs/{run_id}/resume",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=RunResumed,
+)
+async def resume_run(
+    run_id: str,
+    payload: ResumeRequest,
+    ctx: Context,
+    credential: CredentialId,
+) -> RunResumed:
+    """Retoma un run que quedó esperando confirmación humana (modo seguro).
+
+    Es el mismo run: continúa desde el checkpoint y el cliente se vuelve a
+    suscribir a `/runs/{id}/events` con el último `Last-Event-ID` que vio.
+    """
+    run = ctx.runs.require(run_id, credential)
+    # El token es aleatorio, firmado, de un solo uso y está ligado a este run y
+    # a esta credencial.
+    if not ctx.tokens.verify_resume_token(payload.resume_token, run_id, credential):
+        raise ByteError("unauthorized", "resume_token inválido o ya usado", status_code=401)
+    await ctx.runs.resume(run, payload.approve)
+    return RunResumed(run_id=run.id)
 
 
 @router.get("/runs/{run_id}", response_model=RunState)

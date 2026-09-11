@@ -194,8 +194,18 @@ def test_cookie_de_sesion_manipulada(cliente: TestClient) -> None:
     cliente.post("/api/v1/session", json={"api_key": API_KEY})
     cookie = cliente.cookies.get(SESSION_COOKIE)
     assert cookie
-    cliente.cookies.set(SESSION_COOKIE, cookie[:-3] + "xyz")
-    assert cliente.get("/api/v1/conversations").status_code == 401
+
+    # La cookie manipulada va como header, no por el jar de httpx: un `set()`
+    # deja DOS cookies con el mismo nombre (la original con dominio
+    # "testserver.local" y la nueva con dominio vacío), las manda a las dos y
+    # cuál gana depende del orden. Así el test sería no determinista.
+    cliente.cookies.clear()
+    ultimo = cookie[-1]
+    manipulada = cookie[:-1] + ("A" if ultimo != "A" else "B")
+    respuesta = cliente.get(
+        "/api/v1/conversations", headers={"Cookie": f"{SESSION_COOKIE}={manipulada}"}
+    )
+    assert respuesta.status_code == 401
 
 
 # --- Paginación ---

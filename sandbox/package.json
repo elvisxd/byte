@@ -1,0 +1,17 @@
+{
+  "name": "byte-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sandbox WASM (Pyodide) para ejecutar el código que genera el agente",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --disallow-code-generation-from-strings --wasm-max-mem-pages=6144 server.mjs",
+    "test": "node --disallow-code-generation-from-strings --wasm-max-mem-pages=6144 --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "pyodide": "^314.0.0"
+  }
+}

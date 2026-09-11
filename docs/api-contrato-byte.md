@@ -42,6 +42,7 @@ Un *run* es una ejecución del agente. Se crea con un mensaje y se observa por S
 Body: `{ "content": "Buscá la última versión de FastAPI y armá el endpoint base", "safe_mode": false }`
 → `202 { "run_id", "message_id", "events_url": "/api/v1/runs/{run_id}/events", "events_token": "<firmado, 60 s, un solo uso>" }`
 Con `?wait=true` espera y devuelve `{ "message": Message, "sources": [...] }` en un solo JSON (tests y scripts).
+Si el run queda esperando aprobación (modo seguro), `?wait=true` responde `202 { "run_id", "status": "paused", "awaiting_approval": { code, reason, resume_token } }`: no hay mensaje final que devolver todavía, y el token viene ahí para poder continuar sin leer el SSE.
 **`409 conversation_busy`** si la conversación ya tiene un run en curso: dos runs a la vez comparten el hilo del checkpointer (`thread_id = conversation_id`), se pisan el estado y cada uno responde sin ver la pregunta del otro. El tope de runs concurrentes por credencial sigue aplicando entre conversaciones distintas.
 
 **GET `/runs/{run_id}/events`** — `text/event-stream`. Headers: `Cache-Control: no-cache`, `X-Accel-Buffering: no`, sin gzip. Cada evento lleva `id:` para que el cliente reconecte con `Last-Event-ID` y retome donde quedó.
@@ -96,6 +97,7 @@ Eventos: **protocolo AG-UI** (en vez de nombres propios). Los que usa Byte:
 **GET `/tools`** → `{ "tools": [ { "name": "web_search", "source": "builtin" }, { "name": "n8n_ingest", "source": "mcp:n8n" } ] }`
 **POST `/execute`** `{ "language": "python", "code": "...", "timeout_s": 10 }` → `{ "stdout", "stderr", "exit_code", "duration_ms", "truncated" }`
 Límites: código máx. 50 KB (`413`), timeout máx. 30 s, salida máx. 64 KB.
+`exit_code`: `0` si corrió, `1` si Python tiró una excepción (el traceback va en `stderr`), `124` si se cortó por timeout, `137` si se pasó de memoria. `503 sandbox_no_configurado` si faltan `SANDBOX_URL`/`SANDBOX_TOKEN`; `503 sandbox_unavailable` si el servicio no responde. El detalle de cómo está aislado está en `sandbox/README.md`.
 
 ---
 
@@ -125,16 +127,16 @@ Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries
 ## Seguridad
 Ver `seguridad-byte.md`. Resumen aplicado a la API: servicios internos (Ollama, Postgres, sandbox) sin dominio público; cookie httpOnly para la web; resultados de herramientas delimitados y acotados en el prompt; argumentos de herramientas validados con Pydantic; Markdown sanitizado; cabeceras CSP/HSTS; CORS restringido; todo filtrado por `user_id` en multi-usuario.
 
-## Estado de implementación (Fase 0)
+## Estado de implementación (Fases 0 y 1)
 Implementado: salud, conversaciones (CRUD + cursor), mensajes y runs (crear, SSE,
-cancelar, consultar), `GET /messages/{id}`, `GET /tools`, y `POST /session` +
-`DELETE /session` para la cookie de la web (agregados acá, no estaban en la v2).
-El spec de `/docs` ya declara los modelos de respuesta y el envoltorio de error,
-así que sirve para generar el cliente del CLI con `oapi-codegen`.
+cancelar, consultar, **reanudar**), `GET /messages/{id}`, `GET /tools`,
+**`POST /execute`**, y `POST /session` + `DELETE /session` para la cookie de la
+web (agregados acá, no estaban en la v2). El spec de `/docs` ya declara los
+modelos de respuesta y el envoltorio de error, así que sirve para generar el
+cliente del CLI con `oapi-codegen`.
 
-Pendiente, con su fase: `/compact` (Fase 2, con el RAG), `/resume` y el modo
-seguro (Fase 1, con el sandbox), `Idempotency-Key` (Fase 4), documentos y
-`/search` (Fase 2), `/execute` (Fase 1), compatibilidad OpenAI (Fase 3).
+Pendiente, con su fase: `/compact` (Fase 2, con el RAG), `Idempotency-Key`
+(Fase 4), documentos y `/search` (Fase 2), compatibilidad OpenAI (Fase 3).
 
 ## Decisiones
 - Runs como recurso propio: separa crear (POST) de observar (GET SSE), habilita cancelar, reconectar y consultar estado

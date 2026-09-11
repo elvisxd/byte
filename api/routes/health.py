@@ -6,6 +6,7 @@ from agent.llm import ollama_status
 from api.deps import Context, CredentialId
 from api.errors import ByteError
 from models.schemas import Health, HealthDetails
+from tools.code_exec import sandbox_status
 
 router = APIRouter(tags=["salud"])
 
@@ -23,8 +24,9 @@ async def health_details(ctx: Context, _credential: CredentialId) -> HealthDetai
     settings = ctx.settings
     ollama = await ollama_status(settings.ollama_base_url, settings.ollama_model)
     db = "ok" if await ctx.repository.ping() else "caido"
-    # El sandbox llega en la Fase 1.
-    sandbox = "no_configurado" if not settings.sandbox_url else "sin_verificar"
+    sandbox = (
+        await sandbox_status(settings.sandbox_url) if settings.sandbox_url else "no_configurado"
+    )
     return HealthDetails(
         status="ok" if ollama == "ok" and db == "ok" else "degraded",
         model=settings.ollama_model,

@@ -64,12 +64,21 @@ Marcas: `[x]` hecho y verificado · `[~]` hecho en local, falta la parte de Rail
 - [x] La excepción de CSP para el CDN de Swagger UI aplica solo a `/docs` y `/redoc`
 
 ### Fase 1 — Sandbox de ejecución
-- [ ] Intérprete Pyodide **nuevo por ejecución**: nada de estado entre corridas de distintos usuarios
-- [ ] Puente de red de Pyodide desactivado (sin `fetch`/`XMLHttpRequest` desde el código)
-- [ ] Límites: memoria del runtime WASM, CPU/timeout (matar el worker), tamaño de código 50 KB, salida 64 KB
-- [ ] El servicio `sandbox/` corre **sin variables de entorno, sin secretos, sin acceso a Postgres**, como usuario no root, en su propio servicio de Railway
-- [ ] Solo la API puede llamarlo (red privada + token interno)
-- [ ] **Modo seguro automático:** si en el mismo run hubo búsqueda web y el agente quiere ejecutar código, se exige confirmación humana aunque el usuario no lo haya activado
+- [x] Intérprete Pyodide **nuevo por ejecución**: nada de estado entre corridas de distintos usuarios
+- [x] Puente de red de Pyodide desactivado (sin `fetch`/`XMLHttpRequest` desde el código)
+- [x] Límites: memoria del runtime WASM, CPU/timeout (matar el worker), tamaño de código 50 KB, salida 64 KB
+- [~] El servicio `sandbox/` corre **sin variables de entorno, sin secretos, sin acceso a Postgres**, como usuario no root, en su propio servicio de Railway — **hecho: el worker arranca con `env: {}` y hay un test de que ni su propio token es visible desde adentro; el servicio de Railway queda para el deploy**
+- [~] Solo la API puede llamarlo (red privada + token interno) — **token interno comparado en tiempo constante, con tests; la red privada se configura al desplegar**
+- [x] **Modo seguro automático:** si en el mismo run hubo búsqueda web y el agente quiere ejecutar código, se exige confirmación humana aunque el usuario no lo haya activado
+
+**Lo que apareció al implementar (y no estaba en el checklist)**
+Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
+- [x] `js.eval("import('node:fs')")` leía cualquier archivo del host. Se cierra con `--disallow-code-generation-from-strings` a nivel proceso
+- [x] `js.process.env` exponía todas las variables del servicio. El worker arranca con `env: {}`
+- [x] `js.process.dlopen` podía cargar binarios nativos. Se elimina después de cargar Pyodide
+- [x] `resourceLimits` del worker NO acota el heap WASM: `bytearray(2_000_000_000)` se alocaba entero. Se cierra con `--wasm-max-mem-pages`
+- [x] El servicio se niega a arrancar si falta cualquiera de los dos flags: sin ellos no es un sandbox
+- [~] Sacar el importador de `js` de `sys.meta_path` es defensa en profundidad, **no** una frontera: desde Python se restaura vía `_pyodide._importhook` o con `gc`. Los tests de aislamiento lo restauran a propósito para verificar las fronteras reales
 
 ### Fase 2 — RAG
 - [ ] Uploads: tipo validado por magic bytes, tamaño máximo 20 MB, parseo de PDF con timeout y límite de páginas (las librerías de PDF han tenido CVEs)

@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from api.config import get_settings
 from api.main import create_app
 from db.repository import MemoryRepository
-from tests.fakes import FakeLLM, FakeTavily, text_turn
+from tests.fakes import FakeLLM, FakeSandbox, FakeTavily, text_turn
 from tools.base import ToolRegistry
+from tools.code_exec import build_code_exec_tool
 from tools.web_search import build_web_search_tool
 
 API_KEY = "clave-de-prueba"
@@ -30,6 +31,8 @@ _VARIABLES = (
     "BYTE_RUN_TIMEOUT_S",
     "BYTE_MAX_MESSAGE_CHARS",
     "BYTE_EVENTS_TOKEN_TTL_S",
+    "SANDBOX_URL",
+    "SANDBOX_TOKEN",
 )
 
 
@@ -60,6 +63,8 @@ def crear_cliente(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., Tes
         llm: Any | None = None,
         tavily_results: list[dict[str, Any]] | None = None,
         con_busqueda: bool = True,
+        con_sandbox: bool = False,
+        sandbox_resultado: dict[str, Any] | None = None,
         **env: Any,
     ) -> TestClient:
         for clave, valor in env.items():
@@ -68,9 +73,12 @@ def crear_cliente(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., Tes
 
         modelo = llm or FakeLLM(turns or [text_turn("Listo.")])
         tavily = FakeTavily(tavily_results)
+        sandbox = FakeSandbox(sandbox_resultado)
         registry = ToolRegistry()
         if con_busqueda:
             registry.add(build_web_search_tool("falsa", 4000, 200, client=tavily))
+        if con_sandbox:
+            registry.add(build_code_exec_tool("http://sandbox:3000", "tok", 4000, client=sandbox))
 
         app = create_app(llm=modelo, repository=MemoryRepository(), registry=registry)
         client = TestClient(app)
@@ -78,6 +86,7 @@ def crear_cliente(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., Tes
         abiertos.append(client)
         client.llm = modelo  # type: ignore[attr-defined]
         client.tavily = tavily  # type: ignore[attr-defined]
+        client.sandbox = sandbox  # type: ignore[attr-defined]
         return client
 
     yield build
