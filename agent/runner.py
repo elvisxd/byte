@@ -130,6 +130,14 @@ class RunManager:
             if run.credential_id == credential_id and not run.finished
         )
 
+    def active_in(self, conversation_id: str, credential_id: str) -> bool:
+        return any(
+            run.conversation_id == conversation_id
+            and run.credential_id == credential_id
+            and not run.finished
+            for run in self._runs.values()
+        )
+
     # --- Creación ---
     async def start(
         self,
@@ -138,6 +146,15 @@ class RunManager:
         user_content: str,
         safe_mode: bool = False,
     ) -> Run:
+        # Un run por conversación: dos a la vez comparten el hilo del
+        # checkpointer (thread_id = conversation_id), se pisan el estado y cada
+        # uno responde sin ver la pregunta del otro.
+        if self.active_in(conversation_id, credential_id):
+            raise ByteError(
+                "conversation_busy",
+                "Ya hay un run en curso en esta conversación",
+                status_code=409,
+            )
         if self.active_for(credential_id) >= self._max_concurrent:
             raise ByteError(
                 "too_many_runs",
@@ -346,6 +363,23 @@ class RunManager:
         run.task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await run.task
+
+    async def cancel_conversation(self, conversation_id: str, credential_id: str) -> int:
+        """Corta los runs en vuelo de una conversación (se usa al borrarla).
+
+        Sin esto, borrar una conversación dejaría al agente hablando con un hilo
+        que ya no existe: sigue gastando modelo y falla al guardar la respuesta.
+        """
+        en_vuelo = [
+            run
+            for run in self._runs.values()
+            if run.conversation_id == conversation_id
+            and run.credential_id == credential_id
+            and not run.finished
+        ]
+        for run in en_vuelo:
+            await self.cancel(run)
+        return len(en_vuelo)
 
     async def wait(self, run: Run) -> None:
         await run.done.wait()

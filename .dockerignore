@@ -1,0 +1,19 @@
+# El contexto de build no necesita nada de esto (y .venv/ y .git/ pesan).
+.venv/
+venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+tests/
+docs/
+evals/
+n8n/
+cli/
+node_modules/
+*.md

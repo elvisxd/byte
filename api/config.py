@@ -3,8 +3,10 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from models.schemas import HARD_MAX_MESSAGE_CHARS
 
 
 class Settings(BaseSettings):
@@ -58,6 +60,12 @@ class Settings(BaseSettings):
     events_token_ttl_s: int = Field(default=60, alias="BYTE_EVENTS_TOKEN_TTL_S")
     session_ttl_s: int = Field(default=86400, alias="BYTE_SESSION_TTL_S")
 
+    @field_validator("max_message_chars")
+    @classmethod
+    def _cap_message_chars(cls, value: int) -> int:
+        """El tope del contrato no se puede subir por configuración, solo bajar."""
+        return max(1, min(value, HARD_MAX_MESSAGE_CHARS))
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -73,6 +81,21 @@ class Settings(BaseSettings):
         if self.storage == "memory":
             return False
         return bool(self.database_url)
+
+    @model_validator(mode="after")
+    def _prod_exige_postgres(self) -> "Settings":
+        """En producción nada queda en memoria.
+
+        El plan es explícito: el checkpointer nunca va in-memory en producción.
+        Sin Postgres se perderían las conversaciones y el hilo del agente en
+        cada reinicio, así que se falla al arrancar en vez de avisar y seguir.
+        """
+        if self.env == "prod" and not self.use_postgres:
+            raise ValueError(
+                "BYTE_ENV=prod requiere DATABASE_URL (o BYTE_STORAGE=postgres): "
+                "las conversaciones y el hilo del agente no pueden quedar en memoria"
+            )
+        return self
 
 
 @lru_cache

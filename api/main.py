@@ -28,6 +28,7 @@ from api.logging import configure_logging, get_logger, new_request_id, set_reque
 from api.routes import conversations, health, runs, session, tools
 from api.security import Credentials, TokenService, resolve_secret_key, security_headers
 from db.repository import Repository, build_repository
+from models.schemas import ErrorEnvelope
 from tools.base import ToolRegistry
 from tools.web_search import build_registry
 
@@ -199,8 +200,23 @@ def create_app(
         )
 
     # --- Rutas ---
+    # Todos los errores salen con el envoltorio del contrato, incluido el 422:
+    # se declara así para que el spec no prometa el formato por defecto de
+    # FastAPI, que no es el que devuelve la API.
+    errores_comunes: dict[int | str, dict[str, Any]] = {
+        code: {"model": ErrorEnvelope, "description": descripcion}
+        for code, descripcion in (
+            (401, "Credencial faltante o inválida"),
+            (404, "No existe"),
+            (413, "Cuerpo demasiado grande"),
+            (422, "Validación"),
+            (429, "Rate limit o demasiados runs"),
+            (500, "Error interno"),
+            (503, "Servicio o modelo no disponible"),
+        )
+    }
     for router in (health.router, session.router, conversations.router, runs.router, tools.router):
-        app.include_router(router, prefix="/api/v1")
+        app.include_router(router, prefix="/api/v1", responses=errores_comunes)
 
     static_dir = WEB_DIR / "static"
     if static_dir.is_dir():

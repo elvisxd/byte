@@ -4,7 +4,9 @@
 -- DOCUMENTS y DOCUMENT_CHUNKS (con pgvector + HNSW) llegan en la Fase 2.
 -- Las tablas del checkpointer de LangGraph las crea PostgresSaver.setup().
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- gen_random_uuid() es nativo desde PostgreSQL 13 (la imagen es pg16): no se
+-- crea la extensión pgcrypto, que en un Postgres administrado puede requerir
+-- permisos de superusuario y hacer fallar la migración.
 
 CREATE TABLE IF NOT EXISTS users (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),

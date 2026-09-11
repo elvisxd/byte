@@ -51,8 +51,9 @@ uv run uvicorn api.main:app --reload
 - Salud: `curl localhost:8000/api/v1/health`
 
 Sin `DATABASE_URL`, Byte arranca en memoria: sirve para probar, pero las
-conversaciones se pierden al reiniciar (lo avisa en el log). Sin
-`TAVILY_API_KEY`, el agente funciona igual pero sin búsqueda web.
+conversaciones se pierden al reiniciar (lo avisa en el log). Con `BYTE_ENV=prod`
+directamente no arranca sin Postgres. Sin `TAVILY_API_KEY`, el agente funciona
+igual pero sin búsqueda web.
 
 ### Probar sin navegador
 
@@ -94,8 +95,12 @@ Implementado:
   uso ligado al run, rate limiting por credencial, tope de runs concurrentes, timeout y
   tope de iteraciones por run, resultados de herramientas delimitados como datos no
   confiables, CSP/HSTS/nosniff, CORS restringido, `gitleaks` y `pip-audit` en CI
+- **Un run por conversación** (`409`): dos a la vez compartirían el hilo del
+  checkpointer y se pisarían el estado. Borrar una conversación corta sus runs en vuelo
+- **`BYTE_ENV=prod` no arranca sin Postgres**: el checkpointer nunca queda en memoria
+  en producción, como pide el plan
 - **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
-- **50 tests** que cubren el ciclo completo del run con dobles de Ollama y Tavily
+- **64 tests** que cubren el ciclo completo del run con dobles de Ollama y Tavily
   (no hacen falta servicios externos para correrlos)
 
 Pendiente de Fase 0:

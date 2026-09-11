@@ -95,14 +95,14 @@ Railway cobra por uso (~$10/GB RAM al mes, prorrateado por segundo). 18-20GB de 
 
 ## MVP (Fase 0) — lo único que se construye antes de todo lo demás
 Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP, n8n, CLI en Go, JWT ni diseño pulido todavía. Estimación realista aprendiendo Python en paralelo: **2-4 semanas a tiempo parcial**.
-- [ ] Ollama local + Qwen2.5-Coder 7B (validar), después Qwen3-Coder-30B-A3B; setear `num_ctx` y medir RAM real
-- [ ] Backend FastAPI mínimo según el contrato: `POST /conversations/{id}/messages` → `GET /runs/{id}/events` (SSE con eventos AG-UI), `POST /runs/{id}/cancel`, `/health` y `/health/details`
-- [ ] Logging estructurado con `structlog` desde el día uno
-- [ ] Agente con LangGraph con **una sola herramienta**: búsqueda web vía Tavily
-- [ ] Página HTML mínima servida por FastAPI (sin diseño todavía)
-- [ ] Checklist de seguridad Fase 0 de `seguridad-byte.md`: servicios internos sin dominio público, API key hasheada + cookie httpOnly para la web, rate limiting, límites de tokens/iteraciones/concurrencia, delimitación de resultados de herramientas, sanitización de Markdown, cabeceras de seguridad, `gitleaks` en CI, límite de gasto en Railway
-- [ ] Deploy de prueba en Railway con la menor RAM posible (con volumen para Ollama), medir costo real
-- [ ] GitHub con README básico, estructura de carpetas, CI (ruff + pytest), `.env.example`, licencia MIT
+- [ ] Ollama local + Qwen2.5-Coder 7B (validar), después Qwen3-Coder-30B-A3B; setear `num_ctx` y medir RAM real — **pendiente: el código está listo y setea `num_ctx`/`num_predict`, falta correrlo contra un Ollama real**
+- [x] Backend FastAPI mínimo según el contrato: `POST /conversations/{id}/messages` → `GET /runs/{id}/events` (SSE con eventos AG-UI), `POST /runs/{id}/cancel`, `/health` y `/health/details`
+- [x] Logging estructurado con `structlog` desde el día uno
+- [x] Agente con LangGraph con **una sola herramienta**: búsqueda web vía Tavily
+- [x] Página HTML mínima servida por FastAPI (sin diseño todavía)
+- [x] Checklist de seguridad Fase 0 de `seguridad-byte.md`: servicios internos sin dominio público, API key hasheada + cookie httpOnly para la web, rate limiting, límites de tokens/iteraciones/concurrencia, delimitación de resultados de herramientas, cabeceras de seguridad, `gitleaks` en CI — **falta solo el límite de gasto en Railway (se configura en el dashboard); la sanitización de Markdown con `nh3` no aplica hasta la Fase 5: la página mínima pinta con `textContent`**
+- [ ] Deploy de prueba en Railway con la menor RAM posible (con volumen para Ollama), medir costo real — **pendiente**
+- [x] GitHub con README básico, estructura de carpetas, CI (ruff + pytest + gitleaks + pip-audit), `.env.example`, licencia MIT
 
 ## Fases de escalado (después del MVP, en orden)
 
