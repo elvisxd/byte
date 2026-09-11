@@ -21,6 +21,9 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1",
     "psycopg[binary,pool]>=3.3.5",
     "tavily-python>=0.8",
+    # Parseo de los PDF que se suben al RAG (Fase 2). Python puro: no agrega
+    # binarios al contenedor.
+    "pypdf>=5.1",
 ]
 
 [project.optional-dependencies]
