@@ -133,6 +133,11 @@ def test_despues_de_resolver_se_puede_seguir(
         json={"resume_token": token, "approve": False},
         headers=AUTH,
     )
+    # /resume responde 202 y el run sigue corriendo en segundo plano. Hay que
+    # esperar a que termine: si no, el mensaje de abajo llega con el run todavía
+    # activo y lo rechaza el 409 de "un run por conversación".
+    leer(cliente, f"/api/v1/runs/{run_id}/events")
+
     # Con la decisión tomada, la conversación sigue normalmente.
     siguiente = cliente.post(
         f"/api/v1/conversations/{conversacion}/messages",

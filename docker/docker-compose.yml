@@ -19,7 +19,8 @@ services:
       POSTGRES_PASSWORD: byte
       POSTGRES_DB: byte
     ports:
-      - "127.0.0.1:5432:5432"
+      # Configurable por si el 5432 ya está tomado por otro proyecto.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

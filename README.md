@@ -45,7 +45,9 @@ SANDBOX_TOKEN=$(openssl rand -hex 32) npm start   # el mismo token va en .env
 cd ..
 
 # 5. Postgres con pgvector (opcional; sin él todo queda en memoria)
-cd docker && docker compose up -d postgres ollama && cd ..
+# El --env-file es necesario: con -f, Compose busca el .env junto al compose
+# (en docker/), no en la raíz, y la interpolación de SANDBOX_TOKEN falla.
+docker compose --env-file .env -f docker/docker-compose.yml up -d postgres ollama
 
 # 6. Levantar la API
 uv run uvicorn api.main:app --reload
