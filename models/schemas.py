@@ -171,6 +171,13 @@ class ToolList(BaseModel):
     tools: list[ToolInfo]
 
 
+class CompactResult(BaseModel):
+    """Lo que devuelve el /compact manual."""
+
+    summary: str
+    compacted_messages: int
+
+
 class DocumentInfo(BaseModel):
     """Un documento del RAG, como lo muestra la pantalla de carga."""
 

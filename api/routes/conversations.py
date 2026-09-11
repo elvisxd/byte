@@ -4,10 +4,12 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response, status
 
+from agent.compact import resumir
 from api.deps import Context, CredentialId, limiter, runs_limit
 from api.errors import ByteError
 from db.repository import title_from_content
 from models.schemas import (
+    CompactResult,
     Conversation,
     ConversationDetail,
     ConversationList,
@@ -170,3 +172,62 @@ async def create_message(
         events_url=f"/api/v1/runs/{run.id}/events",
         events_token=ctx.tokens.issue_events_token(run.id),
     )
+
+
+@router.post(
+    "/conversations/{conversation_id}/compact",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=CompactResult,
+)
+@limiter.limit(runs_limit)
+async def compact_conversation(
+    request: Request,
+    conversation_id: str,
+    ctx: Context,
+    credential: CredentialId,
+) -> CompactResult:
+    """Fuerza la compactación del historial.
+
+    Normalmente se dispara sola cuando el historial supera ~60% del contexto;
+    esto la adelanta. Los mensajes originales no se borran: solo se resumen
+    para dejar de mandarlos al modelo.
+    """
+    await _require_conversation(ctx, conversation_id)
+    # Con un run en curso, los dos escribirían el summary de la misma
+    # conversación y el último en terminar pisaría al otro.
+    if ctx.runs.active_in(conversation_id, credential):
+        raise ByteError(
+            "conversation_busy",
+            "Ya hay un run en curso en esta conversación",
+            status_code=409,
+        )
+
+    historial = await ctx.repository.history(conversation_id)
+    if not historial:
+        raise ByteError("nada_para_compactar", "La conversación está vacía", status_code=422)
+
+    conversacion = await ctx.repository.get_conversation(conversation_id)
+    previo = conversacion.summary if conversacion else None
+
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    # Los tool messages no van: su contenido es material externo y ya está
+    # resumido en lo que respondió el asistente.
+    mensajes = [
+        HumanMessage(content=m.content) if m.role == "user" else AIMessage(content=m.content)
+        for m in historial
+        if m.role in ("user", "assistant")
+    ]
+    if ctx.llm is None:
+        raise ByteError("modelo_no_configurado", "No hay modelo para resumir", status_code=503)
+    resumen = await resumir(ctx.llm, mensajes, previo)
+    if resumen is None:
+        raise ByteError(
+            "compactacion_fallida",
+            "No se pudo generar el resumen (¿el modelo responde?)",
+            status_code=503,
+        )
+
+    ultimo = next((m.id for m in reversed(historial)), None)
+    await ctx.repository.set_summary(conversation_id, resumen, ultimo)
+    return CompactResult(summary=resumen, compacted_messages=len(mensajes))

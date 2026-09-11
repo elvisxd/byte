@@ -116,12 +116,12 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 - [x] Armar `evals/` con ~10 tareas de prueba
 
 ### Fase 2 — Memoria y RAG (estimación: 2-3 semanas)
-- [ ] Postgres con imagen `pgvector/pgvector`; índice HNSW; tabla `DOCUMENT_CHUNKS` con vector(768) para `nomic-embed-text`
-- [ ] Chunking ~500 tokens / 50 de solapamiento
-- [ ] Ingesta de documentos con estado (processing / indexed / error); parseo con timeout; chunks marcados como no confiables; filtro por `user_id` desde el inicio
-- [ ] Búsqueda híbrida (vector + tsvector) y citas de fuentes en `MESSAGES.metadata`
-- [ ] Nodo `compact`: cuando el historial supera ~60% del `num_ctx`, resume los mensajes viejos y guarda `CONVERSATIONS.summary`; `retrieve_context` pasa a cargar resumen + últimos N mensajes
-- [ ] El agente "recuerda" documentos previos vía RAG; la memoria dentro de una conversación es el checkpointer + la compactación (memoria entre conversaciones distintas queda como opción futura)
+- [x] Postgres con imagen `pgvector/pgvector`; índice HNSW; tabla `DOCUMENT_CHUNKS` con vector(768) para `nomic-embed-text`
+- [x] Chunking ~500 tokens / 50 de solapamiento
+- [x] Ingesta de documentos con estado (processing / indexed / error); parseo con timeout; chunks marcados como no confiables; filtro por `user_id` desde el inicio
+- [x] Búsqueda híbrida (vector + tsvector) y citas de fuentes en `MESSAGES.metadata`
+- [x] Nodo `compact`: cuando el historial supera ~60% del `num_ctx`, resume los mensajes viejos y guarda `CONVERSATIONS.summary`; `retrieve_context` pasa a cargar resumen + últimos N mensajes
+- [x] El agente "recuerda" documentos previos vía RAG; la memoria dentro de una conversación es el checkpointer + la compactación (memoria entre conversaciones distintas queda como opción futura)
 
 ### Fase 3 — MCP y n8n (estimación: 2 semanas)
 - [ ] Soporte de MCP para conectar herramientas externas de forma estandarizada (solo servidores propios o revisados: tool poisoning)

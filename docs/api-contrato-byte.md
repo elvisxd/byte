@@ -138,8 +138,8 @@ web (agregados acá, no estaban en la v2). El spec de `/docs` ya declara los
 modelos de respuesta y el envoltorio de error, así que sirve para generar el
 cliente del CLI con `oapi-codegen`.
 
-Pendiente, con su fase: `/compact` (Fase 2, con el RAG), `Idempotency-Key`
-(Fase 4), documentos y `/search` (Fase 2), compatibilidad OpenAI (Fase 3).
+Pendiente, con su fase: `Idempotency-Key` (Fase 4), compatibilidad OpenAI
+(Fase 3). `/compact`, documentos y `/search` ya están (Fase 2).
 
 ## Decisiones
 - Runs como recurso propio: separa crear (POST) de observar (GET SSE), habilita cancelar, reconectar y consultar estado

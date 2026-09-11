@@ -112,8 +112,9 @@ def create_app(
             tool_registry = registry or build_registry(
                 resolved_settings, rag.store if rag else None
             )
+            modelo = llm or build_llm(resolved_settings)
             graph = build_graph(
-                llm or build_llm(resolved_settings),
+                modelo,
                 tool_registry,
                 max_iterations=resolved_settings.max_iterations,
                 max_tool_result_chars=resolved_settings.max_tool_result_chars,
@@ -144,6 +145,8 @@ def create_app(
                 registry=tool_registry,
                 checkpointer=checkpointer,
                 rag=rag,
+                # Para el /compact manual, que resume fuera del grafo.
+                llm=modelo,
             )
             logger.info(
                 "byte_arriba",
