@@ -68,9 +68,8 @@ def compact_notice(summary: str) -> str:
     """
     from tools.base import wrap_untrusted
 
-    return (
-        "[Resumen de la parte anterior de esta conversación]\n"
-        + wrap_untrusted("RESUMEN DE LA CONVERSACIÓN", summary, len(summary))
+    return "[Resumen de la parte anterior de esta conversación]\n" + wrap_untrusted(
+        "RESUMEN DE LA CONVERSACIÓN", summary, len(summary)
     )
 
 
