@@ -1,5 +1,9 @@
 # API de Byte. Imagen chica y proceso sin root.
-FROM python:3.14-slim
+# La versión de Python debe estar dentro del rango de `requires-python` del
+# pyproject: con 3.14, pydantic no puede ni importarse (usa una API de `typing`
+# que 3.14 cambió). El job `imagen` del CI construye esta imagen y verifica que
+# la app arranque, justamente para que eso no se descubra al desplegar.
+FROM python:3.13-slim
 
 # uv instala las dependencias desde el lock, sin resolver de nuevo.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

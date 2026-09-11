@@ -10,8 +10,16 @@ permissions:
 
 jobs:
   calidad:
-    name: Lint y tests
+    name: Lint y tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Todo el rango de `requires-python`: las incompatibilidades de una
+        # versión de Python aparecen acá y no al desplegar.
+        python: ["3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v7
 
@@ -31,6 +39,33 @@ jobs:
 
       - name: Tests
         run: uv run pytest -q
+
+  imagen:
+    name: Build de la imagen y arranque
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Construir la imagen de la API
+        run: docker build -f docker/Dockerfile.api -t byte-api:ci .
+
+      - name: La app importa dentro de la imagen
+        run: docker run --rm byte-api:ci python -c "import api.main; print('import ok')"
+
+      - name: La API responde en /health
+        run: |
+          docker run --rm -d --name byte-ci \
+            -e BYTE_API_KEY=clave-de-ci \
+            -e BYTE_SECRET_KEY=0123456789abcdef0123456789abcdef \
+            -e BYTE_STORAGE=memory \
+            -p 8000:8000 byte-api:ci
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/v1/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/api/v1/health
+          docker logs byte-ci | tail -5
+          docker rm -f byte-ci
 
   seguridad:
     name: Secretos y dependencias

@@ -2,7 +2,9 @@
 name = "byte"
 version = "0.1.0"
 description = "Agente de IA local (self-hosted) que programa, busca en internet y usa herramientas vía MCP"
-requires-python = ">=3.12"
+# Techo en 3.14: la versión de pydantic del lock llama a typing._eval_type()
+# con un argumento que 3.14 removió, y falla en el propio import de fastapi.
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.52.4",
