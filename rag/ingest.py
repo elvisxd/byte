@@ -55,8 +55,10 @@ class Ingestor:
             # a quien subió el archivo.
             await self._marcar_error(document_id, str(exc))
         except asyncio.CancelledError:
-            # El proceso se está apagando: queda 'processing' y se reindexa
-            # después. No se marca error, porque el documento no tiene nada malo.
+            # El proceso se está apagando: no se marca error desde acá porque la
+            # base puede estar cerrándose. El documento queda en 'processing' y
+            # `recuperar_huerfanos` lo cierra en el próximo arranque, pidiéndole
+            # al usuario que lo vuelva a subir (no hay reindexado automático).
             raise
         except Exception as exc:  # noqa: BLE001 - nada puede tumbar la tarea de fondo
             logger.exception("indexado_fallo", document_id=document_id)

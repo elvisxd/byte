@@ -2,7 +2,12 @@
 
 El MVP recortaba y listo: los mensajes que no entraban en el contexto
 desaparecían, y el agente perdía el hilo de conversaciones largas. Acá se
-resumen antes de descartarlos, y el resumen viaja como un mensaje más.
+resumen antes de descartarlos.
+
+El resumen **no** viaja en el historial: se guarda en `CONVERSATIONS.summary` y
+`agent_node` lo inyecta en cada turno. Como mensaje volvería a entrar en el
+recorte, y cada compactación resumiría el resumen anterior hasta dejarlo en nada
+(medido: 973 caracteres útiles degradados a 118).
 
 Los mensajes originales no se borran de MESSAGES: la UI los sigue mostrando,
 solo dejan de mandarse al modelo (docs/plan-asistente-ia-local.md).

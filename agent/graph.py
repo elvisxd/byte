@@ -29,7 +29,8 @@ from tools.base import ToolRegistry, wrap_untrusted
 logger = get_logger("agent.graph")
 
 # Aproximación de tokens por caracteres: sirve para recortar historial sin
-# cargar un tokenizer. La compactación real llega en la Fase 2.
+# cargar un tokenizer. Lo que el recorte descarta pasa por `_compactar`, que lo
+# resume antes de que se pierda.
 CHARS_PER_TOKEN = 4
 # El historial no puede comerse todo el contexto: hay que dejar lugar a los
 # resultados de herramientas y a la respuesta.
@@ -78,6 +79,22 @@ class NullEmitter:
 
 def _emitter(config: RunnableConfig) -> Emitter:
     return (config.get("configurable") or {}).get("emitter") or NullEmitter()
+
+
+def _herramientas_en_el_hilo(messages: list[AnyMessage]) -> list[str]:
+    """Qué herramientas se usaron en esta conversación, no solo en este run.
+
+    El contexto del modelo no se resetea entre turnos: lo que trajo una búsqueda
+    en el turno 1 sigue ahí en el turno 5. Si la aprobación mirara solo el run
+    actual, bastaría con partir el ataque en dos mensajes —buscar en uno, pedir
+    código en el siguiente— para que el modo seguro no se active nunca.
+
+    Se lee de los ToolMessage del historial, que es lo que efectivamente sigue
+    en el contexto: si la compactación se los llevó, ya no están influyendo.
+    """
+    from langchain_core.messages import ToolMessage
+
+    return [m.name for m in messages if isinstance(m, ToolMessage) and m.name]
 
 
 def _es_uuid(value: str | None) -> bool:
@@ -295,20 +312,31 @@ def build_graph(
         configurable = config.get("configurable") or {}
         motivo = requiere_aprobacion(
             [c["name"] for c in llamadas],
-            state["tools_used"],
+            # Del historial del hilo, no de state["tools_used"]: ese se resetea
+            # en cada run, pero el contenido externo que entró en un turno sigue
+            # en el contexto del modelo en los siguientes. Mirando solo el run
+            # actual, partir el ataque en dos turnos evadía la aprobación.
+            _herramientas_en_el_hilo(state["messages"]),
             bool(configurable.get("safe_mode")),
         )
         if motivo:
-            sensible = next(
-                (c for c in llamadas if c["name"] in HERRAMIENTAS_SENSIBLES), llamadas[0]
-            )
+            # Aprobar alcanza a TODAS las llamadas de la tanda, así que hay que
+            # mostrarlas todas: si el modelo pide dos ejecuciones y solo se
+            # muestra la primera, la persona consiente sobre un código y corre
+            # otro, que es lo peor que le puede pasar a una aprobación humana.
+            sensibles = [c for c in llamadas if c["name"] in HERRAMIENTAS_SENSIBLES] or llamadas[:1]
+            codigos = [str(c.get("args", {}).get("code", "")) for c in sensibles]
             # El run se detiene acá. El runner emite awaiting_approval con el
             # resume_token y cierra con RUN_FINISHED status "paused".
             aprobado = interrupt(
                 {
                     "reason": motivo,
-                    "tool": sensible["name"],
-                    "code": str(sensible.get("args", {}).get("code", "")),
+                    "tool": sensibles[0]["name"],
+                    # `code` sigue siendo el primero por compatibilidad con la UI
+                    # y el contrato; `codes` trae la tanda completa.
+                    "code": codigos[0],
+                    "codes": codigos,
+                    "tool_calls": len(sensibles),
                 }
             )
             if not aprobado:
