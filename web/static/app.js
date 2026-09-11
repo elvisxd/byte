@@ -144,6 +144,14 @@ function escuchar(eventsUrl, destino, desdeId = 0) {
       pendiente = null;
     }
   });
+  on("STATE_DELTA", (evento) => {
+    const datos = JSON.parse(evento.data);
+    if (datos.replay_incompleto) {
+      // Faltan deltas de texto (reconexión tardía): el mensaje final se pide
+      // por la API al terminar, así que acá solo se avisa.
+      el.pasos.textContent = "Reconectado: recuperando la respuesta...";
+    }
+  });
   on("RUN_FINISHED", (evento) => {
     const datos = JSON.parse(evento.data);
     if (datos.status === "paused") {
@@ -160,6 +168,17 @@ function escuchar(eventsUrl, destino, desdeId = 0) {
     el.fuentes.textContent = fuentes.length
       ? "Fuentes: " + fuentes.map((f) => f.url || f.filename).join(" · ")
       : "";
+    // El texto definitivo es el que quedó guardado: si la reconexión perdió
+    // deltas, esto lo deja completo igual.
+    if (datos.message_id) {
+      pedir(`/messages/${datos.message_id}`)
+        .then((mensaje) => {
+          if (mensaje?.content) destino.textContent = mensaje.content;
+        })
+        .catch(() => {
+          /* si falla, queda lo que llegó por el stream */
+        });
+    }
     terminar();
   });
   on("RUN_ERROR", (evento) => {

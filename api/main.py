@@ -104,6 +104,7 @@ def create_app(
                 resolve_secret_key(resolved_settings),
                 resolved_settings.events_token_ttl_s,
                 resolved_settings.session_ttl_s,
+                resolved_settings.resume_token_ttl_s,
             )
             run_manager = RunManager(
                 graph,
@@ -112,6 +113,7 @@ def create_app(
                 max_concurrent_runs=resolved_settings.max_concurrent_runs,
                 run_timeout_s=resolved_settings.run_timeout_s,
                 max_iterations=resolved_settings.max_iterations,
+                resume_ttl_s=resolved_settings.resume_token_ttl_s,
             )
             app.state.ctx = AppContext(
                 settings=resolved_settings,

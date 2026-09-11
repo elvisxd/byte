@@ -55,6 +55,10 @@ uv run uvicorn api.main:app --reload
 - API y OpenAPI: http://localhost:8000/docs
 - Salud: `curl localhost:8000/api/v1/health`
 
+En CPU, un 7B hace unos 5-15 tokens por segundo y un run son varias llamadas al
+modelo: por eso `BYTE_RUN_TIMEOUT_S` viene en 600. Si ves runs que se cortan
+solos, ese es el primer lugar donde mirar.
+
 Sin `DATABASE_URL`, Byte arranca en memoria: sirve para probar, pero las
 conversaciones se pierden al reiniciar (lo avisa en el log). Con `BYTE_ENV=prod`
 directamente no arranca sin Postgres. Sin `TAVILY_API_KEY` el agente funciona
@@ -132,7 +136,7 @@ Implementado:
 - **`BYTE_ENV=prod` no arranca sin Postgres**: el checkpointer nunca queda en memoria
   en producción, como pide el plan
 - **Página HTML mínima** que consume el SSE (sin diseño: la identidad Byte llega en la Fase 5)
-- **116 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
+- **124 tests de Python + 25 del sandbox**, con dobles de Ollama, Tavily y el
   sandbox. Los del repositorio y el checkpointer corren contra las dos
   implementaciones: en memoria siempre, y contra Postgres cuando hay uno
   (se saltean si no)

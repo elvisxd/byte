@@ -21,6 +21,8 @@ from models.schemas import Conversation, ConversationListItem, Message, MessageR
 logger = get_logger("db")
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# Id arbitrario pero fijo para el advisory lock de las migraciones.
+MIGRATION_LOCK_ID = 8_675_309
 PREVIEW_CHARS = 120
 
 
@@ -241,12 +243,39 @@ class PostgresRepository:
         logger.info("storage_postgres_listo")
 
     async def _migrate(self) -> None:
-        """Aplica las migraciones en orden. Son idempotentes (IF NOT EXISTS)."""
-        for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-            sql = path.read_text(encoding="utf-8")
-            async with self._pool.connection() as conn:
-                await conn.execute(sql)
-            logger.info("migracion_aplicada", archivo=path.name)
+        """Aplica las migraciones pendientes, en orden y una sola vez.
+
+        Hasta ahora se re-ejecutaban todas en cada arranque y funcionaba solo
+        porque son `IF NOT EXISTS`. En cuanto una migración tenga un ALTER o
+        mueva datos, eso rompe. El registro va en `schema_migrations`.
+        """
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    archivo     text PRIMARY KEY,
+                    aplicada_en timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+            # Dos instancias arrancando a la vez no deben aplicar lo mismo.
+            await conn.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_ID,))
+            try:
+                cur = await conn.execute("SELECT archivo FROM schema_migrations")
+                aplicadas = {fila["archivo"] for fila in await cur.fetchall()}
+
+                for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+                    if path.name in aplicadas:
+                        continue
+                    async with conn.transaction():
+                        await conn.execute(path.read_text(encoding="utf-8"))
+                        await conn.execute(
+                            "INSERT INTO schema_migrations (archivo) VALUES (%s)",
+                            (path.name,),
+                        )
+                    logger.info("migracion_aplicada", archivo=path.name)
+            finally:
+                await conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_ID,))
 
     async def shutdown(self) -> None:
         if self._pool is not None:

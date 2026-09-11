@@ -79,7 +79,13 @@ def test_run_completo_con_herramienta(crear_cliente: Callable[..., TestClient]) 
     assert cliente.tavily.queries == ["ultima version de fastapi"]  # type: ignore[attr-defined]
 
 
-def test_todos_los_eventos_llevan_id_incremental(cliente: TestClient) -> None:
+def test_todos_los_eventos_llevan_id_creciente(cliente: TestClient) -> None:
+    """Cada evento lleva su `id:` para poder reconectar con Last-Event-ID.
+
+    Los ids son crecientes, no necesariamente consecutivos: al terminar, el run
+    tira los deltas de texto para no quedarse con miles de eventos en memoria
+    (y avisa del hueco, ver test_bordes).
+    """
     conversacion = nueva_conversacion(cliente)
     aceptado = crear_run(cliente, conversacion)
     ids: list[int] = []
@@ -87,7 +93,9 @@ def test_todos_los_eventos_llevan_id_incremental(cliente: TestClient) -> None:
         for linea in respuesta.iter_lines():
             if linea.startswith("id: "):
                 ids.append(int(linea.removeprefix("id: ")))
-    assert ids == list(range(1, len(ids) + 1))
+    assert ids, "el stream no mandó ningún evento"
+    assert ids == sorted(ids)
+    assert len(ids) == len(set(ids))
 
 
 def test_reconexion_con_last_event_id(cliente: TestClient) -> None:
