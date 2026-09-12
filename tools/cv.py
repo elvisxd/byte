@@ -180,8 +180,10 @@ class RegenerarArgs(BaseModel):
     pass
 
 
-def _regenerar(archivos: ArchivosDelCV, portfolio: Path | None) -> ToolResult:
-    """Imprime los HTML a PDF con Chrome y los copia al portfolio.
+def _regenerar(
+    archivos: ArchivosDelCV, portfolio: Path | None, drive: Path | None = None
+) -> ToolResult:
+    """Imprime los HTML a PDF con Chrome y los deja en los tres destinos.
 
     El mismo Chrome con el que se imprimían a mano, así que el resultado es el
     de siempre. `--no-pdf-header-footer` saca la fecha y la URL que Chrome pone
@@ -224,6 +226,13 @@ def _regenerar(archivos: ArchivosDelCV, portfolio: Path | None) -> ToolResult:
             nombre = "Elvis-Pino-CV.pdf" if idioma == "en" else "Elvis-Pino-CV-es.pdf"
             shutil.copy2(destino, portfolio / "public" / nombre)
             lineas.append(f"  → portfolio/public/{nombre}")
+
+        # Drive: de acá salen los CV que se mandan desde el teléfono, así que
+        # son los que más importa que estén al día — y los que más fácil quedan
+        # viejos, porque nadie copia un PDF a mano cada vez.
+        if drive and drive.is_dir():
+            shutil.copy2(destino, drive / destino.name)
+            lineas.append(f"  → Drive/{destino.name}")
 
     cierre = ""
     if portfolio and (portfolio / ".git").is_dir():
@@ -442,8 +451,13 @@ def _reemplazar(archivos: ArchivosDelCV, args: ReemplazarArgs) -> ToolResult:
 # --- Armado ---
 
 
-def build_cv_tools(carpeta: Path, max_chars: int, portfolio: Path | None = None) -> list[Tool]:
-    """Las herramientas del CV, atadas a una carpeta concreta."""
+def build_cv_tools(
+    carpeta: Path,
+    max_chars: int,
+    portfolio: Path | None = None,
+    drive: Path | None = None,
+) -> list[Tool]:
+    """Las herramientas del CV, atadas a las carpetas concretas del usuario."""
     archivos = ArchivosDelCV(carpeta.expanduser())
 
     async def ver(args: BaseModel) -> ToolResult:
@@ -462,7 +476,7 @@ def build_cv_tools(carpeta: Path, max_chars: int, portfolio: Path | None = None)
         return _reemplazar(archivos, args)  # type: ignore[arg-type]
 
     async def regenerar(_args: BaseModel) -> ToolResult:
-        return _regenerar(archivos, portfolio)
+        return _regenerar(archivos, portfolio, drive)
 
     return [
         Tool(
@@ -516,8 +530,9 @@ def build_cv_tools(carpeta: Path, max_chars: int, portfolio: Path | None = None)
         Tool(
             name="regenerar_cv",
             description=(
-                "Regenera los PDF del CV desde los HTML y los copia al portfolio. Usala "
-                "después de editar el CV. No publica nada: el commit lo hace el usuario."
+                "Regenera los PDF del CV desde los HTML y los deja en el portfolio y en "
+                "Google Drive (de donde se mandan desde el teléfono). Usala después de "
+                "editar el CV. No publica nada: el commit del portfolio lo hace el usuario."
             ),
             args_model=RegenerarArgs,
             run=regenerar,

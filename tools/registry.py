@@ -104,7 +104,10 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
             portfolio = (
                 Path(settings.portfolio_dir).expanduser() if settings.portfolio_dir else None
             )
-            for herramienta in build_cv_tools(carpeta, settings.max_tool_result_chars, portfolio):
+            drive = Path(settings.drive_cv_dir).expanduser() if settings.drive_cv_dir else None
+            for herramienta in build_cv_tools(
+                carpeta, settings.max_tool_result_chars, portfolio, drive
+            ):
                 registry.add(herramienta)
             logger.info(
                 "cv_activo",

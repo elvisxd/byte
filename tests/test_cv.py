@@ -269,3 +269,18 @@ def test_las_seis_herramientas_se_arman(tmp_path) -> None:
         "reemplazar_en_cv",
         "regenerar_cv",
     }
+
+
+def test_regenerar_acepta_los_tres_destinos(tmp_path: Path) -> None:
+    """La copia de Drive es la que se manda desde el teléfono: si la herramienta
+    no la conoce, queda vieja mientras el portfolio se actualiza, que es justo
+    lo que pasaba —los PDF de Drive decían 183 tests cuando ya eran 479."""
+    import inspect
+
+    from tools.cv import _regenerar
+
+    parametros = set(inspect.signature(_regenerar).parameters)
+    assert {"portfolio", "drive"} <= parametros, "falta un destino"
+
+    # Y `build_cv_tools` tiene que poder pasárselos.
+    assert "drive" in inspect.signature(build_cv_tools).parameters
