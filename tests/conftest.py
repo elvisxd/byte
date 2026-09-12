@@ -33,17 +33,42 @@ _VARIABLES = (
     "BYTE_EVENTS_TOKEN_TTL_S",
     "SANDBOX_URL",
     "SANDBOX_TOKEN",
+    "OLLAMA_BASE_URL",
+)
+
+# Las de texto que el `.env` del desarrollador suele tener puestas y que algún
+# test necesita ver ausentes. Vacío es el default de todas: `Settings` lo lee
+# como "no configurado" y el agente arranca sin esa herramienta.
+_VACIAS = (
+    "TAVILY_API_KEY",
+    "SANDBOX_URL",
+    "SANDBOX_TOKEN",
+    "BYTE_MCP_SERVERS",
+    "DATABASE_URL",
 )
 
 
 @pytest.fixture(autouse=True)
 def entorno_limpio(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Aísla la configuración: el .env del desarrollador no debe afectar los tests."""
+    """Aísla la configuración: el .env del desarrollador no debe afectar los tests.
+
+    Con las de texto no alcanza borrarlas del entorno: `Settings` tiene
+    `env_file=".env"`, así que lo que esté en el archivo gana sobre una variable
+    ausente. Esas se ponen en vacío, que es su default y lo que `Settings` lee
+    como "no configurado" — si no, tener un sandbox o una clave de Tavily en el
+    `.env` hace fallar los tests que prueban justamente que no están.
+    """
     for variable in _VARIABLES:
         monkeypatch.delenv(variable, raising=False)
+    for variable in _VACIAS:
+        monkeypatch.setenv(variable, "")
     monkeypatch.setenv("BYTE_API_KEY", API_KEY)
     monkeypatch.setenv("BYTE_SECRET_KEY", "s" * 32)
     monkeypatch.setenv("BYTE_STORAGE", "memory")
+    # Los tests no hablan con un Ollama de verdad: el LLM va siempre falseado.
+    # Se apunta a un puerto muerto para que el chequeo de salud dé "caido" esté
+    # o no corriendo Ollama en la máquina de quien ejecuta los tests.
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:1")
     # Los límites reales se prueban en su test; el resto no debe chocar con ellos.
     monkeypatch.setenv("BYTE_RATE_LIMIT_GENERAL", "1000/minute")
     monkeypatch.setenv("BYTE_RATE_LIMIT_RUNS", "1000/minute")

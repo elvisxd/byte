@@ -73,3 +73,22 @@ def test_csp_permite_swagger_solo_en_docs(cliente: TestClient) -> None:
         csp = cliente.get(ruta).headers["content-security-policy"]
         assert "jsdelivr" not in csp
         assert "unsafe-inline" not in csp
+
+
+def test_el_env_del_desarrollador_no_se_cuela_en_los_tests() -> None:
+    """`Settings` lee `env_file=".env"`, así que borrar una variable del entorno
+    no alcanza: lo que esté en el archivo gana.
+
+    Sin esto, tener un sandbox o una clave de Tavily configurados hace fallar
+    justamente los tests que prueban que no están —y el fallo parece del código,
+    no del entorno. Pasó: tres tests rojos durante toda una sesión.
+    """
+    from api.config import Settings
+
+    ajustes = Settings()
+    assert ajustes.sandbox_url == "", "el SANDBOX_URL del .env llegó al test"
+    assert ajustes.tavily_api_key == "", "la TAVILY_API_KEY del .env llegó al test"
+    assert ajustes.mcp_servers == "", "los BYTE_MCP_SERVERS del .env llegaron al test"
+    # Los tests falsean el LLM: que Ollama esté o no corriendo no debería
+    # cambiar el resultado de la suite.
+    assert "11434" not in ajustes.ollama_base_url
