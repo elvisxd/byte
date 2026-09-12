@@ -267,15 +267,23 @@ def build_graph(
         if text_open:
             emitter.emit(AGUI.TEXT_MESSAGE_END, {"messageId": message_id})
 
-        if accumulated is None:
-            # El modelo no devolvió nada: se cierra el run con un mensaje honesto.
+        llamadas = list(getattr(accumulated, "tool_calls", []) or []) if accumulated else []
+        contenido = str(accumulated.content) if accumulated is not None else ""
+
+        # Vacío **y sin herramientas que pedir**. Chequear solo `accumulated is
+        # None` no alcanzaba: hay modelos que sí mandan chunks, pero todos con
+        # contenido vacío —encontrado con granite4.1:8b, reproducible para el
+        # mismo prompt—. `accumulated` existe, su `content` es "", y el turno
+        # terminaba sin mensaje: la ruta `?wait=true` devolvía un 500 "El run no
+        # produjo respuesta", que le echa la culpa al servidor por algo que hizo
+        # el modelo y deja al usuario sin nada que leer.
+        #
+        # Un turno vacío que sí trae tool_calls es normal —el modelo pidió una
+        # herramienta y hablará después—, así que ese no se toca.
+        if not contenido.strip() and not llamadas:
             reply = AIMessage(content="El modelo no devolvió respuesta.", id=message_id)
         else:
-            reply = AIMessage(
-                content=accumulated.content,
-                tool_calls=list(getattr(accumulated, "tool_calls", []) or []),
-                id=message_id,
-            )
+            reply = AIMessage(content=contenido, tool_calls=llamadas, id=message_id)
 
         for call in reply.tool_calls:
             emitter.emit(

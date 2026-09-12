@@ -16,6 +16,17 @@ def text_turn(text: str, *, chunk_size: int = 4) -> list[AIMessageChunk]:
     ]
 
 
+def empty_turn(chunks: int = 3) -> list[AIMessageChunk]:
+    """Un turno que manda chunks pero todos vacíos, sin herramientas.
+
+    Distinto de `text_turn("")`, que no manda ningún chunk: acá el acumulado
+    existe y su contenido es "". Es lo que hace granite4.1:8b —encontrado
+    comparando modelos, reproducible para el mismo prompt— y lo que hacía que el
+    turno terminara sin mensaje.
+    """
+    return [AIMessageChunk(content="") for _ in range(chunks)]
+
+
 def tool_turn(name: str, args_json: str, call_id: str = "call_1") -> list[AIMessageChunk]:
     """Un turno del modelo que pide una herramienta."""
     return [

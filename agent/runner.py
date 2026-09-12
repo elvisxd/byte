@@ -643,6 +643,7 @@ class RunManager:
             )
             run.message_id = saved.id
 
+
     def _pausar_si_espera_aprobacion(self, run: Run, final_state: dict[str, Any], log: Any) -> bool:
         """Si el grafo se detuvo en un interrupt, deja el run en "paused".
 

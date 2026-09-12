@@ -280,3 +280,34 @@ def test_el_spec_declara_los_modelos_reales(cliente: TestClient) -> None:
     assert referencia("200").endswith("/MessageResult")
     # El 422 sale con el envoltorio del contrato, no con el de FastAPI.
     assert referencia("422").endswith("/ErrorEnvelope")
+
+
+async def test_un_modelo_que_no_responde_nada_no_pierde_el_turno(
+    crear_cliente: Callable[..., TestClient],
+) -> None:
+    """Hay modelos que a veces devuelven un mensaje entero vacío: sin
+    contenido, sin tool_calls y sin thinking. Lo encontré con granite4.1:8b
+    comparando modelos, y de forma reproducible para el mismo prompt — 3 de 3.
+
+    Sin esto el turno se perdía en un 500 "El run no produjo respuesta": un
+    error de servidor por algo que hizo el modelo, que además deja al usuario
+    sin nada que leer y sin saber si reintentar sirve de algo. Ahora queda un
+    mensaje que dice qué pasó, así la conversación sigue consistente.
+    """
+    from tests.fakes import empty_turn
+
+    # Chunks vacíos, no "ningún chunk": el acumulado existe y su contenido es
+    # "". `text_turn("")` no reproduce el bug porque no manda ninguno.
+    cliente = crear_cliente(turns=[empty_turn()])
+    conversacion = cliente.post("/api/v1/conversations", json={}, headers=AUTH).json()
+    respuesta = cliente.post(
+        f"/api/v1/conversations/{conversacion['id']}/messages?wait=true",
+        json={"content": "hola"},
+        headers=AUTH,
+    )
+
+    assert respuesta.status_code == 200, (
+        f"un modelo mudo no puede ser un error de servidor: {respuesta.json()}"
+    )
+    mensaje = respuesta.json()["message"]
+    assert "no devolvió respuesta" in mensaje["content"]
