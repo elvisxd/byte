@@ -139,6 +139,13 @@ Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries
 - `GET /me` **solo** responde con un JWT: una API key identifica a la instancia, no a alguien.
 - `POST /auth/login` responde lo mismo —y tarda lo mismo— ante un email desconocido y una contraseña incorrecta. Los dos endpoints van bajo el rate limit de runs, que es el más estricto.
 
+**POST `/auth/refresh`** `{ refresh_token }` → el mismo `TokenResponse`. **POST `/auth/logout`** `{ refresh_token }` → `204`.
+
+- El `login` devuelve también un `refresh_token` (14 días). El access dura 30 min; el refresh es el que define cuánto dura la sesión.
+- **Se rota en cada canje**: el token que se manda deja de valer y vuelve otro. Si aparece uno ya canjeado hay dos copias dando vueltas —la del ladrón y la del dueño, sin forma de saber cuál— así que se revoca la **familia entera** y los dos tienen que volver a entrar (OAuth 2.0 BCP, 4.13.2).
+- Se guarda **hasheado** (SHA-256): quien lea la tabla no se lleva credenciales usables. Alcanza SHA-256 porque son 256 bits de aleatorio, no una contraseña con diccionario que probar.
+- `logout` no pide access token (si venció, igual hay que poder salir) y responde `204` siempre, para no ser un oráculo de tokens válidos. Cada login abre su propia familia, así que cerrar sesión en un dispositivo no echa a los otros.
+
 ---
 
 ## Mapeo con el CLI en Go (cliente generado con `oapi-codegen`)

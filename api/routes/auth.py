@@ -16,12 +16,18 @@ Seguridad (docs/seguridad-byte.md):
   ataque de fuerza bruta.
 """
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 
 from api.deps import Context, CurrentUser, limiter, runs_limit
 from api.errors import ByteError
 from api.logging import get_logger
-from models.schemas import LoginRequest, RegisterRequest, TokenResponse, User
+from models.schemas import (
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+    User,
+)
 
 logger = get_logger("api.auth")
 
@@ -70,7 +76,41 @@ async def login(request: Request, payload: LoginRequest, ctx: Context) -> TokenR
     return TokenResponse(
         access_token=ctx.jwt.issue(usuario.id),
         expires_in=ctx.jwt.ttl_s,
+        refresh_token=await ctx.refresh.emitir(usuario.id),
     )
+
+
+@router.post("/auth/refresh", response_model=TokenResponse)
+@limiter.limit(runs_limit)
+async def refresh(request: Request, payload: RefreshRequest, ctx: Context) -> TokenResponse:
+    """Un access token nuevo, sin volver a pedir la contraseña.
+
+    El refresh se **rota**: el que se manda deja de valer y vuelve otro. Si
+    alguien canjea uno ya usado, se revoca la familia entera y este endpoint
+    responde 401 — la sesión robada y la legítima caen juntas, que es la única
+    respuesta segura cuando no se puede saber cuál es cuál.
+    """
+    canjeado = await ctx.refresh.canjear(payload.refresh_token)
+    if canjeado is None:
+        raise ByteError("unauthorized", "El refresh token no vale", status_code=401)
+    user_id, nuevo = canjeado
+    return TokenResponse(
+        access_token=ctx.jwt.issue(user_id),
+        expires_in=ctx.jwt.ttl_s,
+        refresh_token=nuevo,
+    )
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: RefreshRequest, ctx: Context) -> Response:
+    """Cierra la sesión revocando la familia del refresh.
+
+    No pide access token: si venció, igual hay que poder cerrar sesión. Y no
+    dice si el token existía — responde 204 siempre, para no convertirse en un
+    oráculo de tokens válidos.
+    """
+    await ctx.refresh.revocar(payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=User)

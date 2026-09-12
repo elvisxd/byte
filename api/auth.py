@@ -21,6 +21,9 @@ Decisiones (docs/seguridad-byte.md):
   `/auth/login` es un oráculo para enumerar usuarios.
 """
 
+import hashlib
+import secrets
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -125,3 +128,83 @@ class JWTService:
             return None
         sub = datos.get("sub")
         return sub if isinstance(sub, str) and sub else None
+
+
+class RefreshService:
+    """Emite, canjea y revoca refresh tokens.
+
+    El access token dura 30 minutos y no se revoca: robarlo cuesta poco. El
+    refresh dura días, así que robarlo cuesta mucho más — y por eso este sí se
+    guarda, se rota y se puede revocar.
+
+    **Rotación con detección de reuso** (OAuth 2.0 BCP, 4.13.2): cada canje
+    invalida el token usado y emite uno nuevo de la misma familia. Si aparece
+    uno ya canjeado, hay dos copias dando vueltas —la del ladrón y la del dueño,
+    sin forma de saber cuál es cuál— así que se revoca la familia entera y los
+    dos tienen que volver a entrar. Es molesto a propósito: la alternativa es
+    dejar la sesión robada viva.
+
+    El token es aleatorio y **se guarda hasheado**, como una contraseña. Acá
+    alcanza SHA-256 y no hace falta argon2: son 256 bits de aleatorio, no hay
+    diccionario que probar, y el login no puede costar 30 ms por intento.
+    """
+
+    def __init__(self, repository: Any, ttl_s: int) -> None:
+        self._repo = repository
+        self._ttl_s = ttl_s
+
+    @property
+    def ttl_s(self) -> int:
+        return self._ttl_s
+
+    @staticmethod
+    def _hash(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    async def emitir(self, user_id: str, family_id: str | None = None) -> str:
+        """Un token nuevo. Sin `family_id` arranca una familia (login nuevo)."""
+        token = secrets.token_urlsafe(32)
+        await self._repo.save_refresh_token(
+            user_id,
+            self._hash(token),
+            family_id or str(uuid.uuid4()),
+            datetime.now(UTC) + timedelta(seconds=self._ttl_s),
+        )
+        return token
+
+    async def canjear(self, token: str | None) -> tuple[str, str] | None:
+        """`(user_id, token nuevo)` si el canje vale, `None` si no.
+
+        Un token reusado no solo falla: revoca la familia, así que la sesión
+        robada y la legítima caen juntas.
+        """
+        if not token:
+            return None
+        resultado = await self._repo.use_refresh_token(self._hash(token))
+        if resultado.reusado and resultado.family_id:
+            revocados = await self._repo.revoke_refresh_family(resultado.family_id)
+            logger.warning(
+                "refresh_token_reusado",
+                family_id=resultado.family_id,
+                revocados=revocados,
+                detail="un token ya canjeado volvió a aparecer: se corta la familia entera",
+            )
+            return None
+        if not resultado.user_id or not resultado.family_id:
+            return None
+        return resultado.user_id, await self.emitir(resultado.user_id, resultado.family_id)
+
+    async def revocar(self, token: str | None) -> bool:
+        """Cierra la sesión: revoca la familia del token (logout).
+
+        Consulta la familia sin canjear el token: si lo marcara como usado, el
+        siguiente intento parecería un reuso y se loguearía como si alguien
+        hubiera robado algo. Cerrar sesión no es un incidente.
+        """
+        if not token:
+            return False
+        family_id = await self._repo.family_of_refresh_token(self._hash(token))
+        if family_id is None:
+            return False
+        await self._repo.revoke_refresh_family(family_id)
+        return True

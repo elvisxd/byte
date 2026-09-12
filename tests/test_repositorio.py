@@ -10,6 +10,7 @@ como service container.
 
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -25,6 +26,7 @@ DSN = os.environ.get("BYTE_TEST_DATABASE_URL", "")
 
 # Dos dueños de prueba. Son uuid porque `conversations.user_id` es
 # `uuid REFERENCES users (id)`: Postgres rechaza cualquier otra cosa.
+FAMILIA = "33333333-3333-4333-8333-333333333333"
 ANA = "11111111-1111-4111-8111-111111111111"
 BETO = "22222222-2222-4222-8222-222222222222"
 
@@ -39,7 +41,7 @@ async def _vaciar(dsn: str) -> None:
     import psycopg
 
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-        await conn.execute("TRUNCATE conversations, users CASCADE")
+        await conn.execute("TRUNCATE conversations, users, refresh_tokens CASCADE")
         for uid, email in ((ANA, "ana@ejemplo.test"), (BETO, "beto@ejemplo.test")):
             await conn.execute(
                 "INSERT INTO users (id, email, password_hash) VALUES (%s, %s, 'x')",
@@ -288,8 +290,13 @@ async def test_las_migraciones_se_aplican_una_sola_vez() -> None:
     from db.repository import MIGRATIONS_DIR
 
     async with await psycopg.AsyncConnection.connect(DSN, autocommit=True) as conn:
+        # Todo lo que crean las migraciones. Si queda una tabla viva, su
+        # `CREATE TABLE IF NOT EXISTS` no vuelve a correr y se pierde lo que
+        # el DROP CASCADE se llevó de ella —por ejemplo, una FK hacia `users`—,
+        # así que las corridas siguientes arrancan con un esquema incompleto.
         await conn.execute(
-            "DROP TABLE IF EXISTS schema_migrations, messages, conversations, users CASCADE"
+            "DROP TABLE IF EXISTS schema_migrations, messages, conversations, "
+            "document_chunks, documents, refresh_tokens, users CASCADE"
         )
 
     esperadas = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql"))
@@ -433,3 +440,83 @@ async def test_borrar_un_usuario_arrastra_sus_conversaciones(repositorio: Reposi
         await conn.execute("DELETE FROM users WHERE id = %s", (creado.id,))
 
     assert await repositorio.get_conversation(conversacion.id, user_id=creado.id) is None
+
+
+# --- Refresh tokens ---
+
+
+async def _un_usuario(repositorio: Repository) -> str:
+    creado = await repositorio.create_user("ana@ejemplo.com", "h")
+    assert creado is not None
+    return creado.id
+
+
+async def test_un_refresh_se_canjea_una_sola_vez(repositorio: Repository) -> None:
+    user_id = await _un_usuario(repositorio)
+    vence = datetime.now(UTC) + timedelta(days=1)
+    await repositorio.save_refresh_token(user_id, "hash-1", FAMILIA, vence)
+
+    primero = await repositorio.use_refresh_token("hash-1")
+    assert primero.user_id == user_id
+    assert primero.reusado is False
+
+    segundo = await repositorio.use_refresh_token("hash-1")
+    assert segundo.user_id is None
+    assert segundo.reusado is True, "un token ya canjeado tiene que delatarse"
+
+
+async def test_un_refresh_vencido_no_se_canjea(repositorio: Repository) -> None:
+    user_id = await _un_usuario(repositorio)
+    await repositorio.save_refresh_token(
+        user_id, "hash-viejo", FAMILIA, datetime.now(UTC) - timedelta(seconds=1)
+    )
+    resultado = await repositorio.use_refresh_token("hash-viejo")
+    assert resultado.user_id is None
+    assert resultado.reusado is False
+
+
+async def test_revocar_la_familia_corta_todos_sus_tokens(repositorio: Repository) -> None:
+    user_id = await _un_usuario(repositorio)
+    vence = datetime.now(UTC) + timedelta(days=1)
+    await repositorio.save_refresh_token(user_id, "hash-a", FAMILIA, vence)
+    await repositorio.save_refresh_token(user_id, "hash-b", FAMILIA, vence)
+
+    assert await repositorio.revoke_refresh_family(FAMILIA) == 2
+    assert (await repositorio.use_refresh_token("hash-b")).user_id is None
+
+
+async def test_un_token_que_no_existe_no_es_un_reuso(repositorio: Repository) -> None:
+    """Distinguir los dos casos es lo que hace útil la detección: si todo
+    pareciera reuso, cualquier token inventado revocaría una sesión."""
+    resultado = await repositorio.use_refresh_token("nunca-existio")
+    assert resultado.user_id is None
+    assert resultado.reusado is False
+
+
+async def test_la_familia_se_puede_consultar_sin_canjear(repositorio: Repository) -> None:
+    """Lo usa el logout: marcar el token como usado haría que el siguiente
+    intento pareciera un reuso."""
+    user_id = await _un_usuario(repositorio)
+    await repositorio.save_refresh_token(
+        user_id, "hash-1", FAMILIA, datetime.now(UTC) + timedelta(days=1)
+    )
+
+    assert await repositorio.family_of_refresh_token("hash-1") == FAMILIA
+    # Y sigue canjeable, porque consultar no consume.
+    assert (await repositorio.use_refresh_token("hash-1")).user_id == user_id
+
+
+async def test_borrar_el_usuario_arrastra_sus_refresh(repositorio: Repository) -> None:
+    """`ON DELETE CASCADE`: no pueden quedar tokens vivos de un usuario que ya
+    no existe."""
+    if not isinstance(repositorio, PostgresRepository):
+        pytest.skip("la implementación en memoria no tiene integridad referencial")
+
+    user_id = await _un_usuario(repositorio)
+    await repositorio.save_refresh_token(
+        user_id, "hash-1", FAMILIA, datetime.now(UTC) + timedelta(days=1)
+    )
+    async with repositorio.pool.connection() as conn:
+        await conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
+
+    assert (await repositorio.use_refresh_token("hash-1")).user_id is None

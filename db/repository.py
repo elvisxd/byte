@@ -11,6 +11,7 @@ DATABASE_URL para usar Postgres.
 import asyncio
 import base64
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,6 +35,22 @@ SIN_USUARIO: str | None = None
 # Id arbitrario pero fijo para el advisory lock de las migraciones.
 MIGRATION_LOCK_ID = 8_675_309
 PREVIEW_CHARS = 120
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshResult:
+    """Lo que pasó al intentar canjear un refresh token.
+
+    `reusado` es el caso que importa: un token ya canjeado que vuelve a
+    aparecer significa que alguien tiene una copia — la de quien lo robó o la
+    del dueño legítimo, y no hay forma de saber cuál. Se revoca la familia
+    entera y los dos tienen que volver a entrar, que es la única respuesta
+    segura (OAuth 2.0 BCP, sección 4.13.2).
+    """
+
+    user_id: str | None = None
+    family_id: str | None = None
+    reusado: bool = False
 
 
 def _now() -> datetime:
@@ -78,6 +95,14 @@ class Repository(Protocol):
     async def get_user(self, user_id: str) -> User | None: ...
     async def set_password_hash(self, user_id: str, password_hash: str) -> bool: ...
 
+    # --- Refresh tokens (Fase 4) ---
+    async def save_refresh_token(
+        self, user_id: str, token_hash: str, family_id: str, expires_at: datetime
+    ) -> None: ...
+    async def use_refresh_token(self, token_hash: str) -> RefreshResult: ...
+    async def revoke_refresh_family(self, family_id: str) -> int: ...
+    async def family_of_refresh_token(self, token_hash: str) -> str | None: ...
+
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation: ...
     async def get_conversation(
         self, conversation_id: str, user_id: str | None = None
@@ -121,6 +146,8 @@ class MemoryRepository:
         # Usuario → (usuario, hash de su contraseña). El hash vive acá y no en
         # el modelo: `User` es lo que la API puede devolver.
         self._usuarios: dict[str, tuple[User, str]] = {}
+        # hash del token → su fila. En Postgres es la tabla `refresh_tokens`.
+        self._refresh: dict[str, dict[str, Any]] = {}
         self._conversations: dict[str, Conversation] = {}
         # Dueño por conversación. En Postgres es `conversations.user_id`, que
         # existe desde el MVP; acá hace falta un dict propio.
@@ -168,6 +195,46 @@ class MemoryRepository:
                 return False
             self._usuarios[user_id] = (par[0], password_hash)
             return True
+
+    async def save_refresh_token(
+        self, user_id: str, token_hash: str, family_id: str, expires_at: datetime
+    ) -> None:
+        async with self._lock:
+            self._refresh[token_hash] = {
+                "user_id": user_id,
+                "family_id": family_id,
+                "expires_at": expires_at,
+                "used_at": None,
+                "revoked_at": None,
+            }
+
+    async def use_refresh_token(self, token_hash: str) -> RefreshResult:
+        async with self._lock:
+            fila = self._refresh.get(token_hash)
+            if fila is None:
+                return RefreshResult()
+            if fila["used_at"] is not None:
+                # Ya se canjeó y vuelve a aparecer: alguien tiene una copia.
+                return RefreshResult(family_id=fila["family_id"], reusado=True)
+            if fila["revoked_at"] is not None or fila["expires_at"] <= _now():
+                return RefreshResult()
+            fila["used_at"] = _now()
+            return RefreshResult(user_id=fila["user_id"], family_id=fila["family_id"])
+
+    async def family_of_refresh_token(self, token_hash: str) -> str | None:
+        """La familia de un token, sin canjearlo. Para el logout: marcar el
+        token como usado haría que el siguiente intento pareciera un reuso."""
+        fila = self._refresh.get(token_hash)
+        return fila["family_id"] if fila else None
+
+    async def revoke_refresh_family(self, family_id: str) -> int:
+        async with self._lock:
+            revocados = 0
+            for fila in self._refresh.values():
+                if fila["family_id"] == family_id and fila["revoked_at"] is None:
+                    fila["revoked_at"] = _now()
+                    revocados += 1
+            return revocados
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         now = _now()
@@ -469,6 +536,68 @@ class PostgresRepository:
                 "UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id)
             )
         return cur.rowcount > 0
+
+    async def save_refresh_token(
+        self, user_id: str, token_hash: str, family_id: str, expires_at: datetime
+    ) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO refresh_tokens (user_id, token_hash, family_id, expires_at)
+                   VALUES (%s, %s, %s, %s)""",
+                (user_id, token_hash, family_id, expires_at),
+            )
+
+    async def use_refresh_token(self, token_hash: str) -> RefreshResult:
+        """Canjea un refresh token, marcándolo como usado.
+
+        El UPDATE condicional hace el canje atómico: dos peticiones con el mismo
+        token compiten por la misma fila y solo una la actualiza. Con un SELECT
+        previo, las dos lo verían sin usar y las dos recibirían tokens nuevos —
+        que es justo el agujero que la rotación tiene que cerrar.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                """UPDATE refresh_tokens SET used_at = now()
+                   WHERE token_hash = %s
+                     AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+                   RETURNING user_id, family_id""",
+                (token_hash,),
+            )
+            fila = await cur.fetchone()
+            if fila is not None:
+                return RefreshResult(user_id=str(fila["user_id"]), family_id=str(fila["family_id"]))
+
+            # No se canjeó. Distinguir "ya usado" de "no existe" es lo que
+            # permite detectar el reuso: por eso las filas no se borran.
+            cur = await conn.execute(
+                "SELECT family_id FROM refresh_tokens "
+                "WHERE token_hash = %s AND used_at IS NOT NULL",
+                (token_hash,),
+            )
+            usado = await cur.fetchone()
+        if usado is not None:
+            return RefreshResult(family_id=str(usado["family_id"]), reusado=True)
+        return RefreshResult()
+
+    async def family_of_refresh_token(self, token_hash: str) -> str | None:
+        """La familia de un token, sin canjearlo (ver la versión en memoria)."""
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT family_id FROM refresh_tokens WHERE token_hash = %s", (token_hash,)
+            )
+            fila = await cur.fetchone()
+        return str(fila["family_id"]) if fila else None
+
+    async def revoke_refresh_family(self, family_id: str) -> int:
+        if not _is_uuid(family_id):
+            return 0
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "UPDATE refresh_tokens SET revoked_at = now() "
+                "WHERE family_id = %s AND revoked_at IS NULL",
+                (family_id,),
+            )
+        return cur.rowcount
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         async with self._pool.connection() as conn:

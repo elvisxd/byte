@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     # 30 minutos: el contrato pide 15-60. Corto porque no hay revocación — un
     # token robado vale hasta que expire y no hay lista negra que lo corte.
     jwt_ttl_s: int = Field(default=1800, alias="BYTE_JWT_TTL_S")
+    # 14 días. Es el que de verdad define cuánto dura una sesión: mientras se
+    # use, se rota y no vence. Se revoca en el logout y cuando se detecta un
+    # reuso, que es lo que el access token no puede hacer.
+    refresh_ttl_s: int = Field(default=1_209_600, alias="BYTE_REFRESH_TTL_S")
     # Del otro lado del modo seguro hay una persona decidiendo: el token dura
     # más que el del stream, y mientras tanto el run pausado no se descarta.
     resume_token_ttl_s: int = Field(default=3600, alias="BYTE_RESUME_TOKEN_TTL_S")

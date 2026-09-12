@@ -7,7 +7,7 @@ from fastapi import Depends, Request
 from slowapi import Limiter
 
 from agent.runner import RunManager
-from api.auth import JWTService, Passwords
+from api.auth import JWTService, Passwords, RefreshService
 from api.config import Settings, get_settings
 from api.errors import ByteError
 from api.security import SESSION_COOKIE, Credentials, TokenService
@@ -25,6 +25,7 @@ class AppContext:
     tokens: TokenService
     passwords: Passwords
     jwt: JWTService
+    refresh: RefreshService
     repository: Repository
     runs: RunManager
     registry: ToolRegistry

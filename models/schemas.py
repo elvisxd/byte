@@ -61,6 +61,13 @@ class TokenResponse(BaseModel):
     # "bearer" es el tipo de token de OAuth2, no un secreto (S105 lo confunde).
     token_type: Literal["bearer"] = "bearer"  # noqa: S105
     expires_in: int
+    # El refresh se rota en cada uso: el que vuelve acá reemplaza al anterior,
+    # que deja de valer en el momento.
+    refresh_token: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=512)
 
 
 class Conversation(BaseModel):

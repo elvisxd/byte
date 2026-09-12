@@ -116,7 +116,9 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   los listados no se mezclan. Con API key el dueño es `None`, así que lo que
   había antes del multi-usuario sigue siendo accesible con ella
 
-Falta el refresh: el token vence a los 30 minutos y hay que volver a entrar.
+- **Refresh token de 14 días**, rotado en cada uso: el que se manda deja de
+  valer y vuelve otro. Si aparece uno ya canjeado se revoca la sesión entera —
+  hay dos copias dando vueltas y no se puede saber cuál es la del dueño
 
 ### Fase 3 — herramientas externas por MCP
 

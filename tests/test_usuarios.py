@@ -317,3 +317,104 @@ def test_la_api_key_no_ve_lo_de_los_usuarios(cliente: TestClient) -> None:
         c["title"] for c in cliente.get("/api/v1/conversations", headers=AUTH).json()["items"]
     ]
     assert con_clave == ["de la instancia"]
+
+
+# --- Refresh token ---
+
+
+def _sesion(cliente: TestClient) -> dict:
+    _registrar(cliente)
+    return _login(cliente).json()
+
+
+def test_el_login_devuelve_un_refresh(cliente: TestClient) -> None:
+    assert _sesion(cliente)["refresh_token"]
+
+
+def test_el_refresh_da_un_access_nuevo_sin_la_contrasena(cliente: TestClient) -> None:
+    """Es el punto: 30 minutos de access no se sostienen si hay que volver a
+    escribir la contraseña cada vez."""
+    inicial = _sesion(cliente)
+    renovado = cliente.post(
+        "/api/v1/auth/refresh", json={"refresh_token": inicial["refresh_token"]}
+    )
+    assert renovado.status_code == 200
+    nuevo = renovado.json()["access_token"]
+    assert cliente.get("/api/v1/me", headers=_bearer(nuevo)).status_code == 200
+
+
+def test_el_refresh_se_rota(cliente: TestClient) -> None:
+    """El token que se manda deja de valer y vuelve otro: sin rotación, uno
+    robado sirve durante todo su TTL sin que nadie lo note."""
+    inicial = _sesion(cliente)["refresh_token"]
+    devuelto = cliente.post("/api/v1/auth/refresh", json={"refresh_token": inicial}).json()
+    assert devuelto["refresh_token"] != inicial
+
+
+def test_un_refresh_reusado_corta_la_familia(cliente: TestClient) -> None:
+    """Un token ya canjeado que reaparece significa que hay dos copias —la del
+    ladrón y la del dueño, sin forma de saber cuál— así que caen las dos.
+
+    Es molesto a propósito: la alternativa es dejar viva la sesión robada.
+    """
+    primero = _sesion(cliente)["refresh_token"]
+    segundo = cliente.post("/api/v1/auth/refresh", json={"refresh_token": primero}).json()[
+        "refresh_token"
+    ]
+
+    # El viejo vuelve a aparecer: se corta todo.
+    assert cliente.post("/api/v1/auth/refresh", json={"refresh_token": primero}).status_code == 401
+    # Y el que era válido cae con la familia.
+    assert cliente.post("/api/v1/auth/refresh", json={"refresh_token": segundo}).status_code == 401
+
+
+def test_un_refresh_inventado_no_vale(cliente: TestClient) -> None:
+    assert (
+        cliente.post("/api/v1/auth/refresh", json={"refresh_token": "no-existe"}).status_code == 401
+    )
+
+
+def test_el_logout_cierra_la_sesion(cliente: TestClient) -> None:
+    inicial = _sesion(cliente)["refresh_token"]
+    assert cliente.post("/api/v1/auth/logout", json={"refresh_token": inicial}).status_code == 204
+    assert cliente.post("/api/v1/auth/refresh", json={"refresh_token": inicial}).status_code == 401
+
+
+def test_el_logout_no_dice_si_el_token_existia(cliente: TestClient) -> None:
+    """Responder distinto lo convertiría en un oráculo de tokens válidos."""
+    inventado = cliente.post("/api/v1/auth/logout", json={"refresh_token": "no-existe"})
+    assert inventado.status_code == 204
+
+
+def test_cerrar_sesion_no_parece_un_robo(cliente: TestClient, caplog) -> None:
+    """El logout no canjea el token, solo revoca su familia: marcarlo como
+    usado haría que el siguiente intento se loguee como reuso, y cerrar sesión
+    no es un incidente de seguridad."""
+    inicial = _sesion(cliente)["refresh_token"]
+    cliente.post("/api/v1/auth/logout", json={"refresh_token": inicial})
+    caplog.clear()
+    cliente.post("/api/v1/auth/refresh", json={"refresh_token": inicial})
+    assert "refresh_token_reusado" not in caplog.text
+
+
+def test_dos_sesiones_son_independientes(cliente: TestClient) -> None:
+    """Cerrar sesión en un dispositivo no debería echar al otro: cada login
+    abre su propia familia."""
+    _registrar(cliente)
+    una = _login(cliente).json()["refresh_token"]
+    otra = _login(cliente).json()["refresh_token"]
+
+    cliente.post("/api/v1/auth/logout", json={"refresh_token": una})
+    assert cliente.post("/api/v1/auth/refresh", json={"refresh_token": otra}).status_code == 200
+
+
+def test_el_refresh_no_se_guarda_en_claro() -> None:
+    """Si alguien lee la tabla —un backup, un dump— no debería llevarse
+    credenciales usables, igual que con las contraseñas."""
+    import hashlib
+
+    from api.auth import RefreshService
+
+    token = "un-token-cualquiera"  # noqa: S105
+    assert RefreshService._hash(token) == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in RefreshService._hash(token)
