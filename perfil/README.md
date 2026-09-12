@@ -20,6 +20,35 @@ empresa lo aprobás vos. Nada acá se publica ni se envía solo.
 | `proyectos.md` | Un proyecto por bloque: qué es, qué prueba, números reales. |
 | `github.md` | Estado del perfil: qué repo es público, cuál tiene descripción. |
 
+## El flujo real del CV
+
+El CV vive en `~/Downloads/cv-elvis/`:
+
+```
+build/cv-en.html  ─┐  se abren en el navegador
+build/cv-es.html  ─┘  → Imprimir → Guardar como PDF
+                          ↓
+            Elvis-Pino-CV-{en,es}.pdf
+                          ↓
+        portfolio/public/  +  Google Drive (desde donde se manda por teléfono)
+```
+
+Los HTML están escritos a mano, así que un dato que cambia hay que corregirlo en
+dos archivos y reimprimir dos PDF. Por eso el CV decía "183 tests" cuando ya
+eran 459, y por eso hay seis copias de distinto tamaño en tres lugares.
+
+`perfil/sincronizar.py` cierra esa parte: compara los números del CV con los del
+código y los corrige. No reescribe el CV —eso es tuyo—, solo los números que
+envejecen solos, diciendo exactamente qué cambió.
+
+```bash
+uv run python perfil/sincronizar.py            # dice qué está viejo
+uv run python perfil/sincronizar.py --aplicar  # lo corrige
+```
+
+Reimprimir los PDF sigue siendo manual: el navegador es lo que da el resultado
+que ya te gusta, y automatizarlo con otra herramienta cambiaría el diseño.
+
 ## Cómo se mantiene
 
 Los números que envejecen —cantidad de tests, líneas, repos— se sacan del
