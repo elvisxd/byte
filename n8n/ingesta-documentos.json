@@ -1,0 +1,270 @@
+{
+  "name": "Byte — ingesta automática de documentos",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "mode": "list",
+          "value": "PEGÁ_ACÁ_LA_CARPETA"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [-620, 0],
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Archivo nuevo en la carpeta",
+      "notes": "Se puede reemplazar por cualquier disparador que traiga un archivo: Dropbox, IMAP con adjuntos, un webhook, o un Local File Trigger si n8n corre con acceso al disco. Lo único que el resto del flujo necesita es un binario en `data`."
+    },
+    {
+      "parameters": {
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-400, 0],
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Bajar el archivo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $binary.data.fileName }}",
+              "rightValue": "\\.(pdf|txt|md|markdown)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "b1000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $binary.data.fileSize }}",
+              "rightValue": 20971520,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-180, 0],
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "¿Es un tipo que Byte indexa?",
+      "notes": "Byte valida el tipo por magic bytes y rechaza lo que pase de 20 MB. Filtrar acá evita subir archivos que van a volver con 415 o 413: la API los rechazaría igual, pero cada intento gasta una subida."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BYTE_URL }}/api/v1/documents",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "contentType": "multipart-form-data",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [60, -100],
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Subir a Byte",
+      "notes": "Credencial de tipo Header Auth con Name = X-API-Key y Value = la BYTE_API_KEY. Nunca escribir la clave acá: quedaría en el JSON exportado y en el repo.\n\n`neverError` deja que el flujo siga con el código de estado en la mano, para poder avisar en vez de cortar la ejecución."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1000000-0000-4000-8000-000000000003",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 202,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [280, -100],
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "¿Lo aceptó?",
+      "notes": "202 y no 200: la ingesta es asíncrona. El documento queda en `processing` y pasa a `indexed` o `error` cuando termina; esto solo confirma que Byte lo recibió."
+    },
+    {
+      "parameters": {
+        "amount": 20
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [500, -200],
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Esperar a que indexe",
+      "webhookId": "c1000000-0000-4000-8000-000000000001",
+      "notes": "El parseo y los embeddings tardan. 20 segundos alcanzan para un PDF chico con el modelo local; para archivos grandes conviene subirlo o consultar el estado en un bucle."
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.BYTE_URL }}/api/v1/documents/{{ $('Subir a Byte').item.json.body.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, -200],
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Ver cómo terminó"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000001",
+              "name": "resumen",
+              "value": "={{ $json.status === 'indexed' ? '✅ ' + $json.filename + ' indexado (' + $json.chunks + ' fragmentos)' : '⚠️ ' + $json.filename + ': ' + ($json.error_message || $json.status) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [940, -200],
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "Armar el aviso",
+      "notes": "Conectar acá lo que se quiera para avisar: email, Slack, Telegram. Se deja sin nodo de salida a propósito, para no arrastrar una credencial que no todos usan."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000002",
+              "name": "resumen",
+              "value": "={{ '❌ Byte rechazó ' + $binary.data.fileName + ' (HTTP ' + $json.statusCode + '): ' + ($json.body.error ? $json.body.error.message : 'sin detalle') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 20],
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "Rechazado por Byte"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000003",
+              "name": "resumen",
+              "value": "={{ '⏭️ ' + $binary.data.fileName + ' no es un tipo que Byte indexe, o pasa los 20 MB' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [60, 140],
+      "id": "a1000000-0000-4000-8000-000000000010",
+      "name": "Salteado"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Archivo nuevo en la carpeta": {
+      "main": [[{ "node": "Bajar el archivo", "type": "main", "index": 0 }]]
+    },
+    "Bajar el archivo": {
+      "main": [[{ "node": "¿Es un tipo que Byte indexa?", "type": "main", "index": 0 }]]
+    },
+    "¿Es un tipo que Byte indexa?": {
+      "main": [
+        [{ "node": "Subir a Byte", "type": "main", "index": 0 }],
+        [{ "node": "Salteado", "type": "main", "index": 0 }]
+      ]
+    },
+    "Subir a Byte": {
+      "main": [[{ "node": "¿Lo aceptó?", "type": "main", "index": 0 }]]
+    },
+    "¿Lo aceptó?": {
+      "main": [
+        [{ "node": "Esperar a que indexe", "type": "main", "index": 0 }],
+        [{ "node": "Rechazado por Byte", "type": "main", "index": 0 }]
+      ]
+    },
+    "Esperar a que indexe": {
+      "main": [[{ "node": "Ver cómo terminó", "type": "main", "index": 0 }]]
+    },
+    "Ver cómo terminó": {
+      "main": [[{ "node": "Armar el aviso", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

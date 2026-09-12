@@ -79,7 +79,10 @@ async def _sumar_herramientas_mcp(
     from mcp_client.client import conectar_servidores
 
     herramientas, servidores = await conectar_servidores(
-        settings.mcp_servers, settings.max_tool_result_chars, settings.mcp_timeout_s
+        settings.mcp_servers,
+        settings.max_tool_result_chars,
+        settings.mcp_timeout_s,
+        settings.mcp_tokens,
     )
 
     async def cerrar_todo() -> None:

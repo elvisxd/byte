@@ -78,6 +78,34 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Opcional: automatización periférica (n8n/README.md). No lo levanta
+  # `docker compose up` a secas — hay que pedirlo:
+  #   docker compose --profile n8n up -d n8n
+  n8n:
+    profiles: ["n8n"]
+    image: n8nio/n8n:latest
+    environment:
+      # Sin autenticación de usuario n8n queda abierto a quien llegue al puerto,
+      # y del otro lado hay credenciales de servicios reales.
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-byte}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:?definí N8N_PASSWORD en tu .env}
+      # Los workflows le hablan a la API por el nombre del servicio, no por
+      # localhost: dentro del contenedor, localhost es el propio n8n.
+      BYTE_URL: http://api:8000
+      BYTE_EMAIL_PERMITIDOS: ${BYTE_EMAIL_PERMITIDOS:-}
+      GENERIC_TIMEZONE: ${TZ:-America/Caracas}
+      # Sin esto n8n avisa en cada arranque que las credenciales quedan sin
+      # cifrar en su base.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?definí N8N_ENCRYPTION_KEY en tu .env}
+    ports:
+      # Solo en 127.0.0.1, como el resto: n8n guarda credenciales de terceros.
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   ollama-models:
+  n8n-data:

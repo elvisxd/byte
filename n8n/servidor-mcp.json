@@ -1,0 +1,103 @@
+{
+  "name": "Byte — n8n como servidor MCP",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "byte",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2.1,
+      "position": [
+        -600,
+        0
+      ],
+      "id": "11000000-0000-4000-8000-000000000001",
+      "name": "MCP Server Trigger",
+      "webhookId": "21000000-0000-4000-8000-000000000001",
+      "notes": "Este nodo publica la URL que va en `BYTE_MCP_SERVERS`.\n\nLa de producción aparece cuando el workflow está publicado, y es la que hay que usar: la de test solo vive mientras la pestaña está abierta.\n\n**Autenticación Bearer.** El token va en `BYTE_MCP_TOKENS` del lado de Byte, con el formato `n8n=<token>`. Sin él la URL queda abierta a cualquiera que llegue al puerto: no es un detalle, porque lo que hay del otro lado son acciones sobre servicios reales."
+    },
+    {
+      "parameters": {
+        "description": "Agenda un recordatorio en el calendario. Recibe el título y la fecha y hora en ISO 8601.",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "titulo",
+              "type": "string"
+            },
+            {
+              "name": "cuando",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        -360,
+        180
+      ],
+      "id": "11000000-0000-4000-8000-000000000002",
+      "name": "agendar_recordatorio",
+      "notes": "Un ejemplo de lo que gana Byte por acá: acciones sobre servicios de afuera (calendario, planilla, CRM) sin escribir una herramienta en Python ni meter esas credenciales en Byte.\n\n**La descripción la lee el modelo de Byte**, así que es parte de la superficie de ataque: describe lo que la herramienta hace, sin instrucciones. Byte la sanea y la marca como texto de afuera, pero eso protege del prompt injection, no de conectar un servidor que hace algo distinto de lo que dice."
+    },
+    {
+      "parameters": {
+        "description": "Busca en las planillas del equipo. Recibe qué buscar en lenguaje natural.",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "consulta",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        -180,
+        180
+      ],
+      "id": "11000000-0000-4000-8000-000000000003",
+      "name": "buscar_en_planillas",
+      "notes": "Cada herramienta es un workflow aparte que este nodo llama. Se dejan sin implementar a propósito: qué planilla y qué calendario son de cada uno, y arrastrar esas credenciales en el JSON exportado sería filtrarlas al repo."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "agendar_recordatorio": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar_en_planillas": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

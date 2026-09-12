@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # lee el modelo (tool poisoning, docs/seguridad-byte.md).
     mcp_servers: str = Field(default="", alias="BYTE_MCP_SERVERS")
     mcp_timeout_s: float = Field(default=30.0, alias="BYTE_MCP_TIMEOUT_S")
+    # Tokens Bearer por servidor, como `nombre=token`. En su propia variable y
+    # no pegados a la URL: son secretos, y mezclarlos con la lista los dejaría a
+    # la vista en cualquier log o captura de la configuración. n8n los pide.
+    mcp_tokens: str = Field(default="", alias="BYTE_MCP_TOKENS")
 
     # --- Límites del agente (seguridad: costos y loops) ---
     max_iterations: int = Field(default=6, alias="BYTE_MAX_ITERATIONS")

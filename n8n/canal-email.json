@@ -1,0 +1,309 @@
+{
+  "name": "Byte — canal de email",
+  "nodes": [
+    {
+      "parameters": {
+        "postProcessAction": "read",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "forceReconnect": 60
+        }
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.2,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "e1000000-0000-4000-8000-000000000001",
+      "name": "Llega un correo",
+      "notes": "Credencial IMAP de una casilla dedicada, no la personal: todo lo que entre acá se le manda al agente. Con una contraseña de aplicación, no la del correo."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "={{ $env.BYTE_EMAIL_PERMITIDOS }}",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -420,
+        0
+      ],
+      "id": "e1000000-0000-4000-8000-000000000002",
+      "name": "¿Remitente permitido?",
+      "notes": "**Esta condición es la seguridad del flujo.** Sin ella, cualquiera que sepa la dirección le habla al agente: le gasta el modelo, le hace buscar en la web y le llena el historial. Peor todavía, el cuerpo de un correo es texto de un desconocido que entra al prompt.\n\n`BYTE_EMAIL_PERMITIDOS` es la lista de direcciones separadas por coma. Byte trata el contenido como no confiable igual, pero eso protege del prompt injection, no de que alguien use tu modelo."
+    },
+    {
+      "parameters": {
+        "jsCode": "// El cuerpo de un correo trae firmas, cadenas de respuestas y HTML. Se recorta\n// lo evidente y se acota: `BYTE_MAX_MESSAGE_CHARS` son 8000 por defecto, y un\n// hilo largo los pasa fácil.\nconst LIMITE = 7000;\n\nfor (const item of $input.all()) {\n  let texto = item.json.textPlain || item.json.text || '';\n\n  // Corta la cadena de respuestas: lo de abajo ya lo leyó quien escribió.\n  const marcas = [/^>.*/m, /^-{2,}\\s*$/m, /^El .* escribió:/m, /^On .* wrote:/m];\n  for (const marca of marcas) {\n    const donde = texto.search(marca);\n    if (donde > 40) texto = texto.slice(0, donde);\n  }\n\n  texto = texto.replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, LIMITE);\n\n  item.json.pregunta = texto;\n  item.json.responder_a = item.json.from;\n  item.json.asunto = item.json.subject || '(sin asunto)';\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        -100
+      ],
+      "id": "e1000000-0000-4000-8000-000000000003",
+      "name": "Limpiar el correo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1000000-0000-4000-8000-000000000002",
+              "leftValue": "={{ $json.pregunta }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        20,
+        -100
+      ],
+      "id": "e1000000-0000-4000-8000-000000000004",
+      "name": "¿Quedó algo que preguntar?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BYTE_URL }}/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'byte', messages: [{ role: 'user', content: $json.asunto + '\\n\\n' + $json.pregunta }] }) }}",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        -200
+      ],
+      "id": "e1000000-0000-4000-8000-000000000005",
+      "name": "Preguntarle a Byte",
+      "notes": "Usa el endpoint compatible con OpenAI (`/v1/chat/completions`) y no el nativo: una sola llamada devuelve la respuesta terminada, sin tener que seguir el SSE desde n8n.\n\nCredencial Header Auth con Name = Authorization y Value = `Bearer <BYTE_API_KEY>`.\n\nTimeout de 5 minutos: un modelo local en CPU tarda, y el default de n8n cortaría antes de que conteste."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1000000-0000-4000-8000-000000000003",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        -200
+      ],
+      "id": "e1000000-0000-4000-8000-000000000006",
+      "name": "¿Contestó?"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Limpiar el correo').item.json.responder_a }}",
+        "subject": "=Re: {{ $('Limpiar el correo').item.json.asunto }}",
+        "emailType": "text",
+        "message": "={{ $json.body.choices[0].message.content }}\n\n—\nRespondido por Byte, que corre local.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        680,
+        -300
+      ],
+      "id": "e1000000-0000-4000-8000-000000000007",
+      "name": "Responder",
+      "notes": "Credencial SMTP de la misma casilla. `emailType: text` a propósito: la respuesta del modelo es Markdown y mandarla como HTML sin sanear sería inyectar texto de un tercero en el correo de alguien."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Limpiar el correo').item.json.responder_a }}",
+        "subject": "=Re: {{ $('Limpiar el correo').item.json.asunto }}",
+        "emailType": "text",
+        "message": "=No pude responder esto ahora.\n\n{{ $json.body.error && $json.body.error.code === 'approval_required' ? 'La consulta necesita que alguien apruebe la ejecución de código, y por correo no hay forma de pedírtelo. Probá desde la web o el CLI de Byte.' : 'Byte respondió con un error (HTTP ' + $json.statusCode + ').' }}\n\n—\nByte",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        680,
+        -100
+      ],
+      "id": "e1000000-0000-4000-8000-000000000008",
+      "name": "Avisar que falló",
+      "notes": "Un error tiene que volver como correo: quien escribió no ve los logs de n8n, y un silencio parece que el mensaje se perdió.\n\nEl caso del modo seguro se nombra aparte porque no es una falla: es que ese camino necesita una persona y el correo no sirve para eso."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1000000-0000-4000-8000-000000000004",
+              "name": "descartado",
+              "value": "={{ 'Correo de ' + $json.from + ' descartado: remitente no permitido' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -200,
+        120
+      ],
+      "id": "e1000000-0000-4000-8000-000000000009",
+      "name": "Descartado",
+      "notes": "No se responde a un remitente no permitido: contestarle confirmaría que la casilla existe y que hay algo escuchando."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Llega un correo": {
+      "main": [
+        [
+          {
+            "node": "¿Remitente permitido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Remitente permitido?": {
+      "main": [
+        [
+          {
+            "node": "Limpiar el correo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Descartado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpiar el correo": {
+      "main": [
+        [
+          {
+            "node": "¿Quedó algo que preguntar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Quedó algo que preguntar?": {
+      "main": [
+        [
+          {
+            "node": "Preguntarle a Byte",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Preguntarle a Byte": {
+      "main": [
+        [
+          {
+            "node": "¿Contestó?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Contestó?": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar que falló",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

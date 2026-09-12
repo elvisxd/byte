@@ -134,7 +134,12 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   no hay forma de pedir una aprobación humana en ese formato, así que un run que
   la necesite se corta y lo dice
 
-Falta de esta fase: n8n.
+- **n8n** (opcional, `n8n/`): tres workflows listos para importar — ingesta
+  automática de documentos al RAG, un canal de email para preguntarle a Byte
+  desde el correo, y n8n como servidor MCP para que Byte use sus herramientas.
+  Va en un perfil aparte del compose (`docker compose --profile n8n up -d n8n`),
+  así que no pesa si no se usa. Los JSON no llevan credenciales: cada nodo dice
+  en sus notas cuál necesita
 
 ### Fase 2 — memoria y RAG
 

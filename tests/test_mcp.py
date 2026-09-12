@@ -221,6 +221,45 @@ def test_una_herramienta_sin_argumentos_es_valida() -> None:
     assert modelo.model_validate({}) is not None
 
 
+def test_los_campos_extra_llegan_si_el_servidor_los_acepta() -> None:
+    """`additionalProperties: true` es lo que declara n8n: el servidor acepta
+    campos además de los que lista.
+
+    Sin esto Pydantic los descarta en silencio (su default es "ignore") y al
+    servidor le llega un objeto vacío: la herramienta falla y nadie ve por qué.
+    Se vio con el MCP Server Trigger de n8n, que expone `{input}` pero describe
+    los campos de verdad en el texto de la herramienta, así que el modelo manda
+    esos.
+    """
+    modelo = _modelo_de_argumentos(
+        "agendar",
+        {
+            "type": "object",
+            "properties": {"input": {"type": "string"}},
+            "additionalProperties": True,
+        },
+    )
+    valores = modelo.model_validate({"titulo": "revisar", "cuando": "2026-09-12T10:00"})
+    assert valores.model_dump(exclude_none=True) == {
+        "titulo": "revisar",
+        "cuando": "2026-09-12T10:00",
+    }
+
+
+def test_un_servidor_estricto_no_recibe_lo_que_no_declaro() -> None:
+    """Con `additionalProperties: false` el servidor dijo que no acepta extras:
+    mandárselos igual sería un error garantizado del otro lado."""
+    modelo = _modelo_de_argumentos(
+        "estricta",
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    assert modelo.model_validate({"a": "x", "b": "y"}).model_dump(exclude_none=True) == {"a": "x"}
+
+
 # --- Resultados ---
 
 
@@ -354,3 +393,34 @@ def _conectar_falso(herramientas: list[Any], servidores: list[Any]) -> Any:
 
 async def _marcar(destino: list[str], nombre: str) -> None:
     destino.append(nombre)
+
+
+# --- El token de los servidores protegidos ---
+
+
+def test_los_tokens_se_leen_por_servidor() -> None:
+    """n8n exige Bearer en su MCP Server Trigger: sin token, 401 y Byte arranca
+    sin esas herramientas."""
+    from mcp_client.client import parsear_tokens
+
+    assert parsear_tokens("n8n=abc123,otro=def456") == {"n8n": "abc123", "otro": "def456"}
+    assert parsear_tokens("") == {}
+    assert parsear_tokens("sin-valor=") == {}
+
+
+def test_el_token_va_en_su_propia_variable_no_pegado_a_la_url() -> None:
+    """Si fuera parte de `BYTE_MCP_SERVERS`, el secreto aparecería en cualquier
+    log o captura que muestre la lista de servidores."""
+    assert parsear_servidores("n8n=http://n8n:5678/mcp/byte") == [
+        ("n8n", "http://n8n:5678/mcp/byte")
+    ]
+
+
+async def test_un_servidor_con_token_manda_el_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El header es lo único que separa conectarse de recibir un 401."""
+    from mcp_client.client import ServidorMCP
+
+    servidor = ServidorMCP("n8n", "http://n8n.invalid/mcp", 5.0, token="secreto")
+    assert servidor._token == "secreto"
+    sin_token = ServidorMCP("otro", "http://otro.invalid/mcp", 5.0)
+    assert sin_token._token == ""

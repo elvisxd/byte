@@ -21,9 +21,11 @@ Seguridad (docs/seguridad-byte.md, "tool poisoning"):
 import asyncio
 from typing import Any
 
+import httpx
 from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import Tool as HerramientaMCP
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ConfigDict, create_model
 
 from api.logging import get_logger
 from tools.base import Tool, ToolResult, wrap_untrusted
@@ -68,7 +70,15 @@ def _modelo_de_argumentos(nombre: str, esquema: dict[str, Any]) -> type[BaseMode
             campos[campo] = (tipo, ...)
         else:
             campos[campo] = (tipo | None if tipo is not Any else Any, None)
-    return create_model(f"{nombre}Args", **campos)
+
+    # `additionalProperties: true` es lo que declara n8n, y significa que el
+    # servidor acepta campos además de los que lista. Sin esto Pydantic los
+    # descarta en silencio (su default es "ignore") y al servidor le llega un
+    # objeto vacío: la herramienta falla y nadie ve por qué. Medido con el MCP
+    # Server Trigger de n8n, que expone `{input}` con additionalProperties y
+    # describe los campos de verdad en el texto de la herramienta.
+    extra = "allow" if esquema.get("additionalProperties") is not False else "ignore"
+    return create_model(f"{nombre}Args", __config__=ConfigDict(extra=extra), **campos)
 
 
 def _descripcion_segura(herramienta: HerramientaMCP, servidor: str) -> str:
@@ -125,16 +135,31 @@ class ServidorMCP:
     por qué pagarlo.
     """
 
-    def __init__(self, nombre: str, url: str, timeout_s: float) -> None:
+    def __init__(self, nombre: str, url: str, timeout_s: float, token: str = "") -> None:
         self.nombre = nombre
         self.url = url
         self.timeout_s = timeout_s
+        self._token = token
         self._cliente: Client | None = None
+        self._http: httpx.AsyncClient | None = None
         self._candado = asyncio.Lock()
 
     async def conectar(self) -> list[HerramientaMCP]:
-        """Abre la conexión y devuelve lo que el servidor dice tener."""
-        cliente = Client(self.url, read_timeout_seconds=self.timeout_s)
+        """Abre la conexión y devuelve lo que el servidor dice tener.
+
+        Con token se arma el transporte a mano para poder mandar el header:
+        `Client(url)` no tiene dónde ponerlo, y sin él un servidor protegido
+        —el MCP Server Trigger de n8n, por ejemplo— responde 401.
+        """
+        if self._token:
+            self._http = httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=self.timeout_s,
+            )
+            transporte = streamable_http_client(self.url, http_client=self._http)
+            cliente = Client(transporte, read_timeout_seconds=self.timeout_s)
+        else:
+            cliente = Client(self.url, read_timeout_seconds=self.timeout_s)
         self._cliente = await cliente.__aenter__()
         return list((await self._cliente.list_tools()).tools)
 
@@ -142,6 +167,9 @@ class ServidorMCP:
         if self._cliente is not None:
             await self._cliente.__aexit__(None, None, None)
             self._cliente = None
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
 
     async def llamar(self, herramienta: str, argumentos: dict[str, Any]) -> Any:
         if self._cliente is None:
@@ -222,8 +250,26 @@ def parsear_servidores(declarados: str) -> list[tuple[str, str]]:
     return servidores
 
 
+def parsear_tokens(declarados: str) -> dict[str, str]:
+    """`nombre=token,otro=token` → {nombre: token}.
+
+    Van en su propia variable (`BYTE_MCP_TOKENS`) y no pegados a la URL: son
+    secretos, y mezclarlos con la lista de servidores haría que aparezcan en
+    cualquier log o captura que muestre la configuración.
+    """
+    tokens: dict[str, str] = {}
+    for trozo in declarados.split(","):
+        entrada = trozo.strip()
+        if not entrada:
+            continue
+        nombre, _, token = entrada.partition("=")
+        if nombre.strip() and token.strip():
+            tokens[nombre.strip()] = token.strip()
+    return tokens
+
+
 async def conectar_servidores(
-    declarados: str, max_result_chars: int, timeout_s: float
+    declarados: str, max_result_chars: int, timeout_s: float, tokens: str = ""
 ) -> tuple[list[Tool], list[ServidorMCP]]:
     """Conecta los servidores declarados y devuelve sus herramientas.
 
@@ -232,9 +278,10 @@ async def conectar_servidores(
     """
     herramientas: list[Tool] = []
     conectados: list[ServidorMCP] = []
+    por_servidor = parsear_tokens(tokens)
 
     for nombre, url in parsear_servidores(declarados):
-        servidor = ServidorMCP(nombre, url, timeout_s)
+        servidor = ServidorMCP(nombre, url, timeout_s, por_servidor.get(nombre, ""))
         try:
             declaradas = await servidor.conectar()
         except Exception as exc:  # noqa: BLE001 - arrancar sin este servidor es válido
