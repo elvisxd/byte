@@ -130,9 +130,9 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 
 ### Fase 4 — API completa, debugging y observabilidad (estimación: 2 semanas)
 - [x] Autenticación JWT multi-usuario (argon2, expiración corta) y aislamiento por `user_id` en todas las consultas y endpoints de runs. `POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout` y `GET /me`. Contraseñas con **argon2id** (rehash automático en el login); **access token de 30 min** y **refresh de 14 días con rotación y detección de reuso**. El `user_id` del JWT reemplazó a `SIN_USUARIO` en las 15 llamadas: un usuario ve lo suyo y recibe 404 en lo ajeno (404 y no 403, para no confirmar que el id existe). La API key sigue siendo la instancia —su dueño es `None`— así que lo de antes del multi-usuario sigue siendo suyo
-- [ ] Redacción de PII/secretos antes de enviar trazas a Langfuse
-- [ ] Bugsink self-hosted (1 contenedor) para tracking de errores
-- [ ] Langfuse Cloud (plan gratuito) para trazas del agente, guardando `langfuse_trace_id` en `MESSAGES`
+- [x] Redacción de PII/secretos antes de enviar trazas a Langfuse. `api/redaccion.py`: claves con prefijo conocido (OpenAI, GitHub, Slack, AWS, Google), JWT, DSN con credenciales, emails y tarjetas (validadas con Luhn, para no redactar cualquier id largo). Va como `mask` del cliente de Langfuse y `before_send` de Sentry, así que corre sobre **todo** lo que esos SDK están por mandar y no depende de acordarse en cada punto
+- [x] Bugsink self-hosted (1 contenedor) para tracking de errores, bajo el perfil `observabilidad` del compose. Reusa el Postgres que ya está —su documentación desaconseja persistir SQLite en un volumen Docker por el modo WAL— y con `PHONEHOME=false`: lo que se instala local no tiene por qué avisarle a nadie
+- [x] Langfuse para trazas del agente, guardando `langfuse_trace_id` en `MESSAGES`. **Opcional y apagado por defecto**: sin `LANGFUSE_PUBLIC_KEY` no sale nada de tu máquina. La traza envuelve el run entero, no cada llamada al modelo: lo que interesa al depurar es por qué el agente decidió lo que decidió. Va en el extra `observabilidad` para no pesarle a quien no lo use
 - [ ] Ampliar la cobertura de tests (el CI con pytest existe desde el MVP)
 
 **Lo que dejó anotado la revisión de la Fase 3** (hacerlo *antes* del JWT sale

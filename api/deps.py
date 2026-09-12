@@ -34,6 +34,9 @@ class AppContext:
     rag: Any = None
     # El modelo sin bind_tools, para el /compact manual.
     llm: Any = None
+    # Trazas del agente. Apagadas si no hay Langfuse configurado, pero nunca
+    # `None`: el objeto apagado es un no-op y evita los `if` en cada llamada.
+    trazas: Any = None
 
 
 def get_context(request: Request) -> AppContext:

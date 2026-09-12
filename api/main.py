@@ -26,6 +26,7 @@ from api.config import Settings, get_settings
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
+from api.observabilidad import build_trazas, init_errores
 from api.routes import (
     auth,
     conversations,
@@ -157,6 +158,11 @@ def create_app(
                 "sin_api_key", detail="definí BYTE_API_KEY: la API rechaza todo sin ella"
             )
 
+        # Observabilidad: las dos apagadas si no están configuradas, y ninguna
+        # puede impedir que Byte arranque.
+        init_errores(resolved_settings)
+        trazas = build_trazas(resolved_settings)
+
         repo = repository or build_repository(
             resolved_settings.use_postgres, resolved_settings.database_url
         )
@@ -205,6 +211,7 @@ def create_app(
                 run_timeout_s=resolved_settings.run_timeout_s,
                 max_iterations=resolved_settings.max_iterations,
                 resume_ttl_s=resolved_settings.resume_token_ttl_s,
+                trazas=trazas,
             )
             app.state.ctx = AppContext(
                 settings=resolved_settings,
@@ -213,6 +220,7 @@ def create_app(
                 passwords=Passwords(),
                 jwt=JWTService(resolve_secret_key(resolved_settings), resolved_settings.jwt_ttl_s),
                 refresh=RefreshService(repo, resolved_settings.refresh_ttl_s),
+                trazas=trazas,
                 repository=repo,
                 runs=run_manager,
                 registry=tool_registry,
@@ -233,6 +241,8 @@ def create_app(
             finally:
                 await run_manager.shutdown()
                 await repo.shutdown()
+                # Lo último: manda las trazas del último run antes de cerrar.
+                trazas.flush()
 
     app = FastAPI(
         title="Byte",

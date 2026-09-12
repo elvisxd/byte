@@ -78,6 +78,33 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Opcional: tracking de errores. Self-hosted a propósito — los errores de un
+  # agente traen el texto que los causó, y eso no debería salir de tu red:
+  #   docker compose --profile observabilidad up -d bugsink
+  bugsink:
+    profiles: ["observabilidad"]
+    image: bugsink/bugsink:latest
+    environment:
+      # Mínimo 50 caracteres: openssl rand -hex 32
+      SECRET_KEY: ${BUGSINK_SECRET_KEY:?definí BUGSINK_SECRET_KEY en tu .env}
+      # Formato email:contraseña, no usuario:contraseña.
+      CREATE_SUPERUSER: ${BUGSINK_EMAIL:-byte@localhost}:${BUGSINK_PASSWORD:?definí BUGSINK_PASSWORD}
+      PORT: "8000"
+      # Reusa el Postgres que Byte ya tiene, en su propia base. Bugsink usa
+      # SQLite por defecto, pero su documentación desaconseja persistirlo en un
+      # volumen Docker: usa WAL y los volúmenes no dan las garantías que
+      # necesita. Y un Postgres más solo para esto costaría RAM sin dar nada.
+      DATABASE_URL: postgresql://byte:byte@postgres:5432/bugsink
+      # Bugsink reporta su instalación a sus autores por defecto. Byte corre
+      # local: lo que se instala acá no tiene por qué avisarle a nadie.
+      PHONEHOME: "false"
+    ports:
+      - "127.0.0.1:${BUGSINK_PORT:-9000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Opcional: automatización periférica (n8n/README.md). No lo levanta
   # `docker compose up` a secas — hay que pedirlo:
   #   docker compose --profile n8n up -d n8n

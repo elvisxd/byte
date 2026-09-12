@@ -120,6 +120,29 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   valer y vuelve otro. Si aparece uno ya canjeado se revoca la sesión entera —
   hay dos copias dando vueltas y no se puede saber cuál es la del dueño
 
+### Observabilidad (opcional, apagada por defecto)
+
+- **Langfuse** para las trazas del agente: por qué decidió usar una herramienta,
+  cuántas vueltas dio, qué devolvió cada una. El `langfuse_trace_id` queda en el
+  mensaje, así que desde una respuesta se salta a su traza
+- **Bugsink** (self-hosted, un contenedor) para los errores
+
+**Las dos están apagadas y hay que encenderlas a mano.** Byte corre local, y
+Langfuse Cloud recibiría tus prompts y respuestas: sin `LANGFUSE_PUBLIC_KEY` no
+sale nada de tu máquina. Bugsink es self-hosted, así que sus datos no salen de
+tu red — y va con `PHONEHOME=false`, porque lo que se instala local no tiene por
+qué avisarle a nadie.
+
+Lo que sí sale, sale redactado: claves de API, JWT, URLs con credenciales,
+emails y tarjetas se reemplazan por una marca (`[API_KEY]`, `[EMAIL]`) **antes**
+de enviarse. La redacción va enganchada en el cliente, no en cada punto de
+instrumentación, para que no dependa de acordarse.
+
+```bash
+uv sync --extra observabilidad          # los SDK no vienen por defecto
+cd docker && docker compose --profile observabilidad up -d bugsink
+```
+
 ### Fase 3 — herramientas externas por MCP
 
 - **Cliente MCP** (`mcp_client/`): los servidores se declaran en

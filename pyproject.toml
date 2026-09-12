@@ -36,6 +36,10 @@ dependencies = [
 # nh3 sanea Markdown->HTML; se usa a partir de la Fase 5 (Jinja+HTMX).
 # En el MVP la página mínima renderiza con textContent, sin HTML.
 html = ["nh3>=0.2"]
+observabilidad = [
+    "langfuse>=3.0",
+    "sentry-sdk>=2.0",
+]
 
 [dependency-groups]
 dev = [

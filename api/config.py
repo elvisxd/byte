@@ -99,6 +99,16 @@ class Settings(BaseSettings):
     # use, se rota y no vence. Se revoca en el logout y cuando se detecta un
     # reuso, que es lo que el access token no puede hacer.
     refresh_ttl_s: int = Field(default=1_209_600, alias="BYTE_REFRESH_TTL_S")
+
+    # --- Observabilidad (Fase 4). Las dos, apagadas si están vacías ---
+    # Langfuse Cloud recibe los prompts, las respuestas y los resultados de las
+    # herramientas: encenderlo manda tus conversaciones a un tercero, aunque
+    # vayan redactadas. Vacío = no sale nada de tu máquina.
+    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
+    langfuse_host: str = Field(default="https://cloud.langfuse.com", alias="LANGFUSE_HOST")
+    # Bugsink es self-hosted (un contenedor): los errores no salen de tu red.
+    bugsink_dsn: str = Field(default="", alias="BUGSINK_DSN")
     # Del otro lado del modo seguro hay una persona decidiendo: el token dura
     # más que el del stream, y mientras tanto el run pausado no se descarta.
     resume_token_ttl_s: int = Field(default=3600, alias="BYTE_RESUME_TOKEN_TTL_S")

@@ -90,6 +90,9 @@ class Run:
     id: str
     conversation_id: str
     credential_id: str
+    # Id de la traza de Langfuse, si está encendido. Va a MESSAGES para poder
+    # saltar de un mensaje guardado a su traza.
+    langfuse_trace_id: str | None = None
     safe_mode: bool = False
     status: RunStatusValue = "running"
     iterations: int = 0
@@ -159,6 +162,18 @@ class Run:
         self._subscribers.discard(queue)
 
 
+class _SinTrazas:
+    """Lo que usa el runner cuando nadie le pasó trazas (tests, o Langfuse
+    apagado). Misma forma, sin efecto."""
+
+    @contextlib.contextmanager
+    def run(self, _nombre: str, **_datos: Any) -> Any:
+        yield
+
+    def trace_id(self) -> str | None:
+        return None
+
+
 class RunManager:
     """Crea, ejecuta, observa y cancela runs."""
 
@@ -172,9 +187,13 @@ class RunManager:
         run_timeout_s: int = 180,
         max_iterations: int = 6,
         resume_ttl_s: int = 3600,
+        trazas: Any = None,
     ) -> None:
         self._graph = graph
         self._repo = repository
+        # Trazas del agente. Apagadas si no hay Langfuse; el objeto apagado es
+        # un no-op, así que acá no hace falta distinguir.
+        self._trazas = trazas or _SinTrazas()
         # TokenService: firma los resume_token del modo seguro.
         self._tokens = tokens
         self._max_concurrent = max_concurrent_runs
@@ -366,6 +385,29 @@ class RunManager:
         user_content: str | None = None,
         aprobacion: bool | None = None,
     ) -> None:
+        """Corre el grafo dentro de una traza, si Langfuse está encendido.
+
+        La traza envuelve el run entero y no cada llamada al modelo: lo que
+        interesa al depurar es por qué el agente decidió lo que decidió, y eso
+        solo se ve con las iteraciones y las herramientas en el mismo árbol.
+        """
+        with self._trazas.run(
+            "run",
+            conversation_id=run.conversation_id,
+            safe_mode=run.safe_mode,
+            # El contenido va redactado por el `mask` del cliente antes de salir.
+            content=user_content,
+        ):
+            run.langfuse_trace_id = self._trazas.trace_id()
+            await self._correr(run, user_content=user_content, aprobacion=aprobacion)
+
+    async def _correr(
+        self,
+        run: Run,
+        *,
+        user_content: str | None = None,
+        aprobacion: bool | None = None,
+    ) -> None:
         """Corre el grafo, ya sea desde el principio o retomando una aprobación."""
         log = logger.bind(run_id=run.id, conversation_id=run.conversation_id)
         if aprobacion is None:
@@ -397,7 +439,7 @@ class RunManager:
                     "status": "finished",
                     "threadId": run.conversation_id,
                     "message_id": run.message_id,
-                    "langfuse_trace_id": None,  # Langfuse llega en la Fase 4
+                    "langfuse_trace_id": run.langfuse_trace_id,
                     "sources": run.sources,
                 },
             )
@@ -595,6 +637,9 @@ class RunManager:
                     "tools_used": tools_used,
                     "iterations": run.iterations,
                 },
+                # Guarda el puente entre el mensaje y su traza: sin esto son dos
+                # listas que no se cruzan y depurar obliga a adivinar cuál es cuál.
+                langfuse_trace_id=run.langfuse_trace_id,
             )
             run.message_id = saved.id
 
