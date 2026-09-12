@@ -15,6 +15,7 @@ Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + p
 - [Contrato de la API](docs/api-contrato-byte.md) — endpoints, runs, eventos AG-UI, documentos, sandbox
 - [Seguridad: modelo de amenazas y checklist](docs/seguridad-byte.md) — OWASP LLM 2025 + Agentic 2026
 - [Identidad visual y prompts de Canva](docs/prompts-canva-byte.md)
+- [Diagramas](docs/diagramas/) — el sistema completo y las conexiones con n8n, como páginas que se abren en el navegador
 
 ## Estructura
 Un módulo por carpeta; cada carpeta tiene su README explicando qué va ahí.

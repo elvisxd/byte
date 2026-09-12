@@ -1,0 +1,303 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Byte y n8n — las conexiones",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1180,
+      580
+    ],
+    "views": [
+      {
+        "id": "ingesta",
+        "label": "Ingesta de documentos",
+        "focus": [
+          "carpeta",
+          "wf_ingesta",
+          "api",
+          "rag"
+        ],
+        "note": "Un archivo nuevo entra al RAG solo: n8n lo baja, filtra tipo y tamaño, y lo sube."
+      },
+      {
+        "id": "correo",
+        "label": "Canal de email",
+        "focus": [
+          "casilla",
+          "wf_email",
+          "api",
+          "agente"
+        ],
+        "note": "Se le pregunta a Byte por correo. El filtro de remitente es lo que evita que cualquiera use el modelo."
+      },
+      {
+        "id": "herramientas",
+        "label": "n8n como herramientas",
+        "focus": [
+          "agente",
+          "mcp",
+          "wf_mcp",
+          "servicios"
+        ],
+        "note": "La dirección inversa: Byte usa herramientas que viven en n8n, sin tener sus credenciales."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "carpeta",
+      "type": "external",
+      "label": "Carpeta vigilada",
+      "sublabel": "Drive, Dropbox, IMAP",
+      "pos": [
+        40,
+        110
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "casilla",
+      "type": "external",
+      "label": "Casilla de correo",
+      "sublabel": "dedicada, no la personal",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "servicios",
+      "type": "external",
+      "label": "Calendario, planillas",
+      "sublabel": "credenciales de n8n",
+      "pos": [
+        40,
+        420
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "wf_ingesta",
+      "type": "messagebus",
+      "label": "ingesta-documentos",
+      "sublabel": "filtra tipo y tamaño",
+      "pos": [
+        290,
+        110
+      ],
+      "size": [
+        170,
+        66
+      ]
+    },
+    {
+      "id": "wf_email",
+      "type": "messagebus",
+      "label": "canal-email",
+      "sublabel": "filtra el remitente",
+      "pos": [
+        290,
+        260
+      ],
+      "size": [
+        170,
+        66
+      ]
+    },
+    {
+      "id": "wf_mcp",
+      "type": "messagebus",
+      "label": "servidor-mcp",
+      "sublabel": "MCP Server Trigger",
+      "pos": [
+        290,
+        420
+      ],
+      "size": [
+        170,
+        66
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API de Byte",
+      "sublabel": "REST + OpenAI",
+      "brand": "fastapi",
+      "pos": [
+        610,
+        185
+      ],
+      "size": [
+        160,
+        74
+      ]
+    },
+    {
+      "id": "rag",
+      "type": "database",
+      "label": "RAG",
+      "sublabel": "pgvector",
+      "brand": "postgresql",
+      "pos": [
+        880,
+        110
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "agente",
+      "type": "backend",
+      "label": "Agente",
+      "sublabel": "LangGraph",
+      "pos": [
+        880,
+        260
+      ],
+      "size": [
+        150,
+        74
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "security",
+      "label": "Cliente MCP",
+      "sublabel": "lista blanca + token",
+      "pos": [
+        610,
+        420
+      ],
+      "size": [
+        160,
+        66
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "n8n — opcional, perfil aparte",
+      "wraps": [
+        "wf_ingesta",
+        "wf_email",
+        "wf_mcp"
+      ],
+      "pad": 26
+    },
+    {
+      "kind": "region",
+      "label": "Byte",
+      "wraps": [
+        "api",
+        "rag",
+        "agente",
+        "mcp"
+      ],
+      "pad": 26
+    }
+  ],
+  "connections": [
+    {
+      "id": "carpeta-wf",
+      "from": "carpeta",
+      "to": "wf_ingesta",
+      "label": "archivo nuevo"
+    },
+    {
+      "id": "wf-api-doc",
+      "from": "wf_ingesta",
+      "to": "api",
+      "label": "POST /documents",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-rag",
+      "from": "api",
+      "to": "rag",
+      "label": "indexa",
+      "variant": "emphasis"
+    },
+    {
+      "id": "casilla-wf",
+      "from": "casilla",
+      "to": "wf_email",
+      "label": "llega un correo"
+    },
+    {
+      "id": "wf-api-chat",
+      "from": "wf_email",
+      "to": "api",
+      "label": "/v1/chat/completions",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-agente",
+      "from": "api",
+      "to": "agente",
+      "label": "crea un run"
+    },
+    {
+      "id": "wf-casilla",
+      "from": "wf_email",
+      "to": "casilla",
+      "label": "responde",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "agente-mcp",
+      "from": "agente",
+      "to": "mcp",
+      "label": "usa la herramienta"
+    },
+    {
+      "id": "mcp-wf",
+      "from": "mcp",
+      "to": "wf_mcp",
+      "label": "MCP + Bearer",
+      "variant": "emphasis"
+    },
+    {
+      "id": "wf-servicios",
+      "from": "wf_mcp",
+      "to": "servicios",
+      "label": "actúa"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Las dos direcciones",
+      "items": [
+        "n8n → Byte: le manda documentos y preguntas",
+        "Byte → n8n: usa sus herramientas por MCP",
+        "Ninguna de las dos pone credenciales de terceros dentro de Byte"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Dónde está el riesgo",
+      "items": [
+        "El filtro de remitente del correo: sin él cualquiera usa tu modelo",
+        "Las descripciones de las herramientas MCP las lee el modelo",
+        "El token Bearer va aparte de la URL, no pegado a ella"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,421 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Byte — arquitectura del sistema",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1180,
+      600
+    ],
+    "views": [
+      {
+        "id": "una-pregunta",
+        "label": "Una pregunta",
+        "focus": [
+          "cli",
+          "api",
+          "grafo",
+          "ollama"
+        ],
+        "note": "El camino más corto: entra por el CLI, la API crea un run y el grafo le pregunta al modelo local."
+      },
+      {
+        "id": "herramientas",
+        "label": "Herramientas",
+        "focus": [
+          "grafo",
+          "doc_search",
+          "web_search",
+          "code_exec",
+          "mcp",
+          "n8n"
+        ],
+        "note": "Lo que el agente puede usar. Las de MCP entran al mismo registro que las nativas."
+      },
+      {
+        "id": "memoria",
+        "label": "Memoria y RAG",
+        "focus": [
+          "grafo",
+          "doc_search",
+          "postgres",
+          "embeddings"
+        ],
+        "note": "Los documentos se parten en fragmentos, se vectorizan y vuelven como contexto citado."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "CLI",
+      "sublabel": "chat interactivo",
+      "pos": [
+        40,
+        110
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web",
+      "sublabel": "Jinja + SSE",
+      "pos": [
+        40,
+        215
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "clientes_openai",
+      "type": "external",
+      "label": "Clientes OpenAI",
+      "sublabel": "Open WebUI, Continue",
+      "pos": [
+        40,
+        320
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "n8n",
+      "type": "external",
+      "label": "n8n",
+      "sublabel": "opcional",
+      "pos": [
+        40,
+        470
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "REST + SSE",
+      "brand": "fastapi",
+      "pos": [
+        300,
+        215
+      ],
+      "size": [
+        150,
+        74
+      ]
+    },
+    {
+      "id": "seguridad",
+      "type": "security",
+      "label": "Credencial",
+      "sublabel": "API key, Bearer",
+      "pos": [
+        300,
+        330
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "grafo",
+      "type": "backend",
+      "label": "Agente",
+      "sublabel": "LangGraph",
+      "pos": [
+        550,
+        215
+      ],
+      "size": [
+        150,
+        74
+      ]
+    },
+    {
+      "id": "hitl",
+      "type": "security",
+      "label": "Modo seguro",
+      "sublabel": "espera al humano",
+      "pos": [
+        550,
+        330
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "ollama",
+      "type": "cloud",
+      "label": "Ollama",
+      "sublabel": "qwen3:8b",
+      "brand": "ollama",
+      "pos": [
+        550,
+        110
+      ],
+      "size": [
+        150,
+        66
+      ]
+    },
+    {
+      "id": "doc_search",
+      "type": "backend",
+      "label": "doc_search",
+      "sublabel": "tus documentos",
+      "pos": [
+        800,
+        110
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "web_search",
+      "type": "backend",
+      "label": "web_search",
+      "sublabel": "Tavily",
+      "pos": [
+        800,
+        200
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "code_exec",
+      "type": "backend",
+      "label": "code_exec",
+      "sublabel": "ejecuta Python",
+      "pos": [
+        800,
+        290
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "messagebus",
+      "label": "Cliente MCP",
+      "sublabel": "lista blanca",
+      "pos": [
+        800,
+        380
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "embeddings",
+      "type": "cloud",
+      "label": "Embeddings",
+      "sublabel": "nomic-embed-text",
+      "pos": [
+        1010,
+        110
+      ],
+      "size": [
+        130,
+        62
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "pgvector",
+      "brand": "postgresql",
+      "pos": [
+        1010,
+        200
+      ],
+      "size": [
+        130,
+        66
+      ]
+    },
+    {
+      "id": "sandbox",
+      "type": "cloud",
+      "label": "Sandbox",
+      "sublabel": "Pyodide, sin red",
+      "pos": [
+        1010,
+        290
+      ],
+      "size": [
+        130,
+        62
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Tu máquina",
+      "wraps": [
+        "api",
+        "seguridad",
+        "grafo",
+        "hitl",
+        "ollama",
+        "doc_search",
+        "web_search",
+        "code_exec",
+        "mcp",
+        "sandbox",
+        "postgres",
+        "embeddings"
+      ],
+      "pad": 26
+    }
+  ],
+  "connections": [
+    {
+      "id": "cli-api",
+      "from": "cli",
+      "to": "api",
+      "label": "HTTP + SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api"
+    },
+    {
+      "id": "openai-api",
+      "from": "clientes_openai",
+      "to": "api",
+      "label": "/v1/chat/completions",
+      "labelDy": 14,
+      "labelDx": -60
+    },
+    {
+      "id": "api-seguridad",
+      "from": "api",
+      "to": "seguridad",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-grafo",
+      "from": "api",
+      "to": "grafo",
+      "label": "crea un run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "grafo-ollama",
+      "from": "grafo",
+      "to": "ollama",
+      "label": "token a token",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "grafo-doc",
+      "from": "grafo",
+      "to": "doc_search"
+    },
+    {
+      "id": "grafo-web",
+      "from": "grafo",
+      "to": "web_search"
+    },
+    {
+      "id": "grafo-code",
+      "from": "grafo",
+      "to": "code_exec"
+    },
+    {
+      "id": "grafo-mcp",
+      "from": "grafo",
+      "to": "mcp"
+    },
+    {
+      "id": "grafo-hitl",
+      "from": "grafo",
+      "to": "hitl",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "code-sandbox",
+      "from": "code_exec",
+      "to": "sandbox"
+    },
+    {
+      "id": "doc-postgres",
+      "from": "doc_search",
+      "to": "postgres"
+    },
+    {
+      "id": "doc-embeddings",
+      "from": "doc_search",
+      "to": "embeddings",
+      "variant": "dashed"
+    },
+    {
+      "id": "mcp-n8n",
+      "from": "mcp",
+      "to": "n8n",
+      "label": "MCP sobre HTTP",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "n8n-api",
+      "from": "n8n",
+      "to": "api",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Todo local",
+      "items": [
+        "El modelo, la base y el sandbox corren en tu máquina",
+        "Solo salen a internet web_search y lo que n8n conecte"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Nada de afuera es confiable",
+      "items": [
+        "Páginas, documentos y herramientas MCP entran delimitados",
+        "El sandbox corre sin red y sin secretos",
+        "Buscar en la web y ejecutar código en el mismo run pide permiso"
+      ]
+    }
+  ]
+}
