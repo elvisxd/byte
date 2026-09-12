@@ -28,6 +28,10 @@ CV_DIR = Path.home() / "Downloads" / "cv-elvis"
 HTMLS = [CV_DIR / "build" / "cv-en.html", CV_DIR / "build" / "cv-es.html"]
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 PORTFOLIO = Path("/Volumes/APPLE-SSD/dev/my-porfolio-next")
+# Google Drive, que es de donde salen los CV que se mandan desde el teléfono —
+# y por eso los que más importa que estén al día. La carpeta la crea la app de
+# Drive; si no está montada, se saltea sin fallar.
+DRIVE = Path.home() / "Library/CloudStorage/GoogleDrive-elvisreyxd@gmail.com/Mi unidad"
 
 # De qué HTML sale cada PDF, y con qué nombre se guarda en cada destino. Los
 # nombres difieren entre la carpeta de trabajo y el portfolio, así que se
@@ -132,6 +136,12 @@ def imprimir() -> bool:
         if publico.is_dir():
             shutil.copy2(destino, publico / nombres[1])
             print(f"      → portfolio/public/{nombres[1]}")
+
+        # Y la de Drive, que es la que se manda desde el teléfono. Va con el
+        # mismo nombre que ya tiene ahí para no dejar dos versiones conviviendo.
+        if DRIVE.is_dir():
+            shutil.copy2(destino, DRIVE / destino.name)
+            print(f"      → Drive/{destino.name}")
 
     if ok and (PORTFOLIO / ".git").is_dir():
         print("\n  El portfolio quedó con los PDF nuevos sin commitear.")

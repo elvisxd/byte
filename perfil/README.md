@@ -54,8 +54,13 @@ un byte de metadata de fecha, las mismas 4 páginas y la misma foto.
 Y se copian solos a `portfolio/public/`. Lo único que queda en tus manos es
 revisarlos y hacer el commit del portfolio, que es una decisión de publicar.
 
-Google Drive no está montado como carpeta local, así que esas copias siguen
-siendo manuales. Si montás Drive para escritorio, se puede agregar.
+Y a Google Drive, que es de donde salen los CV que se mandan desde el teléfono
+— por eso son los que más importa que estén al día, y los que más fácil quedan
+viejos. Si Drive no está montado, se saltea sin fallar.
+
+En la raíz de Drive hay quince archivos de CV de tres épocas distintas
+(`Curriculum vitae 2024 (4).pdf` y compañía). El script solo pisa los dos que
+tienen el nombre actual; limpiar el resto es una decisión de Elvis.
 
 ## Cómo se mantiene
 
