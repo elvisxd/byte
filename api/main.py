@@ -306,10 +306,17 @@ def create_app(
                     purga.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await purga
-                await run_manager.shutdown()
-                await repo.shutdown()
-                # Lo último: manda las trazas del último run antes de cerrar.
-                trazas.flush()
+                # Cada cierre va en su propio try: si uno falla, los que
+                # siguen tienen que correr igual. Antes, un error al cerrar el
+                # repositorio se llevaba puesto el `flush()` y se perdían las
+                # trazas del último run — justamente las del apagado que falló.
+                try:
+                    await run_manager.shutdown()
+                finally:
+                    try:
+                        await repo.shutdown()
+                    finally:
+                        trazas.flush()
 
     app = FastAPI(
         title="Byte",

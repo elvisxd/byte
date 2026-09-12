@@ -191,3 +191,91 @@ def test_recortar_antes_no_parte_un_secreto_por_la_mitad() -> None:
     relleno = "x" * (MAX_CHARS - 20)
     redactado = redactar_dato(f"{relleno} sk-proj-AbCdEfGh1234567890XyZ")
     assert "sk-proj" not in redactado
+
+
+# --- Lo que faltaba, de la segunda revisión ---
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "stripe sk_live_51AbCdEfGhIjKlMnOpQrStUv",
+        "github_pat_11ABCDEFG0abcdefghijklmn",
+        "hf_AbCdEfGhIjKlMnOpQrStUvWxYz1234",
+        "SG.AbCdEfGhIjKlMnOpQrSt.UvWxYz1234567890abcd",
+        "npm_AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+    ],
+)
+def test_las_claves_de_otros_servicios_tambien_se_redactan(texto: str) -> None:
+    """Stripe, GitHub fine-grained, HuggingFace, SendGrid y npm: todas con
+    prefijo reconocible, todas pasaban limpias."""
+    assert "[API_KEY]" in redactar(texto)
+
+
+def test_una_clave_privada_se_redacta_entera() -> None:
+    """El cuerpo es base64 y ningún otro patrón lo reconocería: si solo se
+    redactara el encabezado, la clave se iría igual."""
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"
+    assert redactar(f"la clave es:\n{pem}") == "la clave es:\n[CLAVE_PRIVADA]"
+    # Y también si viene cortada, que es como suele aparecer en un log.
+    assert "[CLAVE_PRIVADA]" in redactar("-----BEGIN OPENSSH PRIVATE KEY-----")
+
+
+def test_los_telefonos_y_el_iban_se_redactan() -> None:
+    assert redactar("mi teléfono es +54 9 11 5555-4444") == "mi teléfono es [TELEFONO]"
+    assert redactar("llamame al 0412-555-1234") == "llamame al [TELEFONO]"
+    assert redactar("mi IBAN ES9121000418450200051332") == "mi IBAN [IBAN]"
+
+
+def test_una_tarjeta_no_se_confunde_con_un_telefono() -> None:
+    """Un número de tarjeta con guiones también parece un teléfono. El patrón
+    de tarjeta va antes y lo valida con Luhn, así que gana."""
+    assert redactar("la tarjeta 4111-1111-1111-1111") == "la tarjeta [TARJETA]"
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["el puerto 5433 y el 11434", "commit 4cb740b de ayer", "FastAPI 0.136 salió en 2026"],
+)
+def test_los_numeros_de_todos_los_dias_no_se_redactan(texto: str) -> None:
+    """Con los patrones nuevos es más fácil redactar de más: un puerto, un hash
+    de commit o una versión no son PII, y redactarlos arruina la traza."""
+    assert redactar(texto) == texto
+
+
+def test_ningun_patron_nuevo_trajo_un_redos() -> None:
+    """Cada patrón que se agrega es una oportunidad de backtracking. Al reescribir
+    el de credencial apareció uno: 40 KB de `1-1-1-…` costaban 833 ms."""
+    import time
+
+    for patologico in ("1-" * 20_000, "AB12" + "C" * 30_000, "+1 2-3." * 5_000):
+        arranque = time.perf_counter()
+        redactar_dato(patologico)
+        assert time.perf_counter() - arranque < 0.5, f"lento con {patologico[:12]!r}"
+
+
+def test_un_stacktrace_de_sentry_sobrevive_a_la_redaccion() -> None:
+    """Un evento de Sentry es `exception > values[] > stacktrace > frames[] >
+    vars > …`: con un tope de profundidad de 8, el frame quedaba en
+    `[DEMASIADO_ANIDADO]` y el evento perdía justo lo que servía para depurar."""
+    evento = {
+        "exception": {
+            "values": [
+                {
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "filename": "api/main.py",
+                                "vars": {"usuario": {"datos": {"perfil": {"email": "a@b.com"}}}},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    }
+    frame = redactar_dato(evento)["exception"]["values"][0]["stacktrace"]["frames"][0]
+
+    assert frame["filename"] == "api/main.py"
+    # Llega entero y redactado, que son las dos cosas a la vez.
+    assert frame["vars"]["usuario"]["datos"]["perfil"]["email"] == "[EMAIL]"

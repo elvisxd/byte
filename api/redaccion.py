@@ -39,6 +39,23 @@ _PATRONES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bxox[baprs]-[A-Za-z0-9-]{10,}"
             r"|\bAKIA[0-9A-Z]{16}\b"
             r"|\bAIza[0-9A-Za-z_-]{30,}"
+            # Stripe (`sk_live_`, `rk_live_`, y sus variantes de prueba),
+            # GitHub fine-grained, HuggingFace, SendGrid, npm y Twilio.
+            r"|\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"
+            r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
+            r"|\bhf_[A-Za-z0-9]{30,}"
+            r"|\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"
+            r"|\bnpm_[A-Za-z0-9]{30,}"
+            r"|\bSK[0-9a-f]{32}\b"
+        ),
+    ),
+    # Una clave privada en PEM u OpenSSH. Se redacta desde el encabezado hasta
+    # el final: el cuerpo es base64 y ningún otro patrón lo reconocería.
+    (
+        "CLAVE_PRIVADA",
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+            r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
         ),
     ),
     # `Authorization: Bearer <algo>`, `api_key=<algo>`, `{"password": "<algo>"}`:
@@ -55,8 +72,16 @@ _PATRONES: list[tuple[str, re.Pattern[str]]] = [
     (
         "CREDENCIAL",
         re.compile(
-            r"(?i)\b(?:[a-z0-9_-]*(?:token|key|secret|password|passwd|pwd)|bearer|basic)"
-            r"[\"']?\s*[:=\s]\s*[\"']?([A-Za-z0-9._~+/=-]{8,})"
+            # El separador va acotado (`[ \t]{0,4}` en vez de `\s*`) y sin
+            # solaparse con la clase que lo contiene: `\s*[:=\s]\s*` hacía
+            # backtracking cuadrático, y 40 KB de `1-1-1-…` costaban 800 ms.
+            #
+            # Dos alternativas porque el separador difiere: `nombre: valor` o
+            # `nombre=valor` para las claves con nombre, y `Bearer valor` —con
+            # espacio y sin dos puntos— para el header HTTP.
+            r"(?i)\b(?:[a-z0-9_-]{0,24}(?:token|key|secret|password|passwd|pwd))"
+            r"[\"']?[ \t]{0,4}[:=][ \t]{0,4}[\"']?([A-Za-z0-9._~+/=-]{8,})"
+            r"|\b(?:[Bb]earer|[Bb]asic)[ \t]{1,4}([A-Za-z0-9._~+/=-]{8,})"
         ),
     ),
     # Un JWT se reconoce por su forma: tres bloques base64url con puntos.
@@ -67,11 +92,31 @@ _PATRONES: list[tuple[str, re.Pattern[str]]] = [
     # Luhn para no redactar cualquier número largo (un id, un timestamp).
     ("TARJETA", re.compile(r"\b\d(?:[ -]?\d){12,18}\b")),
     ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
+    # IBAN: dos letras de país, dos dígitos de control y hasta 30 alfanuméricos.
+    ("IBAN", re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")),
+    # Un teléfono con prefijo internacional o con separadores. Va **después**
+    # de las tarjetas a propósito: un número de tarjeta con guiones también
+    # parece un teléfono, y el de arriba ya lo validó con Luhn.
+    #
+    # No se intenta atrapar cualquier secuencia de 7-8 dígitos sueltos: en una
+    # conversación con un agente eso es casi siempre un id, un puerto o un año,
+    # y redactarlos arruinaría la traza sin proteger nada.
+    (
+        "TELEFONO",
+        re.compile(r"\+\d[\d ().-]{7,}\d|\b\d{3,4}[ .-]\d{3,4}[ .-]\d{3,4}\b"),
+    ),
 ]
 
 # Cuánto texto se manda como mucho. Una traza no necesita el documento entero,
 # y un cuerpo enorme es una forma cara de filtrar datos sin darse cuenta.
 MAX_CHARS = 4000
+
+# Cuánto se baja por una estructura antes de cortar. Con 8 se perdía justo lo
+# que sirve para depurar: un evento de Sentry es
+# `exception > values[] > stacktrace > frames[] > vars > …`, y ahí recién
+# empiezan las variables locales. 16 deja ver el frame entero sin que una
+# estructura circular o absurda cueste caro.
+MAX_PROFUNDIDAD = 16
 
 
 def _luhn(digitos: str) -> bool:
@@ -113,7 +158,10 @@ def redactar(texto: str) -> str:
             # nombre (`password=password`), el replace se come también el
             # nombre, que es justo lo que se quiere conservar.
             def _solo_el_valor(m: re.Match[str]) -> str:
-                inicio, fin = m.span(1)
+                # El patrón tiene dos alternativas, así que solo uno de los dos
+                # grupos matchea: se toma el que exista.
+                indice = 1 if m.group(1) is not None else 2
+                inicio, fin = m.span(indice)
                 return (
                     m.group(0)[: inicio - m.start()]
                     + "[CREDENCIAL]"
@@ -133,9 +181,9 @@ def redactar_dato(dato: Any, _profundidad: int = 0) -> Any:
     metadata de cada observación. Se acota el texto además de redactarlo: una
     traza no necesita el documento entero.
     """
-    if _profundidad > 8:
-        # Una estructura demasiado anidada es más probable que sea un error que
-        # algo que valga la pena mandar.
+    if _profundidad > MAX_PROFUNDIDAD:
+        # Una estructura más honda que esto es más probable que sea un error
+        # que algo que valga la pena mandar.
         return "[DEMASIADO_ANIDADO]"
     if isinstance(dato, str):
         # **Recortar primero, redactar después.** Al revés, el tope no protegía

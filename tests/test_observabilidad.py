@@ -243,3 +243,30 @@ def test_el_sdk_no_manda_pii_por_su_cuenta() -> None:
 
     init_errores(Ajustes(bugsink_dsn="http://clave@127.0.0.1:9999/1"))
     assert sentry_sdk.get_client().options["send_default_pii"] is False
+
+
+async def test_las_trazas_se_mandan_aunque_falle_el_apagado() -> None:
+    """`flush()` era la última línea del `finally`, así que un error al cerrar
+    el repositorio se lo llevaba puesto — y se perdían justo las trazas del
+    apagado que falló, que son las que uno querría mirar."""
+    falso = ClienteFalso()
+    trazas = Trazas(falso)
+
+    class RepoRoto:
+        async def shutdown(self) -> None:
+            raise RuntimeError("falló al cerrar")
+
+    class Runs:
+        async def shutdown(self) -> None:
+            return None
+
+    with pytest.raises(RuntimeError, match="falló al cerrar"):
+        try:
+            await Runs().shutdown()
+        finally:
+            try:
+                await RepoRoto().shutdown()
+            finally:
+                trazas.flush()
+
+    assert falso.flushes == 1
