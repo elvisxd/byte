@@ -77,21 +77,27 @@ def credential_from_request(request: Request) -> str | None:
     ctx: AppContext | None = getattr(request.app.state, "ctx", None)
     if ctx is None:
         return None
-    api_key = request.headers.get("X-API-Key")
-    if api_key and ctx.credentials.verify(api_key):
-        return ctx.credentials.credential_id
-    # `Authorization: Bearer` lleva dos cosas distintas, y se prueban en este
-    # orden: primero el JWT de un usuario (Fase 4), después la API key estática,
-    # que es lo único que mandan los clientes de OpenAI y lo que n8n guarda en
-    # sus credenciales. Un JWT válido gana porque identifica a alguien; la clave
-    # es una credencial de instancia.
+    # **El JWT primero, antes que cualquier otra cosa.** No es preferencia de
+    # estilo: `owner_from_request` mira solo el Bearer, así que si la API key
+    # ganara, un pedido con las dos cabeceras —lo que manda cualquier cliente
+    # que dejó la clave configurada y además inició sesión— crearía la
+    # conversación a nombre del usuario y el run a nombre de la instancia.
+    # Cualquiera con la clave podría entonces ver y cancelar el run de esa
+    # persona, mientras ella recibe 404 en el suyo.
     portador = _bearer(request)
     if portador:
         user_id = ctx.jwt.verify(portador)
         if user_id:
             return user_id
-        if ctx.credentials.verify(portador):
-            return ctx.credentials.credential_id
+
+    # Después la API key, por header propio o como Bearer: es lo único que
+    # mandan los clientes de OpenAI y lo que n8n guarda en sus credenciales.
+    api_key = request.headers.get("X-API-Key")
+    if api_key and ctx.credentials.verify(api_key):
+        return ctx.credentials.credential_id
+    if portador and ctx.credentials.verify(portador):
+        return ctx.credentials.credential_id
+
     session = request.cookies.get(SESSION_COOKIE)
     verified = ctx.tokens.verify_session(session)
     if verified and verified == ctx.credentials.credential_id:
@@ -147,15 +153,36 @@ def owner_from_request(request: Request) -> str | None:
 
 
 async def require_owner(request: Request, _credential: CredentialId) -> str | None:
-    """Como `owner_from_request`, pero exigiendo credencial válida primero.
+    """Como `owner_from_request`, pero exigiendo credencial válida y un usuario
+    que exista de verdad.
 
     Las rutas la usan en lugar de `CredentialId` a secas: autentica igual y
     además dice de quién es lo que se toca.
+
+    **El `sub` del token se verifica contra la base, no se cree.** Un JWT sigue
+    siendo válido durante sus 30 minutos aunque su usuario ya no exista, y sin
+    este chequeo el borrado no tendría efecto hasta que venciera: en Postgres,
+    escribir daba un 500 por la FK —y en memoria, donde no hay integridad
+    referencial, el token borrado seguía leyendo y escribiendo como si nada.
+    De paso, un `sub` que no sea un uuid se rechaza acá en vez de llegar al SQL
+    y volver como un 500.
     """
-    return owner_from_request(request)
+    user_id = owner_from_request(request)
+    if user_id is None:
+        # Entró con la API key o la cookie: la instancia, no una persona.
+        return None
+    ctx: AppContext | None = getattr(request.app.state, "ctx", None)
+    if ctx is None or await ctx.repository.get_user(user_id) is None:
+        raise ByteError("unauthorized", "El usuario del token ya no existe", status_code=401)
+    return user_id
 
 
 OwnerId = Annotated[str | None, Depends(require_owner)]
+
+
+def _ip(request: Request) -> str:
+    client = request.client
+    return f"ip:{client.host if client else 'desconocida'}"
 
 
 def rate_limit_key(request: Request) -> str:
@@ -163,8 +190,20 @@ def rate_limit_key(request: Request) -> str:
     credential_id = credential_from_request(request)
     if credential_id:
         return f"cred:{credential_id}"
-    client = request.client
-    return f"ip:{client.host if client else 'desconocida'}"
+    return _ip(request)
+
+
+def rate_limit_por_ip(request: Request) -> str:
+    """Siempre por IP, sin mirar la credencial.
+
+    Es el que usan `/auth/login` y `/auth/register`, y la diferencia importa:
+    ahí quien ataca **sí tiene** credenciales válidas —la API key, o una cuenta
+    propia recién registrada— así que limitar por credencial le da una cubeta
+    nueva por cada identidad que consiga. Con el registro abierto eso no tiene
+    techo: N cuentas son N veces el límite contra la misma víctima, desde la
+    misma IP.
+    """
+    return _ip(request)
 
 
 def general_limit() -> str:
@@ -178,3 +217,8 @@ def runs_limit() -> str:
 # El límite general aplica a toda la API vía SlowAPIMiddleware; las rutas que
 # crean runs suman el suyo, más ajustado, con @limiter.limit(runs_limit).
 limiter = Limiter(key_func=rate_limit_key, default_limits=[general_limit])
+
+# Para `/auth/*`: la misma cuenta de intentos, pero por IP. Ver
+# `rate_limit_por_ip` — con el limitador normal, cada credencial que el atacante
+# ya tenga le da una cubeta nueva contra la misma víctima.
+limiter_auth = Limiter(key_func=rate_limit_por_ip, default_limits=[general_limit])

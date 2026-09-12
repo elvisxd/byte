@@ -6,6 +6,7 @@ un email existe, y que un token que no debería valer no valga.
 """
 
 import time
+from collections.abc import Callable
 
 import jwt as pyjwt
 import pytest
@@ -418,3 +419,100 @@ def test_el_refresh_no_se_guarda_en_claro() -> None:
     token = "un-token-cualquiera"  # noqa: S105
     assert RefreshService._hash(token) == hashlib.sha256(token.encode()).hexdigest()
     assert token not in RefreshService._hash(token)
+
+
+# --- Lo que salió de la revisión adversarial de la fase ---
+
+
+def test_mandar_las_dos_credenciales_no_desacopla_el_dueno(cliente: TestClient) -> None:
+    """Un cliente con la API key configurada que además inicia sesión manda las
+    dos cabeceras. Si la clave ganara, la conversación quedaría a nombre del
+    usuario y el run a nombre de la instancia: cualquiera con la clave podría
+    ver y **cancelar** el run de esa persona, mientras ella recibe 404 en el
+    suyo. Verificado que pasaba antes de darle prioridad al JWT.
+    """
+    _registrar(cliente)
+    token = _login(cliente).json()["access_token"]
+    ambas = {**_bearer(token), **AUTH}
+
+    conversacion = cliente.post("/api/v1/conversations", json={}, headers=ambas).json()
+    run_id = cliente.post(
+        f"/api/v1/conversations/{conversacion['id']}/messages",
+        json={"content": "hola"},
+        headers=ambas,
+    ).json()["run_id"]
+
+    # El run es del usuario, no de la instancia.
+    assert cliente.get(f"/api/v1/runs/{run_id}", headers=_bearer(token)).status_code == 200
+    assert cliente.get(f"/api/v1/runs/{run_id}", headers=AUTH).status_code == 404
+    assert cliente.post(f"/api/v1/runs/{run_id}/cancel", headers=AUTH).status_code == 404
+
+
+def test_el_token_de_un_usuario_borrado_deja_de_valer(cliente: TestClient) -> None:
+    """Un JWT sigue siendo criptográficamente válido sus 30 minutos aunque su
+    usuario ya no exista. Sin verificarlo contra la base, borrar a alguien no
+    tenía efecto hasta que venciera: en memoria seguía leyendo y escribiendo, y
+    en Postgres escribir daba un 500 por la FK."""
+    _registrar(cliente)
+    token = _login(cliente).json()["access_token"]
+    H = _bearer(token)
+    assert cliente.get("/api/v1/conversations", headers=H).status_code == 200
+
+    ctx = cliente.app.state.ctx
+    ctx.repository._usuarios.clear()
+
+    assert cliente.get("/api/v1/conversations", headers=H).status_code == 401
+    assert cliente.post("/api/v1/conversations", json={}, headers=H).status_code == 401
+
+
+def test_un_sub_que_no_es_uuid_da_401_y_no_500(cliente: TestClient) -> None:
+    """El `sub` iba crudo al SQL: un uuid inválido volvía como error interno en
+    vez de como credencial rechazada. Hace falta el secreto para forjarlo, así
+    que no era un bypass — pero un 500 es ruido y esconde lo que pasó."""
+    from datetime import UTC, datetime, timedelta
+
+    falso = pyjwt.encode(
+        {"sub": "no-soy-un-uuid", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        "s" * 32,
+        algorithm="HS256",
+    )
+    assert cliente.get("/api/v1/conversations", headers=_bearer(falso)).status_code == 401
+
+
+def test_el_limite_del_login_no_se_multiplica_por_credencial(
+    crear_cliente: Callable[..., TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """En el login, quien ataca **sí tiene** credenciales válidas: la API key, o
+    una cuenta propia recién registrada. Limitando por credencial, cada
+    identidad le daba una cubeta nueva contra la misma víctima desde la misma
+    IP — y con el registro abierto eso no tiene techo."""
+    monkeypatch.setenv("BYTE_RATE_LIMIT_RUNS", "3/minute")
+    cliente = crear_cliente()
+    cliente.post("/api/v1/auth/register", json=REGISTRO)
+
+    def intentar(headers: dict[str, str] | None = None) -> int:
+        return cliente.post(
+            "/api/v1/auth/login",
+            json={**REGISTRO, "password": "incorrecta-pero-larga"},
+            headers=headers or {},
+        ).status_code
+
+    codigos = [intentar() for _ in range(6)]
+    assert 429 in codigos, f"el límite no se aplicó: {codigos}"
+    # Y con una credencial válida no se reinicia la cubeta.
+    assert intentar(AUTH) == 429
+
+
+def test_los_nonces_gastados_tienen_tope(cliente: TestClient) -> None:
+    """La poda era solo por tiempo, así que el dict crecía sin cota durante una
+    hora entera y cada run emite uno."""
+    import time
+
+    from api.security import MAX_NONCES_RETENIDOS, TokenService
+
+    tokens = TokenService("s" * 32, 60, 86400, 3600)
+    for i in range(MAX_NONCES_RETENIDOS + 500):
+        tokens._spent[f"nonce-{i}"] = time.monotonic()
+    tokens._prune_spent()
+
+    assert len(tokens._spent) == MAX_NONCES_RETENIDOS

@@ -18,7 +18,7 @@ Seguridad (docs/seguridad-byte.md):
 
 from fastapi import APIRouter, Request, Response, status
 
-from api.deps import Context, CurrentUser, limiter, runs_limit
+from api.deps import Context, CurrentUser, limiter_auth, runs_limit
 from api.errors import ByteError
 from api.logging import get_logger
 from models.schemas import (
@@ -35,7 +35,7 @@ router = APIRouter(tags=["autenticación"])
 
 
 @router.post("/auth/register", response_model=User, status_code=status.HTTP_201_CREATED)
-@limiter.limit(runs_limit)
+@limiter_auth.limit(runs_limit)
 async def register(request: Request, payload: RegisterRequest, ctx: Context) -> User:
     """Crea un usuario.
 
@@ -54,7 +54,7 @@ async def register(request: Request, payload: RegisterRequest, ctx: Context) -> 
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-@limiter.limit(runs_limit)
+@limiter_auth.limit(runs_limit)
 async def login(request: Request, payload: LoginRequest, ctx: Context) -> TokenResponse:
     encontrado = await ctx.repository.get_user_by_email(payload.email)
     if encontrado is None:
@@ -81,7 +81,7 @@ async def login(request: Request, payload: LoginRequest, ctx: Context) -> TokenR
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
-@limiter.limit(runs_limit)
+@limiter_auth.limit(runs_limit)
 async def refresh(request: Request, payload: RefreshRequest, ctx: Context) -> TokenResponse:
     """Un access token nuevo, sin volver a pedir la contraseña.
 
@@ -102,7 +102,8 @@ async def refresh(request: Request, payload: RefreshRequest, ctx: Context) -> To
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: RefreshRequest, ctx: Context) -> Response:
+@limiter_auth.limit(runs_limit)
+async def logout(request: Request, payload: RefreshRequest, ctx: Context) -> Response:
     """Cierra la sesión revocando la familia del refresh.
 
     No pide access token: si venció, igual hay que poder cerrar sesión. Y no

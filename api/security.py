@@ -22,6 +22,11 @@ logger = get_logger("api.security")
 
 SESSION_COOKIE = "byte_session"
 
+# Cuántos nonces ya canjeados se recuerdan. La poda por TTL sola deja el dict
+# crecer una hora entera, y son todos de runs de la misma instancia. 10.000 son
+# unos pocos MB y mucho más de lo que un uso normal genera en ese tiempo.
+MAX_NONCES_RETENIDOS = 10_000
+
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -156,11 +161,27 @@ class TokenService:
         return True
 
     def _prune_spent(self) -> None:
-        """Los nonces solo importan mientras el token podría seguir vigente."""
+        """Los nonces solo importan mientras el token podría seguir vigente.
+
+        Además del tiempo hay un tope de cantidad: la poda por TTL sola deja que
+        el dict crezca sin cota durante una hora, y cada run emite un nonce. Al
+        pasarse se tiran los más viejos, que son los que están más cerca de
+        vencer igual.
+        """
         cutoff = time.monotonic() - max(self._events_ttl_s, self._resume_ttl_s)
         for nonce, seen_at in list(self._spent.items()):
             if seen_at < cutoff:
                 del self._spent[nonce]
+
+        if len(self._spent) > MAX_NONCES_RETENIDOS:
+            sobran = len(self._spent) - MAX_NONCES_RETENIDOS
+            for nonce, _ in sorted(self._spent.items(), key=lambda par: par[1])[:sobran]:
+                del self._spent[nonce]
+            logger.warning(
+                "nonces_podados_por_cantidad",
+                retenidos=MAX_NONCES_RETENIDOS,
+                detail="un token muy viejo podría canjearse dos veces; subí el tope",
+            )
 
 
 def resolve_secret_key(settings: Settings) -> str:
