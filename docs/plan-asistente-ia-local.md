@@ -185,10 +185,27 @@ mucho más barato que después):
 - [x] Indicador de escritura animado (respeta `prefers-reduced-motion`) y estado "En línea" leyendo `/health/details` cada 30 s
 - [x] Marcador visual de "conversación compactada" en el chat, desde `summary_up_to_message_id`
 
-### Fase 6 — CLI en Go (v2) (estimación: depende del aprendizaje de Go)
-- [ ] Sacar el certificado/base de Go
-- [ ] Cliente CLI en Go que consuma la misma API FastAPI, siguiendo la pantalla diseñada en Canva (`byte ask`, `byte search`, `byte run`)
-- [x] Mientras tanto, un CLI en Python con los mismos comandos (`cli/byte_cli.py`): la API ya estaba completa, así que esperar a Go dejaba la terminal sin usar sin ninguna razón técnica
+### Fase 6 — El CLI definitivo (en Python)
+
+**Decisión: el CLI de Python es el definitivo; Go queda fuera de alcance.** Se
+había planeado reescribirlo en Go como excusa para aprenderlo, con el de Python
+como puente. Pero el de Python terminó siendo lo que se usa todos los días —chat
+interactivo, streaming del trabajo del agente, documentos, sandbox— y
+reescribirlo en un lenguaje por aprender cambiaría código probado por código
+nuevo sin ganar nada para quien lo usa. Aprender Go sigue siendo una buena idea;
+atarlo a reescribir esto, no.
+
+- [x] CLI completo en `cli/byte_cli.py`: `ask`, `chat`, `search`, `run`, `docs`,
+  `status`, `conversations`, `approve`/`reject` del modo seguro
+- [x] **Sesión de usuario** (`byte login` / `logout` / `whoami`): la Fase 4 trajo
+  usuarios y el CLI solo sabía de la API key, que identifica a la instancia y no
+  a una persona. El token se guarda en `~/.config/byte` con permisos 0600 —
+  adentro hay un refresh que vale 14 días— y se renueva solo cuando el access
+  vence, así que no hay que volver a entrar cada 30 minutos. Una sesión por
+  instancia: apuntar a otra no pisa la local. Sin login todo sigue igual, con la
+  API key
+- [ ] Sacar el certificado/base de Go — como aprendizaje propio, desacoplado de
+  Byte
 
 ### Fase 7 — Despliegue final optimizado (estimación: 1 semana)
 - [ ] Servicios separados en Railway por red privada: Ollama, FastAPI, Postgres, sandbox WASM, Bugsink (+ n8n si se usa), con sus volúmenes

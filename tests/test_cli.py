@@ -14,10 +14,11 @@ from collections.abc import Callable
 import pytest
 from starlette.testclient import TestClient
 
-from cli import byte_cli
+from cli import byte_cli, sesion
 from tests.fakes import text_turn, tool_turn
 
 API_KEY = "clave-de-prueba"
+AUTH_HEADER = {"X-API-Key": API_KEY}
 
 
 def _parchear_transporte(monkeypatch: pytest.MonkeyPatch, cliente: TestClient) -> None:
@@ -27,8 +28,13 @@ def _parchear_transporte(monkeypatch: pytest.MonkeyPatch, cliente: TestClient) -
     (parseo, códigos de salida, formato, el stream) sin levantar un servidor.
     """
 
-    def init(self: byte_cli.Byte, base_url: str, api_key: str) -> None:  # noqa: ARG001
+    def init(self: byte_cli.Byte, base_url: str, api_key: str) -> None:
         self._cliente = None
+        self._url = base_url.rstrip("/")
+        self._api_key = api_key
+        # La sesión se lee igual que en producción: los tests que la tocan
+        # apuntan XDG_CONFIG_HOME a un directorio temporal.
+        self._sesion = sesion.leer(self._url)
 
     def pedir(self: byte_cli.Byte, metodo: str, ruta: str, **kwargs: object) -> object:
         respuesta = cliente.request(
@@ -680,3 +686,123 @@ def test_ctrl_d_cierra_de_una(
     _teclas(monkeypatch)  # sin entradas: el primer input() ya da EOFError
     assert cli() == 0
     assert "again to exit" not in capsys.readouterr().out
+
+
+# --- Sesión de usuario en el CLI (Fase 6) ---
+
+
+@pytest.fixture
+def config_aparte(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """La sesión va a un directorio temporal, no a la del desarrollador."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+
+def test_la_sesion_se_guarda_con_permisos_privados(config_aparte) -> None:
+    """Adentro hay un refresh token que vale 14 días: si otro usuario de la
+    máquina puede leerlo, se lleva la sesión entera."""
+    import os
+    import stat
+
+    from cli import sesion
+
+    sesion.guardar("http://localhost:8000", "tok", "ref", "ana@ejemplo.com")
+    modo = stat.S_IMODE(os.stat(sesion.ruta_visible()).st_mode)
+    assert modo == 0o600, f"permisos {oct(modo)}"
+
+
+def test_cada_instancia_tiene_su_sesion(config_aparte) -> None:
+    """Apuntar a otra instancia no debería pisar el token de la local, que es
+    la que uno tiene abierta todo el día."""
+    from cli import sesion
+
+    sesion.guardar("http://localhost:8000", "tok-a", "ref-a", "ana@ejemplo.com")
+    sesion.guardar("http://otra:9000", "tok-b", "ref-b", "beto@ejemplo.com")
+
+    assert sesion.leer("http://localhost:8000")["email"] == "ana@ejemplo.com"
+    assert sesion.leer("http://otra:9000")["email"] == "beto@ejemplo.com"
+    sesion.borrar("http://localhost:8000")
+    assert sesion.leer("http://otra:9000") is not None
+
+
+def test_un_archivo_de_sesion_corrupto_no_rompe_el_cli(config_aparte, tmp_path) -> None:
+    """No es motivo para que el CLI no arranque: se ignora y quien quiera
+    sesión vuelve a entrar."""
+    from cli import sesion
+
+    archivo = tmp_path / "byte" / "sesion.json"
+    archivo.parent.mkdir(parents=True)
+    archivo.write_text("esto no es json", encoding="utf-8")
+
+    assert sesion.leer("http://localhost:8000") is None
+
+
+def test_sin_sesion_se_usa_la_api_key(cli, config_aparte, capsys) -> None:
+    """El comportamiento de siempre: sin login, el CLI es la instancia."""
+    assert cli("whoami") == 0
+    assert "sin sesión" in capsys.readouterr().out
+
+
+def test_el_login_guarda_la_sesion(
+    crear_cliente: Callable[..., TestClient], config_aparte, monkeypatch, capsys
+) -> None:
+    """El hueco que dejó la Fase 4: el CLI solo sabía de la API key, que
+    identifica a la instancia y no a una persona."""
+    import getpass
+
+    from cli import sesion
+
+    transporte = crear_cliente()
+    monkeypatch.setenv("BYTE_API_KEY", API_KEY)
+    _parchear_transporte(monkeypatch, transporte)
+    transporte.post(
+        "/api/v1/auth/register",
+        json={"email": "ana@ejemplo.com", "password": "una-contraseña-larga"},
+        headers=AUTH_HEADER,
+    )
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "una-contraseña-larga")
+
+    assert byte_cli.main(["login", "ana@ejemplo.com"]) == 0
+    guardada = sesion.leer("http://localhost:8000")
+    assert guardada is not None
+    assert guardada["email"] == "ana@ejemplo.com"
+    assert guardada["access_token"] and guardada["refresh_token"]
+    assert "ana@ejemplo.com" in capsys.readouterr().out
+
+
+def test_una_contrasena_incorrecta_no_deja_sesion(
+    crear_cliente: Callable[..., TestClient], config_aparte, monkeypatch, capsys
+) -> None:
+    import getpass
+
+    from cli import sesion
+
+    transporte = crear_cliente()
+    monkeypatch.setenv("BYTE_API_KEY", API_KEY)
+    _parchear_transporte(monkeypatch, transporte)
+    transporte.post(
+        "/api/v1/auth/register",
+        json={"email": "ana@ejemplo.com", "password": "una-contraseña-larga"},
+        headers=AUTH_HEADER,
+    )
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "no-es-la-correcta")
+
+    assert byte_cli.main(["login", "ana@ejemplo.com"]) == 1
+    assert sesion.leer("http://localhost:8000") is None
+    assert "incorrect" in capsys.readouterr().err.lower()
+
+
+def test_el_cliente_usa_el_token_cuando_hay_sesion(config_aparte) -> None:
+    """Con sesión, lo que se crea es del usuario; sin ella, de la instancia.
+    Lo decide qué header se manda."""
+    from cli import sesion
+
+    sin_sesion = byte_cli.Byte.__new__(byte_cli.Byte)
+    sin_sesion._sesion = None
+    sin_sesion._api_key = "la-clave"
+    assert sin_sesion._cabeceras() == {"X-API-Key": "la-clave"}
+
+    con_sesion = byte_cli.Byte.__new__(byte_cli.Byte)
+    con_sesion._sesion = {"access_token": "tok", "email": "ana@ejemplo.com"}
+    con_sesion._api_key = "la-clave"
+    assert con_sesion._cabeceras() == {"Authorization": "Bearer tok"}
+    assert sesion is not None  # el import se usa arriba

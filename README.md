@@ -120,6 +120,17 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   valer y vuelve otro. Si aparece uno ya canjeado se revoca la sesión entera —
   hay dos copias dando vueltas y no se puede saber cuál es la del dueño
 
+### El CLI
+
+`byte ask`, `byte chat`, `byte search`, `byte run`, `byte docs`, y
+`byte login` / `logout` / `whoami` para entrar como usuario — sin login usa la
+API key, que identifica a la instancia. El token se guarda en `~/.config/byte`
+con permisos 0600 y se renueva solo. Detalles en [cli/](cli/).
+
+Es el CLI definitivo: la reescritura en Go que el plan preveía quedó fuera de
+alcance, porque cambiaría código probado por código nuevo sin ganar nada para
+quien lo usa.
+
 ### Observabilidad (opcional, apagada por defecto)
 
 - **Langfuse** para las trazas del agente: por qué decidió usar una herramienta,

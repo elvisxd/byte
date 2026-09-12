@@ -9,6 +9,8 @@ igual contra una instancia remota que contra la local.
 """
 
 import argparse
+import contextlib
+import getpass
 import json
 import os
 import re
@@ -21,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from cli import sesion
 
 try:  # readline le da historial y edición de línea a `input()`; en Windows no está.
     import readline  # noqa: F401
@@ -177,11 +181,65 @@ class Byte:
     """Cliente HTTP de la API."""
 
     def __init__(self, base_url: str, api_key: str) -> None:
+        self._url = base_url.rstrip("/")
+        self._api_key = api_key
+        # Si hay sesión iniciada se usa el token del usuario; si no, la API key,
+        # que es la credencial de la instancia. Las dos van en el mismo header
+        # para la API, pero significan cosas distintas: con token las
+        # conversaciones son tuyas, con la clave son de la instancia.
+        guardada = sesion.leer(self._url)
+        self._sesion = guardada
         self._cliente = httpx.Client(
-            base_url=base_url.rstrip("/") + "/api/v1",
-            headers={"X-API-Key": api_key},
+            base_url=self._url + "/api/v1",
+            headers=self._cabeceras(),
             timeout=TIMEOUT_LARGO,
         )
+
+    def _cabeceras(self) -> dict[str, str]:
+        if self._sesion and self._sesion.get("access_token"):
+            return {"Authorization": f"Bearer {self._sesion['access_token']}"}
+        return {"X-API-Key": self._api_key}
+
+    @property
+    def email(self) -> str | None:
+        """Con quién se está trabajando, o `None` si se usa la API key."""
+        return self._sesion.get("email") if self._sesion else None
+
+    def _renovar(self) -> bool:
+        """Cambia el access token vencido por uno nuevo, sin pedir contraseña.
+
+        El access dura 30 minutos y el refresh 14 días: sin esto habría que
+        volver a entrar cada media hora, que es justo lo que el refresh evita.
+        El refresh se rota en cada uso, así que el nuevo se guarda enseguida.
+        """
+        if not self._sesion or not self._sesion.get("refresh_token"):
+            return False
+        try:
+            respuesta = self._cliente.post(
+                "/auth/refresh",
+                json={"refresh_token": self._sesion["refresh_token"]},
+                headers={},  # sin el access vencido, que la API rechazaría
+            )
+        except httpx.HTTPError:
+            return False
+        if respuesta.status_code >= 400:
+            # El refresh tampoco vale: o venció, o alguien lo reusó y la familia
+            # se revocó. En los dos casos hay que volver a entrar.
+            sesion.borrar(self._url)
+            self._sesion = None
+            self._cliente.headers.update(self._cabeceras())
+            return False
+
+        datos = respuesta.json()
+        sesion.guardar(
+            self._url,
+            datos["access_token"],
+            datos["refresh_token"],
+            self._sesion.get("email", ""),
+        )
+        self._sesion = sesion.leer(self._url)
+        self._cliente.headers.update(self._cabeceras())
+        return True
 
     def __enter__(self) -> "Byte":
         return self
@@ -191,6 +249,11 @@ class Byte:
 
     def pedir(self, metodo: str, ruta: str, **kwargs: Any) -> Any:
         respuesta = self._cliente.request(metodo, ruta, **kwargs)
+        # Un 401 con sesión iniciada casi siempre es el access vencido: se
+        # renueva y se reintenta una sola vez. Reintentar en bucle convertiría
+        # una credencial mala en una tormenta de pedidos.
+        if respuesta.status_code == 401 and self._sesion and self._renovar():
+            respuesta = self._cliente.request(metodo, ruta, **kwargs)
         if respuesta.status_code >= 400:
             raise RuntimeError(_mensaje_de_error(respuesta))
         return None if respuesta.status_code == 204 else respuesta.json()
@@ -942,6 +1005,72 @@ def cmd_conversations(byte: Byte, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_login(byte: Byte, args: argparse.Namespace) -> int:
+    """Entra como usuario y guarda la sesión.
+
+    Sin esto el CLI solo sabía de la API key, que identifica a la instancia:
+    desde la terminal no había forma de ser vos mismo. Con sesión iniciada, lo
+    que creás es tuyo y nadie más lo ve.
+    """
+    url, _ = _config()
+    email = args.email or input("email: ").strip()
+    # La contraseña por `getpass`, que no la muestra ni la deja en el historial
+    # del shell. Por eso tampoco hay un `--password`.
+    password = getpass.getpass("contraseña: ")
+    if not email or not password:
+        return _error("hacen falta el email y la contraseña")
+
+    try:
+        datos = byte.pedir("POST", "/auth/login", json={"email": email, "password": password})
+    except RuntimeError as exc:
+        return _error(str(exc))
+
+    sesion.guardar(url, datos["access_token"], datos["refresh_token"], email)
+    print(_color(f"✓ hola, {email}", VERDE))
+    print(_color(f"  la sesión queda en {sesion.ruta_visible()}", GRIS))
+    return 0
+
+
+def cmd_logout(_byte: Byte, _args: argparse.Namespace) -> int:
+    """Cierra la sesión acá y en el servidor.
+
+    Borrar el archivo local no alcanza: el refresh seguiría valiendo 14 días
+    para quien lo tuviera. Se revoca primero y se borra después.
+    """
+    url, _ = _config()
+    guardada = sesion.leer(url)
+    if guardada is None:
+        print(_color("no había sesión iniciada", GRIS))
+        return 0
+
+    # Se habla con la API sin el `Byte` de afuera: su cliente ya tiene el token
+    # cargado y acá hace falta mandar solo el refresh.
+    with contextlib.suppress(httpx.HTTPError):
+        httpx.post(
+            f"{url}/api/v1/auth/logout",
+            json={"refresh_token": guardada.get("refresh_token", "")},
+            timeout=10.0,
+        )
+    sesion.borrar(url)
+    print(_color("✓ sesión cerrada", VERDE))
+    return 0
+
+
+def cmd_whoami(byte: Byte, _args: argparse.Namespace) -> int:
+    """Con quién se está trabajando."""
+    if byte.email is None:
+        print(_color("sin sesión: se usa la API key de la instancia", GRIS))
+        print(_color("  `byte login` para entrar como usuario", GRIS))
+        return 0
+    try:
+        yo = byte.pedir("GET", "/me")
+    except RuntimeError as exc:
+        return _error(f"{exc} — probá `byte login` de nuevo")
+    print(f"{_color(yo['email'], CREMA)}")
+    print(_color(f"  desde {yo['created_at'][:10]}", GRIS))
+    return 0
+
+
 def cmd_chat(byte: Byte, args: argparse.Namespace) -> int:
     url, _ = _config()
     return _chat(byte, url, args.safe, args.conversation)
@@ -964,6 +1093,16 @@ def construir_parser() -> argparse.ArgumentParser:
         "--safe", action="store_true", help="pedir confirmación antes de ejecutar código"
     )
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("login", help="entrar como usuario y guardar la sesión")
+    p.add_argument("email", nargs="?", help="si no se pasa, se pregunta")
+    p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser("logout", help="cerrar la sesión acá y en el servidor")
+    p.set_defaults(func=cmd_logout)
+
+    p = sub.add_parser("whoami", help="con quién se está trabajando")
+    p.set_defaults(func=cmd_whoami)
 
     p = sub.add_parser("chat", help="abrir el chat interactivo (lo mismo que `byte` a secas)")
     p.add_argument("-c", "--conversation", help="seguir una conversación existente")

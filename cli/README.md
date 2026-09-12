@@ -1,8 +1,12 @@
 # cli/
 Cliente de línea de comandos.
 
-- `byte_cli.py` — el CLI en Python. Habla HTTP y nada más: no importa nada de
-  `api/` ni de `agent/`, así que sirve igual contra una instancia remota
+- `byte_cli.py` — el CLI. Habla HTTP y nada más: no importa nada de `api/` ni
+  de `agent/`, así que sirve igual contra una instancia remota
+- `sesion.py` — dónde vive el token de `byte login` y cómo se renueva
+
+Es el CLI definitivo: la reescritura en Go que el plan preveía quedó fuera de
+alcance (`docs/plan-asistente-ia-local.md`, Fase 6).
 
 ```bash
 uv run python -m cli.byte_cli            # la bienvenida: estado y qué podés hacer
@@ -15,6 +19,26 @@ uv run python -m cli.byte_cli docs add manual.pdf
 uv run python -m cli.byte_cli docs list
 uv run python -m cli.byte_cli conversations
 ```
+
+## Entrar como usuario
+
+Sin esto el CLI usa la `BYTE_API_KEY`, que identifica a la **instancia**: lo que
+creás es de ella y se ve con esa clave. Con sesión iniciada es tuyo y de nadie
+más.
+
+```bash
+uv run python -m cli.byte_cli login vos@ejemplo.com   # la contraseña no se ve ni queda en el historial
+uv run python -m cli.byte_cli whoami
+uv run python -m cli.byte_cli logout
+```
+
+El token queda en `~/.config/byte/sesion.json` con permisos 0600 —adentro hay un
+refresh que vale 14 días— y se renueva solo cuando el access vence a los 30
+minutos, así que no hay que volver a entrar. Hay una sesión por instancia:
+apuntar `BYTE_URL` a otra no pisa la local.
+
+`logout` revoca el refresh en el servidor además de borrar el archivo: borrarlo
+solo dejaría la sesión viva 14 días para quien tuviera el token.
 
 Para escribir `byte` a secas, un alias en tu shell:
 
