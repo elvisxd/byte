@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import AUTH
+from tests.conftest import API_KEY, AUTH
 
 
 def test_health_es_publico(cliente: TestClient) -> None:
@@ -92,3 +92,23 @@ def test_el_env_del_desarrollador_no_se_cuela_en_los_tests() -> None:
     # Los tests falsean el LLM: que Ollama esté o no corriendo no debería
     # cambiar el resultado de la suite.
     assert "11434" not in ajustes.ollama_base_url
+
+
+def test_el_bearer_sirve_en_toda_la_api_pero_solo_con_la_clave(cliente: TestClient) -> None:
+    """El header `Authorization: Bearer` se agregó para los clientes de OpenAI,
+    pero vale en cualquier ruta: es la misma credencial por otro header.
+
+    Lo que no puede pasar es que aceptar un header más ablande la puerta, así
+    que se verifica también que un Bearer cualquiera siga siendo 401.
+    """
+    assert (
+        cliente.get("/api/v1/tools", headers={"Authorization": "Bearer " + API_KEY}).status_code
+        == 200
+    )
+    assert (
+        cliente.get("/api/v1/tools", headers={"Authorization": "Bearer otra-cosa"}).status_code
+        == 401
+    )
+    assert cliente.get("/api/v1/tools", headers={"Authorization": "Bearer "}).status_code == 401
+    # Sin el prefijo no es un Bearer: mandar la clave pelada no debería alcanzar.
+    assert cliente.get("/api/v1/tools", headers={"Authorization": API_KEY}).status_code == 401

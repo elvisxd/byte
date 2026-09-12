@@ -125,7 +125,7 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 
 ### Fase 3 — MCP y n8n (estimación: 2 semanas)
 - [x] Soporte de MCP para conectar herramientas externas de forma estandarizada (solo servidores propios o revisados: tool poisoning). Cliente en `mcp_client/`: los servidores se declaran en `BYTE_MCP_SERVERS` (lista blanca, solo http(s)) y sus herramientas entran al registro junto a las nativas, con `source: "mcp:<nombre>"`. La carpeta se llama `mcp_client` y no `mcp` porque ese nombre es el del paquete oficial del SDK. Falta el servidor MCP (exponer las herramientas de Byte), que el plan no pedía
-- [ ] Endpoint compatible con OpenAI con lista blanca de modelos
+- [x] Endpoint compatible con OpenAI con lista blanca de modelos: `POST /v1/chat/completions` (con y sin streaming) y `GET /v1/models`, montados en `/v1` porque los clientes arman la URL pegando la ruta a la base. Autentica con `Authorization: Bearer`. Verificado con el SDK oficial de OpenAI
 - [ ] Sumar n8n como módulo opcional conectado por MCP: ingesta automática de documentos y un canal externo (WhatsApp o email)
 
 ### Fase 4 — API completa, debugging y observabilidad (estimación: 2 semanas)

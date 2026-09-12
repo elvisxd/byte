@@ -110,7 +110,19 @@ Límites: código máx. 50 KB (`413`), timeout máx. 30 s, salida máx. 64 KB.
 ---
 
 ## Compatibilidad OpenAI (opcional, muy recomendada — Fase 3)
-**POST `/v1/chat/completions`** con el formato de OpenAI (incl. `stream: true`). El campo `model` se valida contra una **lista blanca**; nunca se pasa un nombre arbitrario a Ollama. Permite que clientes existentes — Open WebUI, Continue.dev en VS Code, cualquier SDK de OpenAI — usen a Byte como backend sin escribir nada. Costo bajo, impacto alto en portafolio.
+**Implementado.** **POST `/v1/chat/completions`** con el formato de OpenAI (incl. `stream: true`) y **GET `/v1/models`**, que es lo que los clientes llaman para poblar su selector.
+
+Va montado en `/v1` y no en `/api/v1`: los clientes arman la URL pegando `/chat/completions` a la base que uno configura, y la mayoría no deja poner un prefijo propio.
+
+- `model` se valida contra una **lista blanca** (`byte` y el modelo real de Ollama); nunca se pasa un nombre arbitrario a Ollama, que sería dejar que el cliente pida la descarga y ejecución de cualquier modelo.
+- Autentica con `Authorization: Bearer <BYTE_API_KEY>`, que es lo único que mandan estos clientes. El header vale en toda la API, no solo acá.
+- Solo se usa el **último mensaje del usuario**: el historial lo maneja Byte con su checkpointer y su compactación, así que reenviar la conversación entera (lo que hacen estos clientes) duplicaría lo que el agente ya tiene.
+- `temperature`, `top_p`, `n`, `seed` y demás se **aceptan y se ignoran**: esos valores los decide la configuración de Byte. Un 422 rompería a los clientes sin ganar nada.
+- `usage` va en cero: un run son varias llamadas al modelo y sumarlas sería inventar. El campo está porque varios clientes rompen si falta.
+- El **modo seguro no se puede expresar** en este formato — no hay a quién preguntarle del otro lado. Si un run queda esperando aprobación, se corta: `409 approval_required` sin streaming, y con streaming una nota en el texto y `finish_reason: "length"`.
+- Cada pedido crea una conversación (`[openai] …`), que se ve después en la web y en `byte conversations`.
+
+Verificado con el **SDK oficial de OpenAI** (3.13.0) contra el stack local: `models.list()`, una respuesta completa y una con `stream=True` (9 chunks, `finish_reason: stop`), incluida una que usó `web_search`.
 
 ## Capa GraphQL de solo lectura (opcional — Fase 5)
 Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries* sobre conversaciones, mensajes, documentos y búsqueda (con dataloaders para evitar N+1). Sin mutaciones ni subscriptions: los comandos y el streaming siguen en REST + SSE/AG-UI, que es lo que habla el ecosistema de IA. Patrón híbrido justificable en entrevista: GraphQL para agregación de datos, REST/SSE para comandos y streaming.

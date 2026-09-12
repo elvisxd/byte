@@ -115,7 +115,26 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
   resultado: medido contra qwen3:8b, envolverla rompe el tool calling (0 de 3
   llamadas contra 3 de 3). El porqué está en `mcp_client/README.md`
 
-Falta de esta fase: el endpoint compatible con OpenAI y n8n.
+- **Compatible con OpenAI**: `POST /v1/chat/completions` (con y sin streaming) y
+  `GET /v1/models`. Open WebUI, Continue.dev o cualquier SDK de OpenAI usan a
+  Byte como backend apuntando a `http://localhost:8000/v1` con la
+  `BYTE_API_KEY` como clave. El `model` se valida contra una lista blanca: un
+  nombre arbitrario nunca llega a Ollama
+
+  ```python
+  from openai import OpenAI
+
+  c = OpenAI(base_url="http://localhost:8000/v1", api_key="<BYTE_API_KEY>")
+  c.chat.completions.create(model="byte", messages=[{"role": "user", "content": "hola"}])
+  ```
+
+  Lo que entra por ahí es el agente completo, con sus herramientas: una pregunta
+  que necesite buscar en la web la busca. Las conversaciones quedan guardadas y
+  se ven en la web y en `byte conversations`. El modo seguro es la excepción —
+  no hay forma de pedir una aprobación humana en ese formato, así que un run que
+  la necesite se corta y lo dice
+
+Falta de esta fase: n8n.
 
 ### Fase 2 — memoria y RAG
 
