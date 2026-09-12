@@ -34,4 +34,5 @@ async def health_details(ctx: Context, _credential: CredentialId) -> HealthDetai
         db=db,
         sandbox=sandbox,
         version=settings.version,
+        models=[settings.ollama_model, *ctx.runs.modelos()],
     )

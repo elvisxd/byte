@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # --- Modelo ---
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="qwen2.5-coder:7b", alias="OLLAMA_MODEL")
+    # Modelos entre los que se puede cambiar en caliente, separados por comas.
+    # El de `OLLAMA_MODEL` siempre está disponible aunque no figure acá.
+    #
+    # No entran dos modelos a la vez en una máquina de 16 GB, así que Ollama
+    # desaloja uno para cargar el otro y **cambiar cuesta unos 27 segundos**
+    # (medido). Por eso el cambio es explícito —un comando del usuario— y no
+    # automático: un clasificador que dude paga ese precio cada vez que cambia
+    # de opinión, y encima sin que se vea por qué.
+    ollama_models: str = Field(default="", alias="OLLAMA_MODELS_DISPONIBLES")
     # Ollama arranca en 4.096 tokens por defecto aunque el modelo soporte más: se setea explícito.
     ollama_num_ctx: int = Field(default=16384, alias="OLLAMA_NUM_CTX")
     # Tope de tokens por respuesta (denegación de billetera).
@@ -160,6 +169,20 @@ class Settings(BaseSettings):
                 "las conversaciones y el hilo del agente no pueden quedar en memoria"
             )
         return self
+
+
+def modelos_disponibles(settings: "Settings") -> list[str]:
+    """Los modelos entre los que se puede cambiar, con el activo primero.
+
+    El de `OLLAMA_MODEL` va siempre, aunque no figure en la lista: es el que la
+    app tiene cargado y sería raro no poder volver a él.
+    """
+    nombres = [settings.ollama_model]
+    for crudo in settings.ollama_models.split(","):
+        nombre = crudo.strip()
+        if nombre and nombre not in nombres:
+            nombres.append(nombre)
+    return nombres
 
 
 @lru_cache

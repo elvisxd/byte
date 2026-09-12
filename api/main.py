@@ -25,7 +25,7 @@ from agent.graph import build_graph
 from agent.llm import build_llm
 from agent.runner import RunManager
 from api.auth import JWTService, Passwords, RefreshService
-from api.config import Settings, get_settings
+from api.config import Settings, get_settings, modelos_disponibles
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
@@ -284,6 +284,36 @@ def create_app(
                 resume_ttl_s=resolved_settings.resume_token_ttl_s,
                 trazas=trazas,
             )
+
+            # Un grafo por modelo alternativo, para poder cambiar en caliente.
+            # Compilar acá y no por run: armar el grafo es barato pero no
+            # gratis, y el costo real del cambio ya es la recarga del modelo en
+            # Ollama (~27 s en una máquina donde no entran dos a la vez).
+            #
+            # Solo si el usuario configuró alternativas y no se inyectó un `llm`
+            # de prueba: con un doble en los tests, un segundo modelo intentaría
+            # hablarle a Ollama de verdad.
+            if llm is None:
+                for nombre in modelos_disponibles(resolved_settings)[1:]:
+                    alterno = build_llm(resolved_settings, modelo=nombre)
+                    run_manager.registrar_grafo(
+                        nombre,
+                        build_graph(
+                            alterno,
+                            tool_registry,
+                            max_iterations=resolved_settings.max_iterations,
+                            max_tool_result_chars=resolved_settings.max_tool_result_chars,
+                            num_ctx=resolved_settings.ollama_num_ctx,
+                            checkpointer=checkpointer,
+                        ),
+                    )
+                if run_manager.modelos():
+                    logger.info(
+                        "modelos_alternativos",
+                        modelos=run_manager.modelos(),
+                        detail="se puede cambiar en caliente con el campo `model`",
+                    )
+
             app.state.ctx = AppContext(
                 settings=resolved_settings,
                 credentials=credentials,

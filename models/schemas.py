@@ -110,6 +110,10 @@ class CreateMessageRequest(BaseModel):
     # El tope real se valida en la ruta contra BYTE_MAX_MESSAGE_CHARS y responde 413.
     content: str = Field(min_length=1)
     safe_mode: bool = False
+    # Con qué modelo responder. Vacío = el default de la instancia. La ruta
+    # valida que esté configurado y responde 400 si no: un nombre mal escrito
+    # tiene que decirse, no caer en silencio a otro modelo.
+    model: str = ""
 
 
 class RunAccepted(BaseModel):
@@ -266,6 +270,9 @@ class HealthDetails(BaseModel):
     db: str
     sandbox: str
     version: str
+    # Los modelos entre los que se puede cambiar, con el activo primero. Es lo
+    # que el CLI lee para `/model` sin tener que conocer la configuración.
+    models: list[str] = []
 
 
 # --- Compatibilidad con OpenAI (Fase 3) ---

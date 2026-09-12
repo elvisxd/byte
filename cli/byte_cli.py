@@ -529,6 +529,7 @@ AYUDA_CHAT = [
     ("/search <text>", "search your documents, without asking the model"),
     ("/run <file.py>", "run a Python file in the sandbox"),
     ("/safe", "toggle asking before running code"),
+    ("/model [name]", "list models, or switch to one"),
     ("/status", "Byte and its services"),
     ("/id", "this conversation's id"),
     ("/help", "this help"),
@@ -549,7 +550,60 @@ ALIAS_CHAT = {
     "/agregar": "/add",
     "/seguro": "/safe",
     "/estado": "/status",
+    "/modelo": "/model",
+    "/m": "/model",
 }
+
+
+def _cambiar_de_modelo(byte: Byte, pedido: str, sesion: "Sesion") -> None:
+    """`/model` lista; `/model <nombre>` cambia para lo que resta de la charla.
+
+    Se acepta un prefijo ("granite" por "granite4.1:8b") porque los nombres
+    llevan versión y tag, y escribirlos enteros para cambiar de modelo es una
+    fricción que no aporta nada.
+
+    **Lo que cuesta cambiar se dice antes de cambiar.** En una máquina donde no
+    entran dos modelos en memoria, Ollama desaloja uno para cargar el otro y la
+    primera respuesta tarda ~27 s más. Sin el aviso, parece que Byte se colgó.
+    """
+    salud = byte.pedir("GET", "/health/details")
+    modelos = list(salud.get("models") or [])
+    if not modelos:
+        modelos = [str(salud.get("model", ""))]
+    activo = sesion.modelo or modelos[0]
+
+    if not pedido:
+        if len(modelos) == 1:
+            print(_color(f"{activo} — the only one configured", GRIS))
+            print(_color("add more with OLLAMA_MODELS_DISPONIBLES in .env", GRIS))
+            return
+        for nombre in modelos:
+            marca = _color(" ● active", VERDE) if nombre == activo else ""
+            print(f"  {_color(nombre, CREMA)}{marca}")
+        print(_color("switch with /model <name>", GRIS))
+        return
+
+    # Coincidencia exacta primero: si alguien escribe el nombre entero, eso gana
+    # sobre cualquier prefijo que también encaje.
+    elegido = next((n for n in modelos if n == pedido), "")
+    if not elegido:
+        candidatos = [n for n in modelos if n.startswith(pedido)]
+        if len(candidatos) > 1:
+            print(_color(f"'{pedido}' matches several: {', '.join(candidatos)}", GRIS))
+            return
+        elegido = candidatos[0] if candidatos else ""
+
+    if not elegido:
+        print(_color(f"I don't have '{pedido}'. Configured: {', '.join(modelos)}", GRIS))
+        return
+
+    if elegido == activo:
+        print(_color(f"already using {elegido}", GRIS))
+        return
+
+    sesion.modelo = elegido
+    print(_color(f"✓ now using {elegido}", VERDE))
+    print(_color("the next answer will take ~30s longer while Ollama loads it", GRIS))
 
 
 def _nueva_conversacion(byte: Byte) -> str:
@@ -563,6 +617,8 @@ class Sesion:
         self.conversacion = conversacion
         self.safe = safe
         self.seguir = True
+        # Modelo elegido con `/model`. Vacío = el default de la instancia.
+        self.modelo = ""
 
 
 def _comando_del_chat(byte: Byte, entrada: str, sesion: Sesion) -> None:
@@ -609,6 +665,9 @@ def _comando_del_chat(byte: Byte, entrada: str, sesion: Sesion) -> None:
             sesion.safe = not sesion.safe
             estado = "on — it will ask before running code" if sesion.safe else "off"
             print(_color(f"✓ safe mode {estado}", VERDE if sesion.safe else GRIS))
+
+        elif orden == "/model":
+            _cambiar_de_modelo(byte, resto, sesion)
 
         elif orden == "/status":
             cmd_status(byte, argparse.Namespace())
@@ -686,7 +745,9 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
             continue
 
         try:
-            datos = _preguntar_en_vivo(byte, sesion.conversacion, entrada, sesion.safe)
+            datos = _preguntar_en_vivo(
+                byte, sesion.conversacion, entrada, sesion.safe, sesion.modelo
+            )
         except KeyboardInterrupt:
             # El run sigue del lado de la API; acá solo se deja de esperarlo.
             print(_color("· stopped waiting for the answer", GRIS))
@@ -833,7 +894,9 @@ def _parrafos(texto: str) -> Iterator[str]:
         yield "\n".join(bloque)
 
 
-def _preguntar_en_vivo(byte: Byte, conversacion: str, pregunta: str, safe: bool) -> dict[str, Any]:
+def _preguntar_en_vivo(
+    byte: Byte, conversacion: str, pregunta: str, safe: bool, modelo: str = ""
+) -> dict[str, Any]:
     """Igual que `_preguntar`, pero siguiendo el run por SSE.
 
     Devuelve la misma forma que `?wait=true` para que quien llama no distinga:
@@ -845,7 +908,7 @@ def _preguntar_en_vivo(byte: Byte, conversacion: str, pregunta: str, safe: bool)
     arranque = byte.pedir(
         "POST",
         f"/conversations/{conversacion}/messages",
-        json={"content": pregunta, "safe_mode": safe},
+        json={"content": pregunta, "safe_mode": safe, "model": modelo},
     )
     run_id = arranque["run_id"]
 

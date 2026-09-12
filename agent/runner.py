@@ -94,6 +94,9 @@ class Run:
     # saltar de un mensaje guardado a su traza.
     langfuse_trace_id: str | None = None
     safe_mode: bool = False
+    # Con qué modelo se corre. Vacío = el default de la app. Queda en el Run y
+    # no se lee al vuelo para que un cambio a mitad de run no lo parta en dos.
+    modelo: str = ""
     status: RunStatusValue = "running"
     iterations: int = 0
     started_at: datetime = field(default_factory=_now)
@@ -190,6 +193,10 @@ class RunManager:
         trazas: Any = None,
     ) -> None:
         self._graph = graph
+        # Un grafo por modelo alternativo, armado al arrancar. Compilarlos por
+        # adelantado y no por run es lo que hace que cambiar cueste solo la
+        # recarga del modelo en Ollama y no además rearmar el grafo.
+        self._graphs: dict[str, Any] = {}
         self._repo = repository
         # Trazas del agente. Apagadas si no hay Langfuse; el objeto apagado es
         # un no-op, así que acá no hace falta distinguir.
@@ -248,6 +255,7 @@ class RunManager:
         credential_id: str,
         user_content: str,
         safe_mode: bool = False,
+        modelo: str = "",
     ) -> Run:
         await self.preparar(conversation_id, credential_id)
 
@@ -256,6 +264,7 @@ class RunManager:
             conversation_id=conversation_id,
             credential_id=credential_id,
             safe_mode=safe_mode,
+            modelo=modelo,
         )
         self._runs[run.id] = run
         self._prune()
@@ -502,7 +511,7 @@ class RunManager:
             # El grafo retoma exactamente donde quedó el interrupt.
             from langgraph.types import Command
 
-            return await self._graph.ainvoke(Command(resume=aprobacion), config=config)
+            return await self._grafo_de(run).ainvoke(Command(resume=aprobacion), config=config)
 
         if await self._thread_has_state(config):
             messages: list[Any] = [HumanMessage(content=user_content or "")]
@@ -516,7 +525,7 @@ class RunManager:
             "sources": None,
             "tools_used": None,
         }
-        return await self._graph.ainvoke(inputs, config=config)
+        return await self._grafo_de(run).ainvoke(inputs, config=config)
 
     async def compactar(self, conversation_id: str, llm: Any, dejar: int = 4) -> tuple[str, int]:
         """Compacta el hilo del checkpointer: resume lo viejo y lo saca.
@@ -570,6 +579,24 @@ class RunManager:
         await self._repo.set_summary(conversation_id, resumen, marcador)
         logger.info("compactacion_manual", conversation_id=conversation_id, mensajes=len(viejos))
         return (resumen, len(viejos))
+
+    def registrar_grafo(self, modelo: str, grafo: Any) -> None:
+        """Un grafo ya compilado para un modelo alternativo."""
+        self._graphs[modelo] = grafo
+
+    def modelos(self) -> list[str]:
+        """Los modelos que se pueden pedir, además del default."""
+        return sorted(self._graphs)
+
+    def _grafo_de(self, run: Run) -> Any:
+        """El grafo del modelo del run, o el default.
+
+        Un modelo que no esté registrado cae al default en vez de fallar: el run
+        ya está en curso y el mensaje del usuario ya se guardó, así que perderlo
+        por un nombre mal escrito sería peor que responder con el de siempre. La
+        ruta valida el nombre antes, que es donde todavía se puede avisar.
+        """
+        return self._graphs.get(run.modelo) or self._graph
 
     async def _thread_has_state(self, config: dict[str, Any]) -> bool:
         try:
@@ -642,7 +669,6 @@ class RunManager:
                 langfuse_trace_id=run.langfuse_trace_id,
             )
             run.message_id = saved.id
-
 
     def _pausar_si_espera_aprobacion(self, run: Run, final_state: dict[str, Any], log: Any) -> bool:
         """Si el grafo se detuvo en un interrupt, deja el run en "paused".

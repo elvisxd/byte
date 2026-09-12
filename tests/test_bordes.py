@@ -311,3 +311,65 @@ async def test_un_modelo_que_no_responde_nada_no_pierde_el_turno(
     )
     mensaje = respuesta.json()["message"]
     assert "no devolvió respuesta" in mensaje["content"]
+
+
+def test_un_modelo_que_no_esta_configurado_se_rechaza(
+    crear_cliente: Callable[..., TestClient],
+) -> None:
+    """Caer en silencio al default daría una respuesta peor sin ninguna señal —
+    justo lo que se quería evitar al hacer el cambio de modelo explícito."""
+    cliente = crear_cliente(turns=[text_turn("Listo.")])
+    conversacion = cliente.post("/api/v1/conversations", json={}, headers=AUTH).json()
+    respuesta = cliente.post(
+        f"/api/v1/conversations/{conversacion['id']}/messages?wait=true",
+        json={"content": "hola", "model": "gpt-4"},
+        headers=AUTH,
+    )
+
+    assert respuesta.status_code == 400
+    detalle = respuesta.json()["error"]["message"]
+    assert "gpt-4" in detalle
+    assert "Disponibles" in detalle, "hay que decir cuáles sí están"
+
+
+def test_sin_pedir_modelo_se_usa_el_default(crear_cliente: Callable[..., TestClient]) -> None:
+    """El campo es opcional: quien no lo manda no tiene que enterarse de que
+    existe."""
+    cliente = crear_cliente(turns=[text_turn("Listo.")])
+    conversacion = cliente.post("/api/v1/conversations", json={}, headers=AUTH).json()
+    respuesta = cliente.post(
+        f"/api/v1/conversations/{conversacion['id']}/messages?wait=true",
+        json={"content": "hola"},
+        headers=AUTH,
+    )
+    assert respuesta.status_code == 200
+
+
+def test_un_modelo_sin_grafo_cae_al_default_en_vez_de_fallar() -> None:
+    """El run ya está en curso y el mensaje del usuario ya se guardó: perderlo
+    por un nombre que no se registró sería peor que responder con el de siempre.
+    La ruta valida antes, que es donde todavía se puede avisar."""
+    from agent.runner import Run, RunManager
+
+    manager = RunManager("grafo-default", repository=None, tokens=None)  # type: ignore[arg-type]
+    manager.registrar_grafo("otro:8b", "grafo-otro")
+
+    assert manager._grafo_de(Run(id="r", conversation_id="c", credential_id="k")) == "grafo-default"
+    assert (
+        manager._grafo_de(Run(id="r", conversation_id="c", credential_id="k", modelo="otro:8b"))
+        == "grafo-otro"
+    )
+    # Uno que no se registró: el default, no una excepción.
+    assert (
+        manager._grafo_de(Run(id="r", conversation_id="c", credential_id="k", modelo="fantasma"))
+        == "grafo-default"
+    )
+
+
+def test_los_modelos_alternativos_se_listan_en_health(
+    crear_cliente: Callable[..., TestClient],
+) -> None:
+    """Es lo que el CLI lee para `/model` sin conocer la configuración."""
+    cliente = crear_cliente(turns=[text_turn("ok")])
+    detalles = cliente.get("/api/v1/health/details", headers=AUTH).json()
+    assert detalles["models"][0] == detalles["model"], "el activo va primero"

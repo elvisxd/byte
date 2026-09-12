@@ -294,7 +294,7 @@ def test_un_error_de_la_api_no_cierra_el_chat(
     fallos = {"quedan": 1}
     original = byte_cli._preguntar_en_vivo
 
-    def a_veces_falla(byte, conversacion, pregunta, safe):  # noqa: ANN001, ANN202
+    def a_veces_falla(byte, conversacion, pregunta, safe, *_):  # noqa: ANN001, ANN202
         if fallos["quedan"]:
             fallos["quedan"] -= 1
             raise RuntimeError("la API se cayó")
@@ -315,7 +315,7 @@ def test_ctrl_c_corta_la_respuesta_pero_no_la_sesion(
     interrumpir = {"quedan": 1}
     original = byte_cli._preguntar_en_vivo
 
-    def a_veces_interrumpe(byte, conversacion, pregunta, safe):  # noqa: ANN001, ANN202
+    def a_veces_interrumpe(byte, conversacion, pregunta, safe, *_):  # noqa: ANN001, ANN202
         if interrumpir["quedan"]:
             interrumpir["quedan"] -= 1
             raise KeyboardInterrupt
@@ -561,7 +561,7 @@ def test_buscar_en_los_documentos_sin_salir(
     """
     llamadas: list[str] = []
 
-    def espiar(byte, conversacion, pregunta, safe):  # noqa: ANN001, ANN202
+    def espiar(byte, conversacion, pregunta, safe, *_):  # noqa: ANN001, ANN202
         llamadas.append(pregunta)
         return {"message": {"content": "Listo.", "metadata": {}}}
 
@@ -590,7 +590,7 @@ def test_el_modo_seguro_del_chat_llega_a_la_pregunta(
     monkeypatch.setattr(
         byte_cli,
         "_preguntar_en_vivo",
-        lambda b, c, p, safe: (vistos.append(safe), original(b, c, p, safe))[1],
+        lambda b, c, p, safe, *a: (vistos.append(safe), original(b, c, p, safe, *a))[1],
     )
     _tecleado(monkeypatch, "antes", "/safe", "después")
     assert cli() == 0
@@ -1148,3 +1148,93 @@ def test_la_duracion_pasa_a_minutos() -> None:
     assert _duracion(59) == "59s"
     assert _duracion(60) == "1m"
     assert _duracion(125) == "2m 5s"
+
+
+# --- Cambiar de modelo (/model) ---
+
+
+class ByteConModelos:
+    """Un cliente que responde /health/details con la lista de modelos."""
+
+    def __init__(self, modelos: list[str]) -> None:
+        self._modelos = modelos
+        self.pedidos: list[tuple[str, str]] = []
+
+    def pedir(self, metodo: str, ruta: str, **_kwargs: object) -> dict:
+        self.pedidos.append((metodo, ruta))
+        return {"model": self._modelos[0], "models": self._modelos}
+
+
+def test_model_lista_y_marca_el_activo(capsys) -> None:
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b", "granite4.1:8b"]), "", sesion)
+    salida = capsys.readouterr().out
+    assert "qwen3:8b" in salida and "granite4.1:8b" in salida
+    assert "active" in salida
+
+
+def test_model_acepta_un_prefijo(capsys) -> None:
+    """Los nombres llevan versión y tag: escribir `granite4.1:8b` entero cada
+    vez que se cambia de modelo es fricción que no aporta nada."""
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b", "granite4.1:8b"]), "granite", sesion)
+    assert sesion.modelo == "granite4.1:8b"
+    assert "now using granite4.1:8b" in capsys.readouterr().out
+
+
+def test_model_avisa_lo_que_cuesta_cambiar(capsys) -> None:
+    """En una máquina donde no entran dos modelos en memoria, Ollama desaloja
+    uno para cargar el otro y la primera respuesta tarda ~27 s más. Sin el
+    aviso, parece que Byte se colgó."""
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b", "granite4.1:8b"]), "granite", sesion)
+    assert "longer" in capsys.readouterr().out
+
+
+def test_un_prefijo_ambiguo_no_elige_por_su_cuenta(capsys) -> None:
+    """Con dos candidatos, elegir uno sería adivinar qué quiso decir."""
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b", "qwen2.5-coder:7b"]), "qwen", sesion)
+    assert sesion.modelo == ""
+    assert "several" in capsys.readouterr().out
+
+
+def test_el_nombre_exacto_gana_sobre_el_prefijo(capsys) -> None:
+    """`qwen3:8b` es prefijo de `qwen3:8b-extra`: sin la coincidencia exacta
+    primero, escribir el nombre entero caería en "matches several". Quien lo
+    escribe entero no está pidiendo que se adivine.
+
+    El activo es otro, para que el cambio tenga efecto que verificar."""
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    # El primero de la lista es el activo, así que se pide uno distinto.
+    cliente = ByteConModelos(["granite4.1:8b", "qwen3:8b", "qwen3:8b-extra"])
+    cli._cambiar_de_modelo(cliente, "qwen3:8b", sesion)
+    assert sesion.modelo == "qwen3:8b"
+
+
+def test_un_modelo_que_no_esta_dice_cuales_hay(capsys) -> None:
+    import cli.byte_cli as cli
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b"]), "gpt-4", sesion)
+    salida = capsys.readouterr().out
+    assert sesion.modelo == ""
+    assert "qwen3:8b" in salida
+
+
+def test_con_un_solo_modelo_se_dice_como_agregar_otro(capsys) -> None:
+    """Listar una lista de uno no ayuda; lo que falta saber es cómo sumar."""
+    import cli.byte_cli as cli
+
+    cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b"]), "", cli.Sesion("c1", safe=False))
+    assert "OLLAMA_MODELS_DISPONIBLES" in capsys.readouterr().out

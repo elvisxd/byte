@@ -143,6 +143,18 @@ async def create_message(
             status_code=413,
         )
 
+    # El modelo pedido se valida acá, con el resto de lo que puede rechazar el
+    # pedido: un nombre que no está configurado tiene que decirse. Caer en
+    # silencio al default daría una respuesta peor sin ninguna señal, que es lo
+    # que se quería evitar al hacer el cambio explícito.
+    if payload.model and payload.model not in ctx.runs.modelos():
+        disponibles = ", ".join([ctx.settings.ollama_model, *ctx.runs.modelos()])
+        raise ByteError(
+            "validation_error",
+            f"El modelo '{payload.model}' no está configurado. Disponibles: {disponibles}",
+            status_code=400,
+        )
+
     # Los chequeos que pueden rechazar el pedido (aprobación pendiente, run en
     # curso, tope de concurrencia) van ANTES de guardar: si no, queda un mensaje
     # del usuario sin ningún run que lo responda. Y si había una aprobación
@@ -155,7 +167,9 @@ async def create_message(
     if conversation is not None and conversation.title == "Conversación nueva":
         await ctx.repository.set_title(conversation_id, title_from_content(content), owner)
 
-    run = await ctx.runs.start(conversation_id, credential, content, safe_mode=payload.safe_mode)
+    run = await ctx.runs.start(
+        conversation_id, credential, content, safe_mode=payload.safe_mode, modelo=payload.model
+    )
 
     if wait:
         await ctx.runs.wait(run)

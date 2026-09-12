@@ -79,3 +79,18 @@ Sigue en pie: mismo mapeo de comandos, cliente generado desde el OpenAPI con
 `oapi-codegen`, y el streaming token a token por SSE que este no usa (para un
 comando de una sola vuelta, `?wait=true` alcanza). Este CLI existe para poder
 usar Byte desde la terminal mientras tanto.
+
+## `/model` — cambiar de modelo sin perder la conversación
+
+`/model` lista los configurados y marca el activo; `/model granite` cambia para
+lo que resta de la charla. Se acepta un prefijo porque los nombres llevan
+versión y tag, pero un nombre exacto siempre gana sobre cualquier prefijo que
+también encaje, y uno ambiguo no elige por su cuenta.
+
+El cambio es explícito a propósito. En una máquina donde no entran dos modelos
+en memoria, Ollama desaloja uno para cargar el otro: **la primera respuesta
+después de cambiar tarda ~27 s más**, y el comando lo avisa para que no parezca
+que se colgó. Automatizarlo con un clasificador pagaría ese precio cada vez que
+dudara, sin que se vea por qué.
+
+Qué modelo conviene para qué está medido en `evals/COMPARACION.md`.

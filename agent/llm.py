@@ -10,17 +10,20 @@ from api.logging import get_logger
 logger = get_logger("agent.llm")
 
 
-def build_llm(settings: Settings) -> Any:
+def build_llm(settings: Settings, modelo: str = "") -> Any:
     """ChatOllama con el contexto y el tope de tokens explícitos.
 
     Ollama arranca en 4.096 tokens de contexto aunque el modelo soporte más, así
     que `num_ctx` se setea siempre. `num_predict` acota el gasto por respuesta.
+
+    `modelo` permite armar un cliente para un modelo alternativo sin tocar la
+    configuración: es lo que usa el cambio en caliente.
     """
     from langchain_ollama import ChatOllama
 
     return ChatOllama(
         base_url=settings.ollama_base_url,
-        model=settings.ollama_model,
+        model=modelo or settings.ollama_model,
         num_ctx=settings.ollama_num_ctx,
         num_predict=settings.ollama_num_predict,
         temperature=0.2,
