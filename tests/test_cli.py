@@ -1238,3 +1238,42 @@ def test_con_un_solo_modelo_se_dice_como_agregar_otro(capsys) -> None:
 
     cli._cambiar_de_modelo(ByteConModelos(["qwen3:8b"]), "", cli.Sesion("c1", safe=False))
     assert "OLLAMA_MODELS_DISPONIBLES" in capsys.readouterr().out
+
+
+# --- El marco del prompt ---
+
+
+def test_el_marco_deja_el_prompt_en_su_propia_linea(monkeypatch) -> None:
+    """`\033[F` deja el cursor en la **columna 0** de la línea anterior, así que
+    sin una línea vacía en el medio el `❯` se escribiría encima de la primera
+    regla en vez de quedar entre las dos."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    marco = cli._marco_del_prompt()
+    sin_color = re.sub(r"\033\[[0-9;]*m", "", marco)
+    assert sin_color.startswith("─"), "falta la regla de arriba"
+    assert "\n\n" in sin_color, "falta la línea donde va el prompt"
+    assert sin_color.endswith("\033[F"), "no vuelve a la línea del prompt"
+
+
+def test_la_regla_no_llena_la_terminal(monkeypatch) -> None:
+    """`─` es de ancho "ambiguo" en Unicode y hay terminales que lo pintan
+    doble: una regla del ancho completo envuelve en esas, ocupa dos líneas, y
+    el borrado —que cuenta líneas— deja un resto colgado sobre la pregunta."""
+    import shutil
+
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda _d=None: os.terminal_size((80, 24)))
+    regla = re.sub(r"\033\[[0-9;]*m", "", cli._marco_del_prompt()).split("\n")[0]
+    assert len(regla) <= 40, f"la regla ocupa {len(regla)} de 80 columnas y puede envolver"
+
+
+def test_sin_terminal_no_se_dibuja_el_marco(monkeypatch) -> None:
+    """Redirigido a un archivo, el marco sería ruido."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
+    assert cli._marco_del_prompt() == ""

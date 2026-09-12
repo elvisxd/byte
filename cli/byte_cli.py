@@ -711,7 +711,7 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     armado = False  # un Ctrl-C ya recibido: el próximo cierra
     while sesion.seguir:
         try:
-            entrada = input(prompt).strip()
+            entrada = input(_marco_del_prompt() + prompt).strip()
         except EOFError:  # Ctrl-D
             print()
             break
@@ -994,6 +994,42 @@ def _preguntar_en_vivo(
     }
 
 
+def _marco_del_prompt() -> str:
+    """Las dos reglas que enmarcan dónde se escribe.
+
+    En una conversación larga, el `❯` solo se pierde entre el texto de la
+    respuesta anterior: cuesta encontrar dónde termina lo que leíste y empieza
+    lo que vas a escribir. Dos reglas de ancho completo lo resuelven sin
+    depender del color, que no todas las terminales pintan igual.
+
+    **Las dos van antes del prompt, no una arriba y otra abajo.** `input()`
+    escribe donde está el cursor y no puede dibujar por debajo: la regla de
+    abajo se pinta primero, se sube con `\033[F` y el prompt queda entre las
+    dos. Al apretar Enter el cursor baja a esa segunda regla y la reemplaza —
+    por eso `_eco_de_la_pregunta` borra dos líneas y no una.
+
+    Sin terminal no se dibuja: redirigido a un archivo sería ruido.
+    """
+    if not _en_pantalla():
+        return ""
+    # Dos columnas de margen, no una. `─` es de ancho "ambiguo" en Unicode: hay
+    # terminales que lo pintan doble, y una regla que llena la línea justo hace
+    # que envuelva — entonces el `\033[F` sube a la línea equivocada y el prompt
+    # queda arriba del marco en vez de adentro. Dos columnas lo evitan sin
+    # cambiar el carácter, que es el que da el aspecto que se busca.
+    # La mitad del ancho, redondeando: `─` es de ancho "ambiguo" en Unicode y hay
+    # terminales que lo pintan doble. Con el ancho completo la regla envuelve en
+    # esas, ocupa dos líneas, y el borrado del marco —que cuenta líneas— deja un
+    # resto colgado sobre la pregunta. A la mitad entra siempre, y como separador
+    # visual cumple igual.
+    ancho = max(20, shutil.get_terminal_size((80, 24)).columns // 2)
+    regla = _color("─" * ancho, GRIS)
+    # Tres líneas: regla, una vacía donde va el prompt, y la regla de abajo. El
+    # `\033[F` deja el cursor en la **columna 0** de la línea anterior, así que
+    # sin la línea vacía el `❯` se escribiría encima de la primera regla.
+    return f"{regla}\n\n{regla}\033[F"
+
+
 def _eco_de_la_pregunta(pregunta: str) -> None:
     """Reescribe la pregunta como un bloque con fondo, arriba de su respuesta.
 
@@ -1020,9 +1056,13 @@ def _eco_de_la_pregunta(pregunta: str) -> None:
 
     ancho = shutil.get_terminal_size((80, 24)).columns
     if "\n" not in pregunta:
-        # Lo que ocupó el prompt ("❯ ") más la pregunta, ajustado al ancho.
+        # El marco son tres líneas —regla, prompt, regla— y al apretar Enter el
+        # cursor queda sobre la de abajo. Se borra esa, después lo tipeado (que
+        # puede ocupar más de una línea por el ajuste al ancho), y por último la
+        # regla de arriba: sin eso queda flotando sobre el bloque.
+        sys.stdout.write("\r\033[2K")
         ocupadas = max(1, -(-(len(pregunta) + 2) // ancho))
-        sys.stdout.write("\033[F\033[2K" * ocupadas)
+        sys.stdout.write("\033[F\033[2K" * (ocupadas + 1))
 
     print()
     for linea in _envolver(pregunta, ancho - 4) or [""]:
