@@ -83,6 +83,24 @@ def _fragmento(id_respuesta: str, modelo: str, delta: dict[str, Any], fin: str |
     return f"data: {json.dumps(cuerpo, ensure_ascii=False)}\n\n"
 
 
+async def _cerrar_pausado(ctx: Context, run: Any) -> None:
+    """Cierra un run que quedó esperando aprobación, como si se hubiera rechazado.
+
+    `RunManager.cancel` no sirve acá: `Run.finished` incluye "paused", así que
+    sale sin hacer nada y el run queda vivo con su interrupt de LangGraph
+    colgando hasta que lo purgue el TTL. `resume(run, False)` es el camino que
+    ya existe para decir que no, y deja el hilo del agente consistente.
+
+    Si algo falla al cerrarlo no se propaga: quien llamó ya tiene su respuesta y
+    el run igual se purga solo.
+    """
+    try:
+        await ctx.runs.resume(run, False)
+        await ctx.runs.wait(run)
+    except Exception:  # noqa: BLE001 - cerrar es best-effort, el TTL es la red
+        logger.warning("openai_run_pausado_sin_cerrar", run_id=run.id)
+
+
 @router.get("/models", response_model=OpenAIModelList)
 async def list_models(ctx: Context, _credential: CredentialId) -> OpenAIModelList:
     """Lo que los clientes llaman para poblar su selector de modelos."""
@@ -128,7 +146,9 @@ async def chat_completions(
     # completo cada vez y no tiene dónde guardar un id de Byte. Quedan en la
     # base como cualquier otra, así que se ven en la web y en `byte conversations`.
     conversacion = await ctx.repository.create_conversation(f"[openai] {contenido[:60]}")
-    await ctx.runs.preparar(conversacion.id, credential)
+    # Sin `preparar` acá: `RunManager.start` ya lo llama, y la conversación
+    # recién creada no puede tener un run en curso ni una aprobación pendiente.
+    # Llamarlo dos veces duplicaba un viaje al checkpointer por pedido.
     await ctx.repository.add_message(conversacion.id, "user", contenido)
     run = await ctx.runs.start(conversacion.id, credential, contenido, safe_mode=False)
 
@@ -144,10 +164,15 @@ async def chat_completions(
     await ctx.runs.wait(run)
     if run.status == "paused":
         # El modo seguro no tiene forma de expresarse en el formato de OpenAI:
-        # no hay a quién preguntarle del otro lado. Se aborta el run y se dice
-        # por qué, en vez de dejar al cliente esperando una respuesta que no va
-        # a llegar.
-        await ctx.runs.cancel(run)
+        # no hay a quién preguntarle del otro lado. Se cierra el run como un
+        # rechazo y se dice por qué, en vez de dejar al cliente esperando una
+        # respuesta que no va a llegar.
+        #
+        # `resume(run, False)` y no `cancel`: `cancel` no hace nada sobre un run
+        # pausado (`Run.finished` incluye "paused" y sale temprano), así que el
+        # run quedaba vivo con su interrupt de LangGraph colgando hasta que lo
+        # purgara el TTL, una hora después.
+        await _cerrar_pausado(ctx, run)
         raise ByteError(
             "approval_required",
             "El run necesita una aprobación humana, que este endpoint no puede pedir. "
@@ -190,6 +215,7 @@ async def _stream(ctx: Context, run: Any, id_respuesta: str, modelo: str) -> Asy
     """
     cola = run.add_subscriber()
     ultimo = 0
+    fallo = False
     try:
         yield _fragmento(id_respuesta, modelo, {"role": "assistant", "content": ""}, None)
 
@@ -216,14 +242,27 @@ async def _stream(ctx: Context, run: Any, id_respuesta: str, modelo: str) -> Asy
                 yield _fragmento(id_respuesta, modelo, {"content": evento.data["delta"]}, None)
             elif evento.type == AGUI.RUN_ERROR:
                 logger.warning("openai_stream_run_error", run_id=run.id)
+                fallo = True
                 break
 
         fin = "stop"
-        if run.status == "paused":
+        if fallo or run.status == "error":
+            # Con el stream ya abierto no se puede cambiar el código HTTP, así
+            # que el error se dice donde el usuario lo va a leer. Sin esto el
+            # cliente recibe un 200 con la burbuja vacía y parece que el modelo
+            # no tuvo nada que decir.
+            fin = "stop"
+            yield _fragmento(
+                id_respuesta,
+                modelo,
+                {"content": "\n\n[El run falló del lado de Byte: revisá sus logs.]"},
+                None,
+            )
+        elif run.status == "paused":
             # Igual que sin streaming: no hay a quién preguntarle. El run se
-            # corta y el cliente ve una respuesta terminada por longitud, que es
-            # lo más cercano que el formato permite decir.
-            await ctx.runs.cancel(run)
+            # cierra como rechazo y el cliente ve una respuesta terminada por
+            # longitud, que es lo más cercano que el formato permite decir.
+            await _cerrar_pausado(ctx, run)
             fin = "length"
             yield _fragmento(
                 id_respuesta,

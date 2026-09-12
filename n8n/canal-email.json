@@ -29,11 +29,12 @@
           "conditions": [
             {
               "id": "f1000000-0000-4000-8000-000000000001",
-              "leftValue": "={{ $json.from }}",
-              "rightValue": "={{ $env.BYTE_EMAIL_PERMITIDOS }}",
+              "leftValue": "={{ ($env.BYTE_EMAIL_PERMITIDOS || '').split(',').map(d => d.trim().toLowerCase()).filter(Boolean).includes((($json.from || '').match(/<([^>]+)>/) || [null, $json.from || ''])[1].trim().toLowerCase()) }}",
+              "rightValue": true,
               "operator": {
-                "type": "string",
-                "operation": "contains"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
@@ -49,7 +50,7 @@
       ],
       "id": "e1000000-0000-4000-8000-000000000002",
       "name": "¿Remitente permitido?",
-      "notes": "**Esta condición es la seguridad del flujo.** Sin ella, cualquiera que sepa la dirección le habla al agente: le gasta el modelo, le hace buscar en la web y le llena el historial. Peor todavía, el cuerpo de un correo es texto de un desconocido que entra al prompt.\n\n`BYTE_EMAIL_PERMITIDOS` es la lista de direcciones separadas por coma. Byte trata el contenido como no confiable igual, pero eso protege del prompt injection, no de que alguien use tu modelo."
+      "notes": "**Esta condición es la seguridad del flujo.** Sin ella, cualquiera que sepa la dirección le habla al agente: le gasta el modelo, le hace buscar en la web y le llena el historial. Peor todavía, el cuerpo de un correo es texto de un desconocido que entra al prompt.\n\n`BYTE_EMAIL_PERMITIDOS` es la lista de direcciones separadas por coma.\n\nCompara la dirección **extraída de los ángulos** contra la lista como elemento exacto, no el From entero como subcadena: un `contains` dejaría entrar a `\\\"jefe@empresa.com\\\" <atacante@evil.com>`, porque el nombre para mostrar lo escribe quien manda el correo.\n\nByte trata el contenido como no confiable igual, pero eso protege del prompt injection, no de que alguien use tu modelo."
     },
     {
       "parameters": {

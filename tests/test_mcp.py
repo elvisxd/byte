@@ -246,6 +246,21 @@ def test_los_campos_extra_llegan_si_el_servidor_los_acepta() -> None:
     }
 
 
+def test_sin_additionalProperties_no_se_manda_lo_que_el_modelo_invento() -> None:
+    """La mayoría de los servidores —el SDK oficial incluido— no emiten la
+    clave, y tratar esa ausencia como permiso dejaba pasar sin validar todo lo
+    que el modelo inventara: justo lo que este módulo tiene que evitar.
+
+    Solo `true` explícito abre la puerta.
+    """
+    modelo = _modelo_de_argumentos(
+        "tipica",
+        {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]},
+    )
+    valores = modelo.model_validate({"a": 1, "inventado": "lo que sea"})
+    assert valores.model_dump(exclude_none=True) == {"a": 1}
+
+
 def test_un_servidor_estricto_no_recibe_lo_que_no_declaro() -> None:
     """Con `additionalProperties: false` el servidor dijo que no acepta extras:
     mandárselos igual sería un error garantizado del otro lado."""
@@ -424,3 +439,15 @@ async def test_un_servidor_con_token_manda_el_header(monkeypatch: pytest.MonkeyP
     assert servidor._token == "secreto"
     sin_token = ServidorMCP("otro", "http://otro.invalid/mcp", 5.0)
     assert sin_token._token == ""
+
+
+def test_el_stream_de_un_servidor_con_token_no_se_corta_en_las_pausas() -> None:
+    """Por esa conexión viaja el SSE que el servidor deja abierto entre
+    mensajes. Con un read timeout corto se cortaba en la primera pausa larga y,
+    tras dos reintentos, el servidor quedaba inutilizable — y solo en la
+    configuración con token, que es justo la que la documentación recomienda
+    para n8n.
+    """
+    from mcp_client.client import LECTURA_SSE_S
+
+    assert LECTURA_SSE_S >= 300, "una pausa normal del servidor cortaría la conexión"

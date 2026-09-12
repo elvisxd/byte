@@ -119,7 +119,8 @@ Va montado en `/v1` y no en `/api/v1`: los clientes arman la URL pegando `/chat/
 - Solo se usa el **último mensaje del usuario**: el historial lo maneja Byte con su checkpointer y su compactación, así que reenviar la conversación entera (lo que hacen estos clientes) duplicaría lo que el agente ya tiene.
 - `temperature`, `top_p`, `n`, `seed` y demás se **aceptan y se ignoran**: esos valores los decide la configuración de Byte. Un 422 rompería a los clientes sin ganar nada.
 - `usage` va en cero: un run son varias llamadas al modelo y sumarlas sería inventar. El campo está porque varios clientes rompen si falta.
-- El **modo seguro no se puede expresar** en este formato — no hay a quién preguntarle del otro lado. Si un run queda esperando aprobación, se corta: `409 approval_required` sin streaming, y con streaming una nota en el texto y `finish_reason: "length"`.
+- El **modo seguro no se puede expresar** en este formato — no hay a quién preguntarle del otro lado. Si un run queda esperando aprobación se cierra como un rechazo (`resume(run, False)`, no `cancel`: sobre un run pausado `cancel` no hace nada y dejaría el interrupt colgando hasta el TTL): `409 approval_required` sin streaming, y con streaming una nota en el texto y `finish_reason: "length"`.
+- Un run que **falla** con el stream abierto se dice en el texto, porque el código HTTP ya se mandó. El cliente ve la explicación en la burbuja en vez de una respuesta vacía.
 - Cada pedido crea una conversación (`[openai] …`), que se ve después en la web y en `byte conversations`.
 
 Verificado con el **SDK oficial de OpenAI** (3.13.0) contra el stack local: `models.list()`, una respuesta completa y una con `stream=True` (9 chunks, `finish_reason: stop`), incluida una que usó `web_search`.

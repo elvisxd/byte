@@ -49,6 +49,11 @@ TIPOS = {
 MAX_NOMBRE = 64
 MAX_DESCRIPCION = 1024
 
+# Cuánto puede quedarse callado el stream SSE de un servidor MCP antes de que se
+# considere caído. No es el timeout de una llamada: es el de una conexión que el
+# servidor deja abierta y usa cuando tiene algo que decir.
+LECTURA_SSE_S = 300.0
+
 
 def _modelo_de_argumentos(nombre: str, esquema: dict[str, Any]) -> type[BaseModel]:
     """Un modelo Pydantic desde el JSON Schema que declara el servidor.
@@ -77,7 +82,12 @@ def _modelo_de_argumentos(nombre: str, esquema: dict[str, Any]) -> type[BaseMode
     # objeto vacío: la herramienta falla y nadie ve por qué. Medido con el MCP
     # Server Trigger de n8n, que expone `{input}` con additionalProperties y
     # describe los campos de verdad en el texto de la herramienta.
-    extra = "allow" if esquema.get("additionalProperties") is not False else "ignore"
+    #
+    # Solo con `true` explícito: la mayoría de los servidores —el SDK oficial
+    # incluido— no emiten la clave, y tratar esa ausencia como permiso dejaría
+    # pasar sin validar todo lo que el modelo invente, que es justo lo que este
+    # módulo tiene que evitar.
+    extra = "allow" if esquema.get("additionalProperties") is True else "ignore"
     return create_model(f"{nombre}Args", __config__=ConfigDict(extra=extra), **campos)
 
 
@@ -152,9 +162,14 @@ class ServidorMCP:
         —el MCP Server Trigger de n8n, por ejemplo— responde 401.
         """
         if self._token:
+            # El read timeout va largo a propósito: por esa conexión viaja el
+            # stream SSE que el servidor mantiene abierto entre mensajes, y un
+            # timeout corto lo cortaría en cada pausa. El SDK usa 300 s por lo
+            # mismo. `timeout_s` sigue acotando conectar, escribir y el pool,
+            # que sí son operaciones que terminan.
             self._http = httpx.AsyncClient(
                 headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self.timeout_s,
+                timeout=httpx.Timeout(self.timeout_s, read=max(self.timeout_s, LECTURA_SSE_S)),
             )
             transporte = streamable_http_client(self.url, http_client=self._http)
             cliente = Client(transporte, read_timeout_seconds=self.timeout_s)

@@ -14,6 +14,7 @@ from collections.abc import Callable
 import pytest
 from starlette.testclient import TestClient
 
+from agent import runner as byte_runner
 from tests.fakes import text_turn, tool_turn
 
 AUTH = {"X-API-Key": "clave-de-prueba"}
@@ -256,3 +257,57 @@ def test_con_streaming_la_pausa_se_explica_en_el_texto(
     assert "aprobación humana" in texto
     assert trozos[-1]["choices"][0]["finish_reason"] == "length"
     assert respuesta.text.rstrip().endswith("data: [DONE]")
+
+
+# --- Lo que salió de revisar la fase ---
+
+
+def test_un_run_que_falla_lo_dice_en_el_stream(
+    crear_cliente: Callable[..., TestClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Con el stream ya abierto no se puede cambiar el código HTTP, así que el
+    error tiene que ir en el texto.
+
+    Sin esto el cliente recibe un 200 con `finish_reason: "stop"` y la burbuja
+    vacía: parece que el modelo no tuvo nada que decir, y el usuario no se
+    entera de que Byte falló.
+    """
+    cliente = crear_cliente(turns=[text_turn("Listo.")])
+    monkeypatch.setenv("BYTE_API_KEY", "clave-de-prueba")
+
+    async def romper(self, run, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        from agent.events import AGUI
+
+        run.emit(AGUI.RUN_ERROR, {"message": "ollama no responde"})
+        run.status = "error"
+
+    monkeypatch.setattr(byte_runner.RunManager, "_execute", romper, raising=False)
+    respuesta = cliente.post(
+        "/v1/chat/completions",
+        json={"model": "byte", "stream": True, "messages": [{"role": "user", "content": "hola"}]},
+        headers=BEARER,
+    )
+    texto = "".join(t["choices"][0]["delta"].get("content", "") for t in _trozos(respuesta))
+    assert "falló" in texto, f"el error no llegó al cliente: {texto!r}"
+    assert respuesta.text.rstrip().endswith("data: [DONE]")
+
+
+def test_un_run_pausado_no_queda_colgado(
+    cliente_que_pide_permiso: TestClient,
+) -> None:
+    """`RunManager.cancel` no hace nada sobre un run pausado (`Run.finished`
+    incluye "paused"), así que el run quedaba vivo con su interrupt de LangGraph
+    hasta que lo purgara el TTL, una hora después.
+
+    El endpoint dice que lo aborta: tiene que ser cierto.
+    """
+    respuesta = cliente_que_pide_permiso.post(
+        "/v1/chat/completions",
+        json={"model": "byte", "messages": [{"role": "user", "content": "buscá y ejecutá"}]},
+        headers=BEARER,
+    )
+    assert respuesta.status_code == 409
+
+    runs = cliente_que_pide_permiso.app.state.ctx.runs
+    pausados = [r for r in runs._runs.values() if r.status == "paused"]
+    assert pausados == [], f"quedó un run esperando aprobación que nadie va a dar: {pausados}"

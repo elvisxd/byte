@@ -9,7 +9,8 @@ Se llama `mcp_client` y no `mcp` porque ese nombre es el del paquete oficial
 
 Solo se conectan servidores declarados en la configuración. Las descripciones
 de sus herramientas son **contenido externo no confiable** (tool poisoning,
-`docs/seguridad-byte.md`) y se envuelven antes de que las lea el modelo.
+`docs/seguridad-byte.md`): se sanean y se atribuyen al servidor, y el resultado
+de cada llamada sí se envuelve. El porqué de esa diferencia está más abajo.
 
 ## Cómo conectar un servidor
 

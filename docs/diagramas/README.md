@@ -2,13 +2,20 @@
 
 Dos diagramas del sistema, como páginas HTML que se abren en el navegador:
 
-| Archivo | Qué muestra |
-|---|---|
+| Archivo             | Qué muestra                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------- |
 | `arquitectura.html` | El sistema completo: de dónde entra un pedido hasta el modelo, las herramientas y la base |
-| `n8n.html` | Las conexiones con n8n, en las dos direcciones |
+| `n8n.html`          | Las conexiones con n8n, en las dos direcciones                                            |
 
 Se abren con doble clic, sin servidor ni dependencias: cada uno es un archivo
-solo. Traen recorridos guiados (arriba a la izquierda), búsqueda, modo oscuro y
+solo. Desde la terminal, en macOS:
+
+```bash
+open docs/diagramas/arquitectura.html
+open docs/diagramas/n8n.html
+```
+
+Traen recorridos guiados (arriba a la izquierda), búsqueda, modo oscuro y
 exportación a PNG/SVG.
 
 ## Regenerarlos
