@@ -73,16 +73,28 @@ def test_el_modelo_de_otro_proveedor_se_rechaza(cliente: TestClient) -> None:
     assert _pedir(cliente, model="gpt-4-turbo").status_code == 404
 
 
+def _modelo_configurado() -> str:
+    """El modelo de la instancia, leído de la configuración.
+
+    Escrito a mano acá, estos dos tests se rompían con solo cambiar
+    `OLLAMA_MODEL` —algo que ahora es normal hacer— aunque el endpoint
+    estuviera perfecto. Un test que falla por una decisión de configuración
+    válida no está midiendo nada del código."""
+    from api.config import Settings
+
+    return Settings().ollama_model
+
+
 def test_los_modelos_se_listan_para_el_selector_del_cliente(cliente: TestClient) -> None:
     cuerpo = cliente.get("/v1/models", headers=BEARER).json()
     assert cuerpo["object"] == "list"
-    assert {m["id"] for m in cuerpo["data"]} == {"byte", "qwen3:8b"}
+    assert {m["id"] for m in cuerpo["data"]} == {"byte", _modelo_configurado()}
     assert all(m["object"] == "model" for m in cuerpo["data"])
 
 
 def test_el_nombre_real_del_modelo_tambien_se_acepta(cliente: TestClient) -> None:
     """Quien ya lo tenga escrito en su cliente no debería tener que cambiarlo."""
-    assert _pedir(cliente, model="qwen3:8b").status_code == 200
+    assert _pedir(cliente, model=_modelo_configurado()).status_code == 200
 
 
 # --- La forma de la respuesta ---

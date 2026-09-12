@@ -31,3 +31,6 @@ data/
 .DS_Store
 scripts/node_modules/
 capturas/
+
+# El CV lleva teléfono y correo: queda fuera del repo hasta que se decida
+# publicarlo. `perfil/cv.md` se versiona aparte o se mantiene local.

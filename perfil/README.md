@@ -1,0 +1,28 @@
+# perfil/
+
+Lo que Byte sabe de vos: el CV, los proyectos y el estado del GitHub. Es la
+base de la que salen las respuestas cuando le pedís adaptar el CV a una oferta,
+escribir el README de un repo o revisar el perfil.
+
+**Por qué en archivos y no en la base de datos.** El agente ya sabe leer
+archivos (`read_file`, `grep`), así que esto no necesita herramientas nuevas; y
+un archivo se versiona con git, se revisa en un diff y se corrige a mano cuando
+el modelo se equivoca. Una fila en Postgres no tiene nada de eso.
+
+**El CV es tuyo, no del modelo.** Byte propone y mide; lo que se manda a una
+empresa lo aprobás vos. Nada acá se publica ni se envía solo.
+
+## Archivos
+
+| | qué es |
+|---|---|
+| `cv.md` | El CV en texto, la fuente de verdad. Los PDF salen de acá. |
+| `proyectos.md` | Un proyecto por bloque: qué es, qué prueba, números reales. |
+| `github.md` | Estado del perfil: qué repo es público, cuál tiene descripción. |
+
+## Cómo se mantiene
+
+Los números que envejecen —cantidad de tests, líneas, repos— se sacan del
+código con `perfil/actualizar.py`, no se escriben a mano. El CV en PDF decía
+"183 tests" cuando ya eran 459: un dato correcto el día que se escribió y falso
+tres semanas después.
