@@ -110,6 +110,36 @@ async def require_user(request: Request) -> User:
 CurrentUser = Annotated[User, Depends(require_user)]
 
 
+def owner_from_request(request: Request) -> str | None:
+    """El dueño de lo que se cree o se consulte en este request.
+
+    El `user_id` de la tabla `users` cuando alguien entró con un JWT, y `None`
+    cuando entró con la API key o la cookie: esas identifican a la instancia,
+    no a una persona, y `conversations.user_id` es `uuid REFERENCES users (id)`
+    — el `credential_id` no es un uuid y la FK lo rechazaría.
+
+    Ese `None` es el `SIN_USUARIO` de siempre, así que lo que existía antes del
+    multi-usuario sigue siendo visible con la API key y solo con ella. Un
+    usuario con JWT ve lo suyo y nada más.
+    """
+    ctx: AppContext | None = getattr(request.app.state, "ctx", None)
+    if ctx is None:
+        return None
+    return ctx.jwt.verify(_bearer(request))
+
+
+async def require_owner(request: Request, _credential: CredentialId) -> str | None:
+    """Como `owner_from_request`, pero exigiendo credencial válida primero.
+
+    Las rutas la usan en lugar de `CredentialId` a secas: autentica igual y
+    además dice de quién es lo que se toca.
+    """
+    return owner_from_request(request)
+
+
+OwnerId = Annotated[str | None, Depends(require_owner)]
+
+
 def rate_limit_key(request: Request) -> str:
     """El rate limit es por credencial; si no hay, por IP."""
     credential_id = credential_from_request(request)

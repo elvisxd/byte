@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, Request, UploadFile, status
 
-from api.deps import Context, CredentialId, limiter, runs_limit
+from api.deps import Context, OwnerId, limiter, runs_limit
 from api.errors import ByteError
 from api.logging import get_logger
 from models.schemas import (
@@ -22,7 +22,6 @@ from models.schemas import (
     SearchResults,
 )
 from rag.embeddings import EmbeddingError
-from rag.store import SIN_USUARIO
 
 router = APIRouter(tags=["documentos"])
 logger = get_logger("api.documents")
@@ -63,7 +62,7 @@ def _rag(ctx: Context) -> Any:
 async def subir_documento(
     request: Request,
     ctx: Context,
-    _credential: CredentialId,
+    owner: OwnerId,
     file: UploadFile = File(...),  # noqa: B008 - así se declara un upload en FastAPI
 ) -> DocumentInfo:
     rag = _rag(ctx)
@@ -86,7 +85,7 @@ async def subir_documento(
         filename=filename,
         size_bytes=len(data),
         mime_type=mime_type,
-        user_id=SIN_USUARIO,
+        user_id=owner,
     )
 
     # La respuesta se arma con lo que ya se sabe, sin releer la base: entre el
@@ -109,34 +108,34 @@ async def subir_documento(
 
 
 @router.get("/documents", response_model=DocumentList)
-async def listar_documentos(ctx: Context, _credential: CredentialId) -> DocumentList:
+async def listar_documentos(ctx: Context, owner: OwnerId) -> DocumentList:
     rag = _rag(ctx)
-    documentos = await rag.store.list_documents(SIN_USUARIO)
+    documentos = await rag.store.list_documents(owner)
     return DocumentList(items=[DocumentInfo.model_validate(doc) for doc in documentos])
 
 
 @router.get("/documents/{document_id}", response_model=DocumentInfo)
-async def ver_documento(document_id: str, ctx: Context, _credential: CredentialId) -> DocumentInfo:
+async def ver_documento(document_id: str, ctx: Context, owner: OwnerId) -> DocumentInfo:
     rag = _rag(ctx)
-    documento = await rag.store.get(document_id, SIN_USUARIO)
+    documento = await rag.store.get(document_id, owner)
     if documento is None:
         raise ByteError("not_found", "No existe ese documento", status_code=404)
     return DocumentInfo.model_validate(documento)
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def borrar_documento(document_id: str, ctx: Context, _credential: CredentialId) -> None:
+async def borrar_documento(document_id: str, ctx: Context, owner: OwnerId) -> None:
     rag = _rag(ctx)
     # Los chunks se van con el documento por el ON DELETE CASCADE: el borrado es
     # real, no lógico (docs/seguridad-byte.md).
-    if not await rag.store.delete(document_id, SIN_USUARIO):
+    if not await rag.store.delete(document_id, owner):
         raise ByteError("not_found", "No existe ese documento", status_code=404)
 
 
 @router.post("/search", response_model=SearchResults)
 @limiter.limit(runs_limit)
 async def buscar(
-    request: Request, payload: SearchRequest, ctx: Context, _credential: CredentialId
+    request: Request, payload: SearchRequest, ctx: Context, owner: OwnerId
 ) -> SearchResults:
     """La misma búsqueda híbrida que usa el agente, expuesta para `byte search`."""
     rag = _rag(ctx)
@@ -154,7 +153,7 @@ async def buscar(
         ) from exc
 
     hits = await rag.store.search(
-        query=payload.query, embedding=vector, user_id=SIN_USUARIO, top_k=payload.top_k
+        query=payload.query, embedding=vector, user_id=owner, top_k=payload.top_k
     )
     return SearchResults(
         results=[

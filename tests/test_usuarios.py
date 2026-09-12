@@ -217,3 +217,103 @@ def test_un_hash_invalido_no_explota() -> None:
 @pytest.mark.parametrize("valor", ["", "$argon2id$roto", "x" * 200])
 def test_ningun_hash_raro_rompe_el_login(valor: str) -> None:
     assert not Passwords().verify(valor, "cualquier-cosa")
+
+
+# --- Aislamiento entre usuarios ---
+#
+# Acá es donde el multi-usuario se vuelve real: hasta ahora el filtro existía
+# pero todos los call sites pasaban `SIN_USUARIO`. Estos prueban la API entera,
+# no el Repository: que la ruta le pase el dueño correcto es tan necesario como
+# que el filtro exista.
+
+OTRO = {"email": "beto@ejemplo.com", "password": "otra-contraseña-larga"}
+
+
+def _dos_usuarios(cliente: TestClient) -> tuple[dict[str, str], dict[str, str]]:
+    ana = _bearer(_token(cliente))
+    cliente.post("/api/v1/auth/register", json=OTRO)
+    beto = _bearer(cliente.post("/api/v1/auth/login", json=OTRO).json()["access_token"])
+    return ana, beto
+
+
+def test_no_se_ve_la_conversacion_de_otro(cliente: TestClient) -> None:
+    """404 y no 403: un 403 confirmaría que ese id existe, que es lo que un
+    IDOR necesita para enumerar."""
+    ana, beto = _dos_usuarios(cliente)
+    suya = cliente.post("/api/v1/conversations", json={"title": "privada"}, headers=ana).json()
+
+    assert cliente.get(f"/api/v1/conversations/{suya['id']}", headers=ana).status_code == 200
+    assert cliente.get(f"/api/v1/conversations/{suya['id']}", headers=beto).status_code == 404
+
+
+def test_no_se_borra_ni_se_renombra_la_conversacion_de_otro(cliente: TestClient) -> None:
+    ana, beto = _dos_usuarios(cliente)
+    suya = cliente.post("/api/v1/conversations", json={"title": "privada"}, headers=ana).json()
+
+    assert cliente.delete(f"/api/v1/conversations/{suya['id']}", headers=beto).status_code == 404
+    assert (
+        cliente.patch(
+            f"/api/v1/conversations/{suya['id']}", json={"title": "secuestrada"}, headers=beto
+        ).status_code
+        == 404
+    )
+    # Y sigue intacta para su dueña.
+    intacta = cliente.get(f"/api/v1/conversations/{suya['id']}", headers=ana).json()
+    assert intacta["title"] == "privada"
+
+
+def test_el_listado_no_mezcla_usuarios(cliente: TestClient) -> None:
+    ana, beto = _dos_usuarios(cliente)
+    cliente.post("/api/v1/conversations", json={"title": "de ana"}, headers=ana)
+    cliente.post("/api/v1/conversations", json={"title": "de beto"}, headers=beto)
+
+    def titulos(headers: dict[str, str]) -> list[str]:
+        return [
+            c["title"]
+            for c in cliente.get("/api/v1/conversations", headers=headers).json()["items"]
+        ]
+
+    assert titulos(ana) == ["de ana"]
+    assert titulos(beto) == ["de beto"]
+
+
+def test_no_se_escribe_en_la_conversacion_de_otro(cliente: TestClient) -> None:
+    """Mandar un mensaje a una conversación ajena la haría responder con el
+    historial de otro en el contexto."""
+    ana, beto = _dos_usuarios(cliente)
+    suya = cliente.post("/api/v1/conversations", json={"title": "privada"}, headers=ana).json()
+
+    intruso = cliente.post(
+        f"/api/v1/conversations/{suya['id']}/messages", json={"content": "hola"}, headers=beto
+    )
+    assert intruso.status_code == 404
+
+
+def test_no_se_lee_el_mensaje_de_otro_por_su_id(cliente: TestClient) -> None:
+    """`GET /messages/{id}` toma un id suelto: es el IDOR más directo."""
+    ana, beto = _dos_usuarios(cliente)
+    suya = cliente.post("/api/v1/conversations", json={"title": "privada"}, headers=ana).json()
+    enviado = cliente.post(
+        f"/api/v1/conversations/{suya['id']}/messages?wait=true",
+        json={"content": "algo privado"},
+        headers=ana,
+    )
+    assert enviado.status_code == 200
+    mensaje_id = enviado.json()["message"]["id"]
+
+    assert cliente.get(f"/api/v1/messages/{mensaje_id}", headers=ana).status_code == 200
+    assert cliente.get(f"/api/v1/messages/{mensaje_id}", headers=beto).status_code == 404
+
+
+def test_la_api_key_no_ve_lo_de_los_usuarios(cliente: TestClient) -> None:
+    """La API key identifica a la instancia, no a alguien: su `user_id` es
+    `None`, el mismo `SIN_USUARIO` de antes del multi-usuario. Lo que había
+    antes sigue siendo suyo; lo de un usuario con JWT, no."""
+    ana = _bearer(_token(cliente))
+    cliente.post("/api/v1/conversations", json={"title": "de ana"}, headers=ana)
+    cliente.post("/api/v1/conversations", json={"title": "de la instancia"}, headers=AUTH)
+
+    con_clave = [
+        c["title"] for c in cliente.get("/api/v1/conversations", headers=AUTH).json()["items"]
+    ]
+    assert con_clave == ["de la instancia"]

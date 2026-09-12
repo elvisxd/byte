@@ -4,9 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response, status
 
-from api.deps import Context, CredentialId, limiter, runs_limit
+from api.deps import Context, CredentialId, OwnerId, limiter, runs_limit
 from api.errors import ByteError
-from db.repository import SIN_USUARIO, title_from_content
+from db.repository import title_from_content
 from models.schemas import (
     CompactResult,
     Conversation,
@@ -23,8 +23,15 @@ from models.schemas import (
 router = APIRouter(tags=["conversaciones"])
 
 
-async def _require_conversation(ctx: Context, conversation_id: str) -> Conversation:
-    conversation = await ctx.repository.get_conversation(conversation_id, SIN_USUARIO)
+async def _require_conversation(
+    ctx: Context, conversation_id: str, owner: str | None
+) -> Conversation:
+    """La conversación, si es de quien la pide.
+
+    404 y no 403 cuando es de otro: un 403 confirmaría que ese id existe, que es
+    justo lo que un IDOR necesita para enumerar.
+    """
+    conversation = await ctx.repository.get_conversation(conversation_id, owner)
     if conversation is None:
         raise ByteError("not_found", "La conversación no existe", status_code=404)
     return conversation
@@ -32,21 +39,19 @@ async def _require_conversation(ctx: Context, conversation_id: str) -> Conversat
 
 @router.post("/conversations", response_model=Conversation, status_code=status.HTTP_201_CREATED)
 async def create_conversation(
-    payload: CreateConversationRequest, ctx: Context, _credential: CredentialId
+    payload: CreateConversationRequest, ctx: Context, owner: OwnerId
 ) -> Conversation:
-    return await ctx.repository.create_conversation(
-        payload.title or "Conversación nueva", SIN_USUARIO
-    )
+    return await ctx.repository.create_conversation(payload.title or "Conversación nueva", owner)
 
 
 @router.get("/conversations", response_model=ConversationList)
 async def list_conversations(
     ctx: Context,
-    _credential: CredentialId,
+    owner: OwnerId,
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
 ) -> ConversationList:
-    items, next_cursor = await ctx.repository.list_conversations(limit, cursor, SIN_USUARIO)
+    items, next_cursor = await ctx.repository.list_conversations(limit, cursor, owner)
     return ConversationList(items=items, next_cursor=next_cursor)
 
 
@@ -54,12 +59,12 @@ async def list_conversations(
 async def get_conversation(
     conversation_id: str,
     ctx: Context,
-    _credential: CredentialId,
+    owner: OwnerId,
     limit: int = Query(default=50, ge=1, le=200),
     before: str | None = None,
     include_tool_messages: bool = False,
 ) -> ConversationDetail:
-    conversation = await _require_conversation(ctx, conversation_id)
+    conversation = await _require_conversation(ctx, conversation_id, owner)
     messages, has_more = await ctx.repository.list_messages(
         conversation_id, limit=limit, before=before, include_tool_messages=include_tool_messages
     )
@@ -71,9 +76,9 @@ async def patch_conversation(
     conversation_id: str,
     payload: PatchConversationRequest,
     ctx: Context,
-    _credential: CredentialId,
+    owner: OwnerId,
 ) -> Conversation:
-    updated = await ctx.repository.set_title(conversation_id, payload.title, SIN_USUARIO)
+    updated = await ctx.repository.set_title(conversation_id, payload.title, owner)
     if updated is None:
         raise ByteError("not_found", "La conversación no existe", status_code=404)
     return updated
@@ -81,12 +86,12 @@ async def patch_conversation(
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-    conversation_id: str, ctx: Context, credential: CredentialId
+    conversation_id: str, ctx: Context, credential: CredentialId, owner: OwnerId
 ) -> Response:
     # Primero se cortan los runs en vuelo: si no, el agente seguiría generando
     # contra un hilo que está por desaparecer.
     await ctx.runs.cancel_conversation(conversation_id, credential)
-    deleted = await ctx.repository.delete_conversation(conversation_id, SIN_USUARIO)
+    deleted = await ctx.repository.delete_conversation(conversation_id, owner)
     if not deleted:
         raise ByteError("not_found", "La conversación no existe", status_code=404)
     # Borrar la conversación también borra el hilo del checkpointer (contrato).
@@ -119,6 +124,7 @@ async def create_message(
     payload: CreateMessageRequest,
     ctx: Context,
     credential: CredentialId,
+    owner: OwnerId,
     wait: bool = False,
 ) -> Any:
     """Crea el mensaje del usuario y arranca un run.
@@ -126,7 +132,7 @@ async def create_message(
     Devuelve `202` con el `events_token` para suscribirse al SSE. Con
     `?wait=true` espera el final y devuelve el mensaje completo (tests y scripts).
     """
-    await _require_conversation(ctx, conversation_id)
+    await _require_conversation(ctx, conversation_id, owner)
     content = payload.content.strip()
     if not content:
         raise ByteError("validation_error", "El mensaje está vacío", status_code=422)
@@ -145,9 +151,9 @@ async def create_message(
 
     user_message = await ctx.repository.add_message(conversation_id, "user", content)
     # Si la conversación todavía no tiene título propio, se usa el primer mensaje.
-    conversation = await ctx.repository.get_conversation(conversation_id, SIN_USUARIO)
+    conversation = await ctx.repository.get_conversation(conversation_id, owner)
     if conversation is not None and conversation.title == "Conversación nueva":
-        await ctx.repository.set_title(conversation_id, title_from_content(content), SIN_USUARIO)
+        await ctx.repository.set_title(conversation_id, title_from_content(content), owner)
 
     run = await ctx.runs.start(conversation_id, credential, content, safe_mode=payload.safe_mode)
 
@@ -162,9 +168,7 @@ async def create_message(
             pendiente["resume_token"] = ctx.tokens.issue_resume_token(run.id, credential)
             return MessagePaused(run_id=run.id, status="paused", awaiting_approval=pendiente)
         message = (
-            await ctx.repository.get_message(run.message_id, SIN_USUARIO)
-            if run.message_id
-            else None
+            await ctx.repository.get_message(run.message_id, owner) if run.message_id else None
         )
         if message is None:
             raise ByteError("run_failed", "El run no produjo respuesta", status_code=500)
@@ -185,7 +189,7 @@ async def compact_conversation(
     request: Request,
     conversation_id: str,
     ctx: Context,
-    _credential: CredentialId,
+    owner: OwnerId,
 ) -> CompactResult:
     """Fuerza la compactación del historial.
 
@@ -197,7 +201,7 @@ async def compact_conversation(
     Responde sincrónico (200, no 202): resumir es una sola llamada al modelo y
     el resultado se devuelve en el momento.
     """
-    await _require_conversation(ctx, conversation_id)
+    await _require_conversation(ctx, conversation_id, owner)
     if ctx.llm is None:
         raise ByteError("model_not_configured", "No hay modelo para resumir", status_code=503)
     # Cualquier run vivo, no solo los de esta credencial: dos escrituras

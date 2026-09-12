@@ -111,9 +111,12 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 - **El filtro por dueño está en las tres capas** (documentos, conversaciones y
   runs), con tests de aislamiento que corren también contra Postgres
 
-Falta que el usuario del JWT reemplace a `SIN_USUARIO` en las rutas: hoy alguien
-se autentica, pero las consultas siguen pasando la constante. Y falta el
-refresh: el token vence a los 30 minutos y hay que volver a entrar.
+- **Cada usuario ve lo suyo**: ver, borrar, renombrar o escribir en una
+  conversación ajena responde 404 —no 403, que confirmaría que ese id existe— y
+  los listados no se mezclan. Con API key el dueño es `None`, así que lo que
+  había antes del multi-usuario sigue siendo accesible con ella
+
+Falta el refresh: el token vence a los 30 minutos y hay que volver a entrar.
 
 ### Fase 3 — herramientas externas por MCP
 
