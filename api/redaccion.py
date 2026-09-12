@@ -41,12 +41,22 @@ _PATRONES: list[tuple[str, re.Pattern[str]]] = [
             r"|\bAIza[0-9A-Za-z_-]{30,}"
         ),
     ),
-    # `Authorization: Bearer <algo>` y `api_key=<algo>`: el valor, no el nombre.
+    # `Authorization: Bearer <algo>`, `api_key=<algo>`, `{"password": "<algo>"}`:
+    # el valor, no el nombre.
+    #
+    # Tres cosas que la primera versión no cubría, y cada una dejaba pasar
+    # secretos de verdad:
+    # - **El separador puede ser un espacio.** `Bearer <token>` es el formato
+    #   HTTP real, y exigir `[:=]` lo dejaba entero afuera.
+    # - **Los nombres compuestos.** `\btoken\b` no matchea `access_token`
+    #   porque el `_` es carácter de palabra; hace falta permitir el prefijo.
+    # - **JSON.** `{"password": "x"}` tiene comillas entre el nombre y el valor,
+    #   y es justo el formato de los resultados de herramienta.
     (
         "CREDENCIAL",
         re.compile(
-            r"(?i)\b(?:bearer|token|api[_-]?key|secret|password|passwd|pwd)"
-            r"\s*[:=]\s*[\"']?([A-Za-z0-9._~+/=-]{8,})[\"']?"
+            r"(?i)\b(?:[a-z0-9_-]*(?:token|key|secret|password|passwd|pwd)|bearer|basic)"
+            r"[\"']?\s*[:=\s]\s*[\"']?([A-Za-z0-9._~+/=-]{8,})"
         ),
     ),
     # Un JWT se reconoce por su forma: tres bloques base64url con puntos.
@@ -99,7 +109,18 @@ def redactar(texto: str) -> str:
         elif etiqueta == "CREDENCIAL":
             # Solo el valor: `Authorization: Bearer [CREDENCIAL]` sigue diciendo
             # qué header era, que es lo que sirve para depurar.
-            texto = patron.sub(lambda m: m.group(0).replace(m.group(1), "[CREDENCIAL]"), texto)
+            # Por posición y no con `replace`: si el valor coincide con el
+            # nombre (`password=password`), el replace se come también el
+            # nombre, que es justo lo que se quiere conservar.
+            def _solo_el_valor(m: re.Match[str]) -> str:
+                inicio, fin = m.span(1)
+                return (
+                    m.group(0)[: inicio - m.start()]
+                    + "[CREDENCIAL]"
+                    + m.group(0)[fin - m.start() :]
+                )
+
+            texto = patron.sub(_solo_el_valor, texto)
         else:
             texto = patron.sub(f"[{etiqueta}]", texto)
     return texto
@@ -117,6 +138,17 @@ def redactar_dato(dato: Any, _profundidad: int = 0) -> Any:
         # algo que valga la pena mandar.
         return "[DEMASIADO_ANIDADO]"
     if isinstance(dato, str):
+        # **Recortar primero, redactar después.** Al revés, el tope no protegía
+        # del costo: las regex de email y DSN son cuadráticas, y un texto
+        # patológico de 62 KB —que entra cómodo en el cuerpo de un POST— tardaba
+        # más de 3 segundos contra los 2,7 ms de prosa normal. Es CPU pura sin
+        # `await`, así que bloquea el event loop entero.
+        #
+        # Se corta con margen (`MAX_CHARS * 2`) y no justo en `MAX_CHARS`: un
+        # secreto partido por el corte no lo atraparía ningún patrón, y el
+        # segundo recorte —después de redactar— deja el largo final correcto.
+        if len(dato) > MAX_CHARS * 2:
+            dato = dato[: MAX_CHARS * 2]
         redactado = redactar(dato)
         if len(redactado) > MAX_CHARS:
             return redactado[:MAX_CHARS] + f"… [recortado, {len(redactado) - MAX_CHARS} más]"

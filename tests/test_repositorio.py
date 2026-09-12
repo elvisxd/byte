@@ -576,3 +576,33 @@ async def test_purgar_arrastra_los_mensajes(repositorio: Repository) -> None:
 
     await repositorio.purgar_conversaciones_openai(30)
     assert await repositorio.get_message(mensaje.id) is None
+
+
+# --- Paginación hacia atrás: memoria y Postgres tienen que coincidir ---
+
+
+async def test_before_desconocido_no_devuelve_todo(repositorio: Repository) -> None:
+    """`before` es un query param público de `GET /conversations/{id}`. Memoria
+    ignoraba un id que no existía y devolvía la página entera; Postgres
+    devolvía vacío. Una UI que pagina veía cosas distintas según el storage."""
+    conversacion = await repositorio.create_conversation("c")
+    for texto in ("uno", "dos"):
+        await repositorio.add_message(conversacion.id, "user", texto)
+
+    mensajes, _ = await repositorio.list_messages(
+        conversacion.id, before="99999999-9999-4999-8999-999999999999"
+    )
+    assert mensajes == []
+
+
+async def test_before_de_un_mensaje_tool_corta_igual(repositorio: Repository) -> None:
+    """Con `include_tool_messages=False`, memoria buscaba el corte en la lista
+    ya filtrada —donde el mensaje `tool` no está— y devolvía de más."""
+    conversacion = await repositorio.create_conversation("c")
+    await repositorio.add_message(conversacion.id, "user", "u1")
+    await repositorio.add_message(conversacion.id, "assistant", "a1")
+    herramienta = await repositorio.add_message(conversacion.id, "tool", "salida")
+    await repositorio.add_message(conversacion.id, "assistant", "a2")
+
+    mensajes, _ = await repositorio.list_messages(conversacion.id, before=herramienta.id)
+    assert [m.content for m in mensajes] == ["u1", "a1"]

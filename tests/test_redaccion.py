@@ -32,9 +32,45 @@ def test_las_claves_con_prefijo_conocido_se_redactan(texto: str, marca: str) -> 
 
 def test_un_jwt_se_redacta_por_su_forma() -> None:
     """No hace falta saber de quién es: tres bloques base64url con puntos solo
-    es un JWT."""
+    es un JWT. Suelto en el texto lo atrapa el patrón de JWT; detrás de un
+    `Bearer` lo atrapa antes el de credencial, y las dos marcas sirven."""
     token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.dBjftJeZ4CVPmB92K27u"
-    assert redactar(f"Authorization: Bearer {token}") == "Authorization: Bearer [JWT]"
+    assert redactar(f"el token era {token} y venció") == "el token era [JWT] y venció"
+    assert token not in redactar(f"Authorization: Bearer {token}")
+
+
+def test_un_bearer_opaco_tambien_se_redacta() -> None:
+    """El formato HTTP real separa con espacio, no con `:` ni `=`. Exigir esos
+    dejaba pasar entero cualquier bearer que no fuera un JWT —el `events_token`
+    de Byte, un token de API de terceros— aunque el docstring prometiera
+    cubrirlo. El test viejo pasaba solo porque usaba un JWT."""
+    redactado = redactar("Authorization: Bearer AbCdEfGhIjKlMnOpQrStUv")
+    assert "AbCdEfGhIjKlMnOpQrStUv" not in redactado
+    assert "Bearer" in redactado
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "access_token=abc123def456",
+        "refresh_token=xyz789abc123",
+        "client_secret=miclientesecreto",
+        '{"password": "supersecreta123"}',
+        '"api_key": "abc123def456"',
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+    ],
+)
+def test_los_nombres_compuestos_y_el_json_no_se_escapan(texto: str) -> None:
+    """`\\btoken\\b` no matchea `access_token` porque el `_` es carácter de
+    palabra, y el JSON mete comillas entre el nombre y el valor —que es justo
+    el formato de los resultados de herramienta."""
+    assert "[CREDENCIAL]" in redactar(texto)
+
+
+def test_el_nombre_de_la_credencial_sobrevive_aunque_coincida_con_el_valor() -> None:
+    """Reemplazar por contenido y no por posición se comía el nombre cuando los
+    dos eran iguales, que es lo contrario de lo que se quiere."""
+    assert redactar("password=password") == "password=[CREDENCIAL]"
 
 
 def test_una_url_con_credenciales_se_redacta_entera() -> None:
@@ -128,3 +164,30 @@ def test_la_firma_del_mask_es_la_que_espera_langfuse() -> None:
     assert mask_langfuse(data="clave sk-proj-AbCdEfGh1234567890") == "clave [API_KEY]"
     # Y acepta los kwargs extra que el SDK le pase.
     assert mask_langfuse(data="hola", trace_id="abc", cualquier_cosa=1) == "hola"
+
+
+def test_un_texto_patologico_no_cuelga_el_proceso() -> None:
+    """Las regex de email y DSN son cuadráticas, y el texto lo elige quien
+    escribe: 62 KB de `a@a.a.a…` —que entran cómodo en el cuerpo de un POST—
+    tardaban más de 3 segundos contra los 2,7 ms de prosa normal. Es CPU pura
+    sin `await`, así que bloquea el event loop entero.
+
+    El arreglo es recortar **antes** de redactar: el tope existía pero se
+    aplicaba después, así que no protegía del costo.
+    """
+    import time
+
+    patologico = "a@" + "a." * 31_000
+    arranque = time.perf_counter()
+    redactar_dato(patologico)
+    tardo = time.perf_counter() - arranque
+
+    assert tardo < 0.5, f"tardó {tardo:.2f}s: la mitigación del ReDoS no está"
+
+
+def test_recortar_antes_no_parte_un_secreto_por_la_mitad() -> None:
+    """Se corta con margen y no justo en `MAX_CHARS`: un secreto partido por el
+    corte no lo atraparía ningún patrón."""
+    relleno = "x" * (MAX_CHARS - 20)
+    redactado = redactar_dato(f"{relleno} sk-proj-AbCdEfGh1234567890XyZ")
+    assert "sk-proj" not in redactado

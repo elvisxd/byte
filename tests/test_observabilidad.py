@@ -25,12 +25,15 @@ class ClienteFalso:
         self.flushes = 0
         self._explota = explota
 
-    @contextlib.contextmanager
     def start_as_current_observation(self, **kwargs: Any) -> Any:
+        # Explota **al abrir**, que es como falla de verdad: claves mal, red
+        # caída, SDK que no arranca. Por eso no es un contextmanager: si lo
+        # fuera, la excepción saldría dentro del `with` y estaríamos probando
+        # otra cosa.
         if self._explota:
             raise RuntimeError("langfuse caído")
         self.observaciones.append(kwargs)
-        yield
+        return contextlib.nullcontext()
 
     def get_current_trace_id(self) -> str:
         return "traza-de-prueba"
@@ -120,6 +123,24 @@ def test_si_langfuse_explota_el_run_sigue() -> None:
     with Trazas(ClienteFalso(explota=True)).run("run"):
         ejecutado = True
     assert ejecutado, "el run no corrió porque la traza falló"
+
+
+def test_un_error_del_run_llega_entero_aunque_haya_traza() -> None:
+    """El `try` cubre solo abrir la observación, nunca el cuerpo.
+
+    Envolver el `yield` hacía que cualquier excepción del run entrara al except
+    —se registraba como `langfuse_traza_fallo`, culpando a Langfuse por un bug
+    ajeno— y el segundo `yield` la convertía en `RuntimeError: generator didn't
+    stop after throw()`, perdiendo la causa. Peor: lo que escapara del `try` de
+    `_correr` (el `finally` que hace `run.done.set()`) dejaba de correr, y quien
+    esperaba ese run se colgaba para siempre.
+    """
+    with pytest.raises(ValueError, match="el grafo explotó"), Trazas(ClienteFalso()).run("run"):
+        raise ValueError("el grafo explotó")
+
+    # Y lo mismo con Langfuse apagado, que es el camino normal.
+    with pytest.raises(ValueError, match="el grafo explotó"), Trazas().run("run"):
+        raise ValueError("el grafo explotó")
 
 
 def test_si_langfuse_no_esta_instalado_se_avisa_y_se_sigue(monkeypatch) -> None:

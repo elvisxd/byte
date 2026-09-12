@@ -44,17 +44,30 @@ class Trazas:
 
     @contextmanager
     def run(self, nombre: str, **datos: Any) -> Iterator[None]:
-        """Envuelve un run del agente. Con Langfuse apagado no hace nada."""
+        """Envuelve un run del agente. Con Langfuse apagado no hace nada.
+
+        El `try` cubre **solo abrir la observación**, nunca el cuerpo. Envolver
+        el `yield` hacía que cualquier excepción del run entrara acá: se
+        registraba como `langfuse_traza_fallo` —culpando a Langfuse por un bug
+        ajeno— y el segundo `yield` la convertía en
+        `RuntimeError: generator didn't stop after throw()`, perdiendo la causa
+        original. Peor: lo que escapara del `try` de `_correr` —el `finally` que
+        hace `run.done.set()`— dejaba de correr, y quien esperaba ese run se
+        colgaba para siempre.
+        """
         if self._cliente is None:
             yield
             return
         try:
-            with self._cliente.start_as_current_observation(
+            observacion = self._cliente.start_as_current_observation(
                 name=nombre, as_type="agent", input=redactar_dato(datos)
-            ):
-                yield
+            )
         except Exception as exc:  # noqa: BLE001 - observar no puede romper el run
             logger.warning("langfuse_traza_fallo", error_type=type(exc).__name__)
+            yield
+            return
+
+        with observacion:
             yield
 
     def trace_id(self) -> str | None:

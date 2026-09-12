@@ -405,15 +405,21 @@ class MemoryRepository:
         before: str | None = None,
         include_tool_messages: bool = False,
     ) -> tuple[list[Message], bool]:
-        messages = list(self._messages.get(conversation_id, []))
-        if not include_tool_messages:
-            messages = [m for m in messages if m.role != "tool"]
+        todos = list(self._messages.get(conversation_id, []))
+        # El corte se busca entre **todos** los mensajes, no entre los ya
+        # filtrados, y un `before` que no existe deja la página vacía. Las dos
+        # cosas para que coincida con Postgres, que compara contra el
+        # `created_at` real de esa fila: buscarlo en la lista filtrada hacía que
+        # paginar desde un mensaje `tool` devolviera de más, e ignorar un id
+        # desconocido devolvía todo en vez de nada. `before` es un query param
+        # público, así que la UI veía comportamientos distintos según el storage.
         if before:
-            index = next((i for i, m in enumerate(messages) if m.id == before), None)
-            if index is not None:
-                messages = messages[:index]
-        has_more = len(messages) > limit
-        return messages[-limit:], has_more
+            corte = next((i for i, m in enumerate(todos) if m.id == before), None)
+            todos = todos[:corte] if corte is not None else []
+        if not include_tool_messages:
+            todos = [m for m in todos if m.role != "tool"]
+        has_more = len(todos) > limit
+        return todos[-limit:], has_more
 
     async def history(self, conversation_id: str) -> list[Message]:
         return list(self._messages.get(conversation_id, []))
