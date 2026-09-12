@@ -2,10 +2,14 @@
 
 > Un agente de IA propio que corre un modelo open source localmente, capaz de programar, buscar en internet y usar herramientas vía MCP — sin depender de APIs pagas.
 
-**Estado:** MVP (Fase 0), ejecución de código en sandbox (Fase 1) y memoria con RAG (Fase 2) funcionando de punta a punta en local.
+**Estado:** las fases 0 a 6 andan de punta a punta en local — agente con
+herramientas, sandbox WASM, RAG híbrido, MCP, endpoint compatible con OpenAI,
+multiusuario con JWT y un CLI interactivo. **480 tests.** El despliegue (Fase 7)
+está pausado a propósito: correr Ollama 24/7 en la nube cuesta ~$180/mes de RAM
+y el proyecto todavía no lo necesita.
 
 ## Stack
-Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + pgvector · MCP · AG-UI · Railway · Go (CLI)
+Python · FastAPI · LangGraph · Ollama · PostgreSQL + pgvector · MCP · AG-UI · Pyodide/WASM · Docker
 
 ## Arquitectura en una línea
 `web / CLI` → `FastAPI (runs + SSE con eventos AG-UI)` → `agente LangGraph (checkpointer en Postgres)` → herramientas: `búsqueda web (Tavily)`, `sandbox WASM (Pyodide)`, `RAG híbrido (pgvector)`, `MCP (n8n y otros)`.
@@ -21,7 +25,7 @@ Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + p
 Un módulo por carpeta; cada carpeta tiene su README explicando qué va ahí.
 
 ```
-api/  agent/  tools/  sandbox/  mcp_client/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  docs/
+api/  agent/  tools/  sandbox/  mcp_client/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  perfil/  docs/
 ```
 
 ## Cómo correrlo
@@ -68,7 +72,26 @@ directamente no arranca sin Postgres. Sin `TAVILY_API_KEY` el agente funciona
 igual pero sin búsqueda web, y sin `SANDBOX_URL`/`SANDBOX_TOKEN`, sin ejecutar
 código.
 
-### Probar sin navegador
+### Probar
+
+Lo más rápido es el CLI, que abre una ventana de chat y se queda:
+
+```bash
+uv run python -m cli.byte_cli          # o `byte`, si se instaló el alias
+```
+
+```
+❯ ¿qué hace el archivo agent/runner.py?
+✻ Worked for 12s  ·  read_file
+
+❯ calculá el Sharpe anualizado de [0.01, 0.012, -0.003, 0.008, 0.005]
+✻ Worked for 9s  ·  code_exec
+
+❯ /model            # cambiar de modelo sin perder la conversación
+❯ /safe             # pedir aprobación antes de ejecutar código
+```
+
+Y por HTTP, sin navegador:
 
 ```bash
 KEY=tu-api-key
@@ -99,7 +122,7 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 
 ## Qué hay hoy
 
-### Fase 4 (en curso) — usuarios con JWT
+### Usuarios con JWT
 
 - **`POST /auth/register`, `POST /auth/login`, `GET /me`**: contraseñas con
   **argon2id** y un JWT de 30 minutos. El token va en `Authorization: Bearer`,
@@ -119,6 +142,35 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 - **Refresh token de 14 días**, rotado en cada uso: el que se manda deja de
   valer y vuelve otro. Si aparece uno ya canjeado se revoca la sesión entera —
   hay dos copias dando vueltas y no se puede saber cuál es la del dueño
+
+### Navegar un repositorio
+
+`list_files`, `read_file` y `grep`: el agente recorre un proyecto, abre el
+archivo que importa y cita la línea. Es la diferencia entre un asistente que
+habla de código y uno que lo mira.
+
+Opt-in con `BYTE_PROJECT_ROOT`, y **confinado a esa raíz**. No es una precaución
+de manual: el modelo elige las rutas a partir de lo que leyó, y lo que leyó
+puede ser un README con instrucciones metidas adentro. Las rutas se comparan
+después de `resolve()`, que sigue los symlinks — el caso que una comparación de
+texto deja pasar, porque la ruta parece inocente y el destino real está afuera.
+
+### Elegir el modelo sin reiniciar
+
+`/model` en el chat lista los configurados y cambia entre ellos. Sirve porque
+ningún modelo local gana en todo: `evals/COMPARACION.md` mide cinco contra las
+tareas que el agente hace de verdad, y granite4.1:8b saca 19/21 contra 16/21 de
+qwen3:8b —acierta el Sharpe que el otro erra— pero tarda 60% más.
+
+El cambio es explícito y no automático por una razón medida: en 16 GB no entran
+dos modelos a la vez, así que Ollama desaloja uno para cargar el otro y alternar
+cuesta ~27 s. Un clasificador que dudara pagaría ese precio cada vez que
+cambiara de opinión.
+
+El criterio para evaluar cualquier modelo nuevo está ahí también: **primero
+verificar el tool calling, después la inteligencia.** qwen2.5-coder:7b saca 2/21
+no por tonto sino porque escribe la llamada como texto JSON en vez de emitirla
+por el canal de herramientas — y el catálogo de Ollama lo declara `tools` igual.
 
 ### El CLI
 
