@@ -226,3 +226,59 @@ class HealthDetails(BaseModel):
     db: str
     sandbox: str
     version: str
+
+
+# --- Compatibilidad con OpenAI (Fase 3) ---
+#
+# Los nombres son los de OpenAI, no los de Byte: el punto del endpoint es que un
+# cliente que ya existe (Open WebUI, Continue.dev, el SDK) funcione sin cambios,
+# y eso obliga a hablar su vocabulario. Por eso acá hay `messages` en vez de
+# `content`, y `object`/`created` que Byte no usa en el resto de la API.
+
+
+class OpenAIMessage(BaseModel):
+    """Un turno de la conversación tal como lo manda un cliente de OpenAI.
+
+    `content` puede venir como texto o como lista de partes (el formato nuevo,
+    que usan los clientes con imágenes). Se acepta la lista y se toma el texto:
+    rechazarla dejaría afuera a clientes que solo mandan texto igual.
+    """
+
+    role: str
+    content: str | list[dict[str, Any]] | None = None
+
+    def texto(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        if isinstance(self.content, list):
+            partes = [p.get("text", "") for p in self.content if p.get("type") == "text"]
+            return "\n".join(t for t in partes if t)
+        return ""
+
+
+class ChatCompletionRequest(BaseModel):
+    """Lo que Byte mira de un pedido de OpenAI.
+
+    El resto de los campos del formato (`temperature`, `top_p`, `n`, `seed`…) se
+    aceptan y se ignoran: los define la configuración de Byte, no el cliente.
+    Ignorarlos en silencio es mejor que un 422, porque los clientes los mandan
+    siempre y rechazarlos los rompería sin ganar nada.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str
+    messages: list[OpenAIMessage] = Field(min_length=1)
+    stream: bool = False
+
+
+class OpenAIModel(BaseModel):
+    id: str
+    object: Literal["model"] = "model"
+    created: int
+    owned_by: str = "byte"
+
+
+class OpenAIModelList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[OpenAIModel]

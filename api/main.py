@@ -25,7 +25,16 @@ from api.config import Settings, get_settings
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
-from api.routes import conversations, documents, execute, health, runs, session, tools
+from api.routes import (
+    conversations,
+    documents,
+    execute,
+    health,
+    openai,
+    runs,
+    session,
+    tools,
+)
 from api.security import Credentials, TokenService, resolve_secret_key, security_headers
 from db.repository import Repository, build_repository
 from models.schemas import ErrorEnvelope
@@ -305,6 +314,11 @@ def create_app(
         documents.router,
     ):
         app.include_router(router, prefix="/api/v1", responses=errores_comunes)
+
+    # La compatibilidad con OpenAI va en /v1 y no en /api/v1: los clientes arman
+    # la URL pegando "/chat/completions" a la base que uno configura, y la
+    # mayoría no deja poner un prefijo propio.
+    app.include_router(openai.router, prefix="/v1", responses=errores_comunes)
 
     static_dir = WEB_DIR / "static"
     if static_dir.is_dir():

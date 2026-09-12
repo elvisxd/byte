@@ -39,7 +39,8 @@ Context = Annotated[AppContext, Depends(get_context)]
 
 
 def credential_from_request(request: Request) -> str | None:
-    """Identifica la credencial: header X-API-Key (CLI) o cookie de sesión (web).
+    """Identifica la credencial: X-API-Key (CLI), Bearer (clientes OpenAI) o
+    cookie de sesión (web).
 
     Devuelve un id no sensible (prefijo del hash), nunca la clave.
     """
@@ -49,6 +50,14 @@ def credential_from_request(request: Request) -> str | None:
     api_key = request.headers.get("X-API-Key")
     if api_key and ctx.credentials.verify(api_key):
         return ctx.credentials.credential_id
+    # `Authorization: Bearer` es lo único que mandan los clientes de OpenAI
+    # (Open WebUI, Continue.dev, el SDK): sin esto, /v1/chat/completions sería
+    # inalcanzable para ellos. Es la misma clave, por otro header.
+    autorizacion = request.headers.get("Authorization", "")
+    if autorizacion.startswith("Bearer "):
+        clave = autorizacion[7:].strip()
+        if clave and ctx.credentials.verify(clave):
+            return ctx.credentials.credential_id
     session = request.cookies.get(SESSION_COOKIE)
     verified = ctx.tokens.verify_session(session)
     if verified and verified == ctx.credentials.credential_id:
