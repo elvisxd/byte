@@ -47,6 +47,11 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pip-audit>=2.7",
+    # Emulador de terminal: los tests del CLI miran lo que queda **en pantalla**
+    # después de aplicar los escapes, no los bytes escritos. Un \033[F borra una
+    # línea ya dibujada, así que contar apariciones en la salida cruda no dice
+    # lo que el usuario ve.
+    "pyte>=0.8",
 ]
 
 [tool.ruff]

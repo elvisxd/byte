@@ -1061,17 +1061,61 @@ def test_el_verbo_generico_rota_y_el_especifico_se_respeta() -> None:
     assert primera != segunda
 
 
-def test_el_eco_reemplaza_la_linea_en_vez_de_repetirla(capsys, monkeypatch) -> None:
-    """`input()` ya dejó lo tipeado en pantalla. Imprimir la pregunta otra vez la
-    deja dos veces —una en el color del prompt y otra en gris—, que es justo lo
-    que se quería evitar. Se sube una línea y se borra antes de escribirla."""
+def _render(escritos: str, ancho: int = 60, alto: int = 12) -> list[str]:
+    """Lo que quedaría **en pantalla**, aplicando los escapes de verdad.
+
+    Contar apariciones en la salida cruda no sirve: `\033[F\033[2K` borra una
+    línea ya escrita, así que un texto puede aparecer dos veces en los bytes y
+    una sola en la terminal — o al revés, que es el bug que esto atrapa.
+    Se emula una terminal chica y se mira el resultado.
+    """
+    pyte = pytest.importorskip("pyte", reason="emulador de terminal, solo para estos tests")
+    pantalla = pyte.Screen(ancho, alto)
+    flujo = pyte.Stream(pantalla)
+    flujo.feed(escritos)
+    return [linea.rstrip() for linea in pantalla.display]
+
+
+def test_la_pregunta_queda_una_sola_vez_en_pantalla(capsys, monkeypatch) -> None:
+    """El bug que esto atrapa: al apretar Enter la terminal ya hizo eco de un
+    `\r\n`, así que el cursor está en la línea de abajo. Subir **una** sola
+    borraba la del prompt y el `print` agregaba otra: la pregunta aparecía dos
+    veces. Hay que subir una por cada línea que ocupó lo tipeado.
+    """
     import cli.byte_cli as cli
 
     monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    # Lo que la terminal ya mostró mientras se escribía, con su salto.
+    tipeado = "❯ hola\r\n"
     cli._eco_de_la_pregunta("hola")
-    salida = capsys.readouterr().out
-    assert "\033[F\033[2K" in salida, "no borró la línea del input()"
-    assert salida.count("hola") == 1, "la pregunta quedó duplicada"
+    pantalla = _render(tipeado + capsys.readouterr().out)
+
+    assert sum("hola" in linea for linea in pantalla) == 1, (
+        f"la pregunta quedó duplicada en pantalla: {[x for x in pantalla if x]}"
+    )
+
+
+def test_una_pregunta_que_se_envolvio_borra_las_dos_lineas(capsys, monkeypatch) -> None:
+    """Si lo tipeado ocupó dos líneas por el ajuste al ancho, borrar una sola
+    deja media pregunta colgada arriba del bloque."""
+    import shutil
+
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda _d=None: os.terminal_size((40, 24)))
+    larga = ("palabra " * 9).strip()  # ~71 caracteres: ocupa dos líneas de 40
+    cli._eco_de_la_pregunta(larga)
+    # El tipeado y lo que escribe el CLI, en el mismo flujo y en ese orden: es
+    # lo único que reproduce el estado real del cursor.
+    pantalla = _render("❯ " + larga + "\r\n" + capsys.readouterr().out, ancho=40, alto=14)
+
+    # Ninguna línea de pantalla puede ser un resto del eco del tty: todas las que
+    # tengan texto son del bloque, que empieza con dos espacios de padding.
+    con_texto = [linea for linea in pantalla if linea.strip()]
+    assert all(linea.startswith("  ") for linea in con_texto), (
+        f"quedó un resto del input() sin borrar: {con_texto}"
+    )
 
 
 def test_una_pregunta_de_varias_lineas_no_borra_nada(capsys, monkeypatch) -> None:
@@ -1082,19 +1126,6 @@ def test_una_pregunta_de_varias_lineas_no_borra_nada(capsys, monkeypatch) -> Non
 
     monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
     cli._eco_de_la_pregunta("una\ndos")
-    assert "\033[F" not in capsys.readouterr().out
-
-
-def test_una_pregunta_mas_larga_que_la_terminal_tampoco(capsys, monkeypatch) -> None:
-    """Si la línea se envolvió, ocupó dos: borrar una sola deja media pregunta
-    colgada arriba."""
-    import shutil
-
-    import cli.byte_cli as cli
-
-    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
-    monkeypatch.setattr(shutil, "get_terminal_size", lambda _d=None: os.terminal_size((40, 24)))
-    cli._eco_de_la_pregunta("x" * 60)
     assert "\033[F" not in capsys.readouterr().out
 
 

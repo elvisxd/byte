@@ -39,6 +39,10 @@ GRIS = "\033[38;5;245m"
 ROJO = "\033[38;5;203m"
 VERDE = "\033[38;5;71m"
 NEGRITA = "\033[1m"
+# Fondo del bloque de la pregunta. Un gris apenas más claro que el negro de la
+# terminal: alcanza para que el ojo lo separe de la respuesta sin competir con
+# ella. 237 se ve igual en fondo oscuro y en uno claro razonable.
+FONDO = "\033[48;5;237m"
 FIN = "\033[0m"
 
 TIMEOUT_LARGO = 900.0  # un run con un modelo local en CPU puede tardar minutos
@@ -928,30 +932,49 @@ def _preguntar_en_vivo(byte: Byte, conversacion: str, pregunta: str, safe: bool)
 
 
 def _eco_de_la_pregunta(pregunta: str) -> None:
-    """Reescribe la pregunta arriba de su respuesta, para poder releer la sesión.
+    """Reescribe la pregunta como un bloque con fondo, arriba de su respuesta.
 
     El `input()` ya dejó lo tipeado en pantalla, pegado a lo que venga después:
     con una respuesta larga no se distingue dónde termina lo que preguntaste y
-    empieza lo que contestó. Acá se **reemplaza** esa línea por la misma en gris,
-    con aire arriba y abajo.
+    empieza lo que contestó. Acá esa línea se **reemplaza** por un bloque con
+    fondo propio, que es lo que permite recorrer una sesión larga hacia arriba
+    saltando de pregunta en pregunta.
 
-    Reemplazar y no repetir: imprimirla de nuevo la deja dos veces, una vez en el
-    color del prompt y otra en gris. Se sube una línea (`\033[F`), se borra
-    (`\033[2K`) y se escribe la versión final.
+    **Cuántas líneas subir.** Al apretar Enter la terminal hace eco de un `\r\n`,
+    así que el cursor ya está en la línea de abajo: `\033[F` una sola vez sube a
+    la del prompt, la borra, y el `print` siguiente agrega otra — la pregunta
+    termina apareciendo dos veces. Hay que subir **una por cada línea que ocupó
+    lo tipeado**, que con el ajuste al ancho de la terminal puede ser más de una.
 
-    Una pregunta de varias líneas no se toca: habría que contar cuántas ocupó
-    después del ajuste al ancho de la terminal, y equivocarse borra la respuesta
-    anterior. Ahí alcanza con el aire.
+    Si no se puede calcular con certeza —una pregunta multilínea— no se borra
+    nada: equivocarse se come la respuesta anterior, que es mucho peor que un
+    eco de más.
 
-    Solo en pantalla: redirigido a un archivo, el eco sería ruido.
+    Solo en pantalla: redirigido a un archivo, el bloque sería ruido.
     """
     if not _en_pantalla():
         return
-    cabe = len(pregunta) + 2 <= shutil.get_terminal_size((80, 24)).columns
-    if "\n" not in pregunta and cabe:
-        sys.stdout.write("\033[F\033[2K")
-    print(_color(f"❯ {pregunta}", GRIS))
+
+    ancho = shutil.get_terminal_size((80, 24)).columns
+    if "\n" not in pregunta:
+        # Lo que ocupó el prompt ("❯ ") más la pregunta, ajustado al ancho.
+        ocupadas = max(1, -(-(len(pregunta) + 2) // ancho))
+        sys.stdout.write("\033[F\033[2K" * ocupadas)
+
     print()
+    for linea in _envolver(pregunta, ancho - 4) or [""]:
+        # El fondo se pinta hasta el borde del bloque, no solo detrás del texto:
+        # un rectángulo se lee como una unidad, un fondo irregular no.
+        relleno = " " * max(0, ancho - 4 - len(linea))
+        print(f"{FONDO}{CREMA}  {linea}{relleno}  {FIN}")
+    print()
+
+
+def _envolver(texto: str, ancho: int) -> list[str]:
+    """Corta el texto en líneas que entren en `ancho`, sin partir palabras."""
+    import textwrap
+
+    return textwrap.wrap(texto, max(20, ancho)) or [texto[:ancho]]
 
 
 def _mostrar_pausa(datos: dict[str, Any]) -> None:
