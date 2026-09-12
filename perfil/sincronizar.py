@@ -31,7 +31,10 @@ PORTFOLIO = Path("/Volumes/APPLE-SSD/dev/my-porfolio-next")
 # Google Drive, que es de donde salen los CV que se mandan desde el teléfono —
 # y por eso los que más importa que estén al día. La carpeta la crea la app de
 # Drive; si no está montada, se saltea sin fallar.
-DRIVE = Path.home() / "Library/CloudStorage/GoogleDrive-elvisreyxd@gmail.com/Mi unidad"
+# Ojo con el espacio final de "Currículum ": así se llama la carpeta en Drive.
+DRIVE = (
+    Path.home() / "Library/CloudStorage/GoogleDrive-elvisreyxd@gmail.com/Mi unidad/Currículum "
+)
 
 # De qué HTML sale cada PDF, y con qué nombre se guarda en cada destino. Los
 # nombres difieren entre la carpeta de trabajo y el portfolio, así que se

@@ -58,9 +58,13 @@ Y a Google Drive, que es de donde salen los CV que se mandan desde el teléfono
 — por eso son los que más importa que estén al día, y los que más fácil quedan
 viejos. Si Drive no está montado, se saltea sin fallar.
 
-En la raíz de Drive hay quince archivos de CV de tres épocas distintas
-(`Curriculum vitae 2024 (4).pdf` y compañía). El script solo pisa los dos que
-tienen el nombre actual; limpiar el resto es una decisión de Elvis.
+En Drive todo vive en `Mi unidad/Currículum ` —con el espacio final, así se
+llama la carpeta—: los dos CV, la carta de presentación, y una subcarpeta
+`anteriores/` con las nueve versiones viejas que estaban sueltas en la raíz.
+
+Movidas, no borradas: alguna podría estar compartida por link con alguien, y
+romper ese enlace sería peor que el desorden. Los `.gdoc` tampoco se tocaron —
+son punteros a documentos de Google Docs, no archivos.
 
 ## Cómo se mantiene
 
