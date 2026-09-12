@@ -763,6 +763,9 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
             _mostrar_respuesta(datos)
         print()
 
+    # Al salir, el marco quedó dibujado alrededor del prompt vacío: se borra
+    # antes de despedirse para no dejar reglas sueltas en la terminal.
+    _borrar_marco()
     print(_color("Bye 👋", GRIS))
     return 0
 
@@ -1030,6 +1033,19 @@ def _marco_del_prompt() -> str:
     return f"{regla}\n\n{regla}\033[F"
 
 
+def _borrar_marco() -> None:
+    """Quita el marco del prompt cuando se sale sin escribir nada.
+
+    Ctrl-C y Ctrl-D dejan el cursor sobre la regla de abajo, con el prompt y la
+    de arriba encima: sin esto quedan tres líneas sueltas en la terminal después
+    del "Bye".
+    """
+    if not _en_pantalla():
+        return
+    sys.stdout.write("\r\033[2K" + "\033[F\033[2K" * 2)
+    sys.stdout.flush()
+
+
 def _eco_de_la_pregunta(pregunta: str) -> None:
     """Reescribe la pregunta como un bloque con fondo, arriba de su respuesta.
 
@@ -1057,12 +1073,16 @@ def _eco_de_la_pregunta(pregunta: str) -> None:
     ancho = shutil.get_terminal_size((80, 24)).columns
     if "\n" not in pregunta:
         # El marco son tres líneas —regla, prompt, regla— y al apretar Enter el
-        # cursor queda sobre la de abajo. Se borra esa, después lo tipeado (que
-        # puede ocupar más de una línea por el ajuste al ancho), y por último la
-        # regla de arriba: sin eso queda flotando sobre el bloque.
+        # cursor queda sobre la de abajo. Hay que borrar esa, lo tipeado (que
+        # ocupa más de una línea si no entró en el ancho), y la regla de arriba.
+        #
+        # Se borra una línea de más y se acepta: `\033[F` no baja del borde
+        # superior de la pantalla, así que sobrar es inocuo —el escape no hace
+        # nada— mientras que quedarse corto deja media regla colgada sobre la
+        # pregunta, que es el resto que se veía.
         sys.stdout.write("\r\033[2K")
-        ocupadas = max(1, -(-(len(pregunta) + 2) // ancho))
-        sys.stdout.write("\033[F\033[2K" * (ocupadas + 1))
+        ocupadas = max(1, -(-(len(pregunta) + 2) // max(1, ancho)))
+        sys.stdout.write("\033[F\033[2K" * (ocupadas + 2))
 
     print()
     for linea in _envolver(pregunta, ancho - 4) or [""]:

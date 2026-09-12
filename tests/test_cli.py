@@ -1277,3 +1277,15 @@ def test_sin_terminal_no_se_dibuja_el_marco(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
     assert cli._marco_del_prompt() == ""
+
+
+def test_al_salir_se_borra_el_marco(capsys, monkeypatch) -> None:
+    """Ctrl-C y Ctrl-D dejan el cursor sobre la regla de abajo, con el prompt y
+    la de arriba encima: sin borrarlo quedan tres líneas sueltas después del
+    "Bye"."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    cli._borrar_marco()
+    salida = capsys.readouterr().out
+    assert salida.count("\033[2K") == 3, "no borra las tres líneas del marco"
