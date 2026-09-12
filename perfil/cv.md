@@ -104,8 +104,9 @@ answers over my own documents with hybrid RAG on pgvector. Built as a LangGraph
 state graph checkpointed in Postgres. Third-party content enters the prompt
 tagged untrusted and, if code execution is then requested, the run halts for
 human approval — the exact path an indirect prompt injection would take.
-**459 tests** and an eval suite that measures models against the tasks the agent
-actually does.
+Connects to external tools over **MCP** and navigates a codebase (list, read,
+grep) confined to one root that symlinks cannot escape. **459 tests** and an
+eval suite that measures models against the tasks the agent actually performs.
 
 `Python · FastAPI · LangGraph · Ollama · PostgreSQL + pgvector · Pyodide/WASM · MCP · SSE · Docker`
 

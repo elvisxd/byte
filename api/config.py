@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     # lea el disco tiene que ser una decisión explícita, no algo que se herede
     # del directorio donde alguien arrancó el proceso.
     project_root: str = Field(default="", alias="BYTE_PROJECT_ROOT")
+
+    # Carpeta del CV (la que tiene `build/cv-{en,es}.html`). Vacía: el agente no
+    # puede tocar el CV. Es opt-in como el resto: editar un CV y regenerar sus
+    # PDF no es algo que deba poder hacer por venir instalado.
+    cv_dir: str = Field(default="", alias="BYTE_CV_DIR")
+    # Repo del portfolio, para dejar ahí los PDF nuevos. Sin esto se generan
+    # igual, solo que no se copian.
+    portfolio_dir: str = Field(default="", alias="BYTE_PORTFOLIO_DIR")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

@@ -92,4 +92,28 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
                 detail="el agente arranca sin acceso a archivos",
             )
 
+    # El CV: leerlo y mantenerlo. Opt-in por la misma razón que los archivos —
+    # que el agente pueda reescribir tu CV tiene que ser una decisión.
+    if settings.cv_dir:
+        from pathlib import Path
+
+        from tools.cv import build_cv_tools
+
+        carpeta = Path(settings.cv_dir).expanduser()
+        if carpeta.is_dir():
+            portfolio = (
+                Path(settings.portfolio_dir).expanduser() if settings.portfolio_dir else None
+            )
+            for herramienta in build_cv_tools(carpeta, settings.max_tool_result_chars, portfolio):
+                registry.add(herramienta)
+            logger.info(
+                "cv_activo",
+                carpeta=str(carpeta),
+                detail="el agente puede leer y mantener el CV",
+            )
+        else:
+            logger.warning(
+                "cv_dir_no_existe", carpeta=str(carpeta), detail="el agente arranca sin el CV"
+            )
+
     return registry
