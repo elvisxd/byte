@@ -55,10 +55,24 @@ def _bearer(request: Request) -> str | None:
 
 
 def credential_from_request(request: Request) -> str | None:
-    """Identifica la credencial: X-API-Key (CLI), Bearer (clientes OpenAI) o
-    cookie de sesión (web).
+    """Quién hace este pedido: un usuario con JWT, o la instancia con su clave.
 
-    Devuelve un id no sensible (prefijo del hash), nunca la clave.
+    **Las dos credenciales conviven a propósito**, y cada una tiene su lugar:
+
+    - El **JWT** identifica a una persona. Lo que crea es suyo y nadie más lo ve
+      (`owner_from_request` devuelve su `user_id`).
+    - La **API key** identifica a la instancia, no a alguien. Sus datos son los
+      que tienen `user_id = NULL`: lo que existía antes del multi-usuario, más
+      lo que entra por el CLI, por n8n o por un cliente de OpenAI. Ninguno de
+      esos tiene dónde guardar una sesión ni a quién pedirle una contraseña.
+
+    Por eso la clave no se retira ni se limita a `/v1`: retirarla obligaría a
+    registrarse para usar el CLI de tu propia instancia local, que es la
+    herramienta con la que se trabaja todos los días. El costo de tenerla es
+    real —es eterna y no se revoca sin cambiar el `.env`— y por eso `/me` la
+    rechaza: para lo que necesita saber quién sos, no alcanza.
+
+    Devuelve un id no sensible, nunca la clave (ver `Credentials.credential_id`).
     """
     ctx: AppContext | None = getattr(request.app.state, "ctx", None)
     if ctx is None:

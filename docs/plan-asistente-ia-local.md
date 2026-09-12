@@ -133,7 +133,7 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 - [x] Redacción de PII/secretos antes de enviar trazas a Langfuse. `api/redaccion.py`: claves con prefijo conocido (OpenAI, GitHub, Slack, AWS, Google), JWT, DSN con credenciales, emails y tarjetas (validadas con Luhn, para no redactar cualquier id largo). Va como `mask` del cliente de Langfuse y `before_send` de Sentry, así que corre sobre **todo** lo que esos SDK están por mandar y no depende de acordarse en cada punto
 - [x] Bugsink self-hosted (1 contenedor) para tracking de errores, bajo el perfil `observabilidad` del compose. Reusa el Postgres que ya está —su documentación desaconseja persistir SQLite en un volumen Docker por el modo WAL— y con `PHONEHOME=false`: lo que se instala local no tiene por qué avisarle a nadie
 - [x] Langfuse para trazas del agente, guardando `langfuse_trace_id` en `MESSAGES`. **Opcional y apagado por defecto**: sin `LANGFUSE_PUBLIC_KEY` no sale nada de tu máquina. La traza envuelve el run entero, no cada llamada al modelo: lo que interesa al depurar es por qué el agente decidió lo que decidió. Va en el extra `observabilidad` para no pesarle a quien no lo use
-- [ ] Ampliar la cobertura de tests (el CI con pytest existe desde el MVP)
+- [x] Ampliar la cobertura de tests (el CI con pytest existe desde el MVP): 371 sin Postgres y 405 con Postgres, contra los 158 con que cerró la Fase 2. Cada arreglo de esta fase trae su test de regresión, y verifiqué que falla si se revierte — un test que pasa con el bug presente no prueba nada
 
 **Lo que dejó anotado la revisión de la Fase 3** (hacerlo *antes* del JWT sale
 mucho más barato que después):
@@ -154,22 +154,30 @@ mucho más barato que después):
   identidad—, así que con multi-usuario cada una de esas rutas es un IDOR. El
   modelo a copiar está en `RunManager.require` (`agent/runner.py:191`), que
   compara el dueño y responde 404 para no permitir enumeración.
-- [ ] **Decidir qué pasa con `Authorization: Bearer`.** Desde la Fase 3 acepta
-  la API key estática, que es lo único que mandan los clientes de OpenAI y lo
-  que n8n guarda en sus credenciales. El contrato ya planea un JWT en el mismo
-  header: van a convivir un token de 15-60 min y una clave eterna, y hay que
-  decidir explícitamente si la clave sigue valiendo para `/v1` o si esos
-  clientes pasan a un token de servicio aparte.
-- [ ] **Política de retención para las conversaciones de `/v1`.** Cada pedido
-  crea una, y no se borran: con el canal de email de n8n activo, cada correo
-  entrante deja una permanente. Además el título lleva los primeros 60
-  caracteres del mensaje, así que la redacción de PII para Langfuse tiene que
-  cubrir `CONVERSATIONS.title`, no solo el cuerpo.
-- [ ] **`resume_token` y `events_token` de un solo uso solo valen con un worker.**
-  Los nonces gastados viven en un dict de proceso (`api/security.py:70`), igual
-  que los runs (`agent/runner.py:186`). Con más de un worker el mismo token se
-  canjea una vez por cada uno, y `require()` no encuentra los runs de otro
-  proceso.
+- [x] **Qué pasa con `Authorization: Bearer`: las dos credenciales conviven, y
+  cada una tiene su lugar.** El JWT identifica a una persona —lo que crea es
+  suyo— y la API key identifica a la instancia: sus datos son los de
+  `user_id = NULL`, que es lo que existía antes del multi-usuario más lo que
+  entra por el CLI, n8n o un cliente de OpenAI, ninguno de los cuales tiene
+  dónde guardar una sesión. No se retira ni se limita a `/v1` porque eso
+  obligaría a registrarse para usar el CLI de tu propia instancia local. El
+  costo es real —es eterna y no se revoca sin cambiar el `.env`— y por eso
+  `/me` la rechaza: para saber quién sos, no alcanza.
+- [x] **Política de retención para las conversaciones de `/v1`.** Las que
+  llevan el prefijo `[openai] ` y no tuvieron actividad en 30 días
+  (`BYTE_OPENAI_RETENCION_DIAS`, 0 desactiva) se borran en una tarea que corre
+  al arrancar y cada 6 horas. Solo las de ese origen: una conversación del chat
+  la abrió alguien a propósito y borrarla sola sería perder trabajo; las de
+  `/v1` las crea una llamada de API que ya se llevó su respuesta. Los mensajes
+  se van con ellas por el `ON DELETE CASCADE`.
+- [x] **`resume_token` y `events_token` de un solo uso solo valen con un
+  worker.** Ya era una restricción deliberada —el Dockerfile fija
+  `--workers 1` y lo dice— pero era solo un comentario: `WEB_CONCURRENCY` lo
+  pisa sin tocar el Dockerfile, y es lo que varios PaaS definen solos (Railway
+  incluido, que es el deploy de la Fase 7). Ahora se chequea al arrancar: en
+  dev avisa, en prod no arranca. Mover los runs y los nonces a Postgres es lo
+  que haría falta para escalar horizontalmente, y queda para cuando eso se
+  necesite de verdad.
 
 ### Fase 5 — Frontend real con la identidad Byte (estimación: 2-3 semanas)
 - [x] Evolucionar la página HTML mínima a FastAPI + Jinja con la identidad Byte, consumiendo el streaming SSE (sin HTMX: el chat ya tenía resuelta la reconexión con `Last-Event-ID`)

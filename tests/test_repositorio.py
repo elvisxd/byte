@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from db.repository import (
+    PREFIJO_OPENAI,
     SIN_USUARIO,
     MemoryRepository,
     PostgresRepository,
@@ -520,3 +521,58 @@ async def test_borrar_el_usuario_arrastra_sus_refresh(repositorio: Repository) -
         await conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
     assert (await repositorio.use_refresh_token("hash-1")).user_id is None
+
+
+# --- Retención de las conversaciones de /v1 ---
+
+
+async def _envejecer(repositorio: Repository, conversation_id: str, dias: int) -> None:
+    """Mueve `updated_at` al pasado, para no esperar 30 días en un test."""
+    viejo = datetime.now(UTC) - timedelta(days=dias)
+    if isinstance(repositorio, PostgresRepository):
+        async with repositorio.pool.connection() as conn:
+            await conn.execute(
+                "UPDATE conversations SET updated_at = %s WHERE id = %s", (viejo, conversation_id)
+            )
+        return
+    actual = repositorio._conversations[conversation_id]
+    repositorio._conversations[conversation_id] = actual.model_copy(update={"updated_at": viejo})
+
+
+async def test_las_conversaciones_viejas_de_openai_se_purgan(repositorio: Repository) -> None:
+    """Cada pedido a `/v1` crea una y el cliente no tiene dónde guardar su id:
+    sin purga, con el canal de email de n8n activo la base crece sin techo."""
+    vieja = await repositorio.create_conversation(f"{PREFIJO_OPENAI}hace mucho")
+    await _envejecer(repositorio, vieja.id, 40)
+
+    assert await repositorio.purgar_conversaciones_openai(30) == 1
+    assert await repositorio.get_conversation(vieja.id) is None
+
+
+async def test_una_conversacion_reciente_de_openai_no_se_toca(repositorio: Repository) -> None:
+    reciente = await repositorio.create_conversation(f"{PREFIJO_OPENAI}de ayer")
+    await _envejecer(repositorio, reciente.id, 2)
+
+    assert await repositorio.purgar_conversaciones_openai(30) == 0
+    assert await repositorio.get_conversation(reciente.id) is not None
+
+
+async def test_la_purga_no_toca_las_conversaciones_del_chat(repositorio: Repository) -> None:
+    """Una conversación del chat la abrió alguien a propósito: borrarla sola
+    sería perder trabajo. Las de `/v1` las crea una llamada de API que ya se
+    llevó su respuesta."""
+    propia = await repositorio.create_conversation("la que abrí yo")
+    await _envejecer(repositorio, propia.id, 400)
+
+    assert await repositorio.purgar_conversaciones_openai(30) == 0
+    assert await repositorio.get_conversation(propia.id) is not None
+
+
+async def test_purgar_arrastra_los_mensajes(repositorio: Repository) -> None:
+    """Si los mensajes quedaran, la purga liberaría las filas que menos pesan."""
+    vieja = await repositorio.create_conversation(f"{PREFIJO_OPENAI}con mensajes")
+    mensaje = await repositorio.add_message(vieja.id, "user", "algo")
+    await _envejecer(repositorio, vieja.id, 40)
+
+    await repositorio.purgar_conversaciones_openai(30)
+    assert await repositorio.get_message(mensaje.id) is None

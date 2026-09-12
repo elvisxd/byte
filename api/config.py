@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     langfuse_host: str = Field(default="https://cloud.langfuse.com", alias="LANGFUSE_HOST")
     # Bugsink es self-hosted (un contenedor): los errores no salen de tu red.
     bugsink_dsn: str = Field(default="", alias="BUGSINK_DSN")
+
+    # Cuántos días se guardan las conversaciones que entran por
+    # `/v1/chat/completions`. Cada pedido crea una y el cliente no tiene dónde
+    # guardar su id, así que sin purga la base crece sin techo. 0 la desactiva.
+    openai_retencion_dias: int = Field(default=30, alias="BYTE_OPENAI_RETENCION_DIAS")
     # Del otro lado del modo seguro hay una persona decidiendo: el token dura
     # más que el del stream, y mientras tanto el run pausado no se descarta.
     resume_token_ttl_s: int = Field(default=3600, alias="BYTE_RESUME_TOKEN_TTL_S")

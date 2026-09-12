@@ -5,6 +5,9 @@ lo que las rutas necesitan: credenciales, almacenamiento, modelo, herramientas,
 grafo y el administrador de runs.
 """
 
+import asyncio
+import contextlib
+import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -63,6 +66,58 @@ def _build_rag(settings: Settings, repo: Repository) -> Any:
     from rag.service import build_rag_service
 
     return build_rag_service(settings, pool)
+
+
+def _avisar_si_hay_varios_workers(env: str) -> None:
+    """Byte asume un solo proceso, y conviene que se note al arrancar.
+
+    Los runs viven en un dict del `RunManager` y los nonces ya canjeados en otro
+    del `TokenService`, así que con dos workers: `GET /runs/{id}/events` no
+    encuentra los runs del otro proceso, y el "un solo uso" del `resume_token` y
+    del `events_token` deja de ser una garantía — el mismo token se canjea una
+    vez por worker.
+
+    El Dockerfile fija `--workers 1`, pero `WEB_CONCURRENCY` lo pisa sin tocarlo
+    y es lo que varios PaaS —Railway incluido, que es el deploy de la Fase 7—
+    definen solo. En prod se corta el arranque; en dev alcanza con avisar.
+    """
+    try:
+        workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
+    except ValueError:
+        return
+    if workers <= 1:
+        return
+
+    detalle = (
+        "Byte guarda los runs y los nonces en memoria del proceso: con varios "
+        "workers el SSE no encuentra runs de otro proceso y los tokens de un "
+        "solo uso valen una vez por worker. Sacá WEB_CONCURRENCY o dejalo en 1."
+    )
+    if env == "prod":
+        raise RuntimeError(f"WEB_CONCURRENCY={workers} no está soportado. {detalle}")
+    logger.warning("varios_workers", workers=workers, detail=detalle)
+
+
+async def _purgar_periodicamente(repo: Repository, dias: int, cada_horas: int = 6) -> None:
+    """Borra cada tantas horas las conversaciones viejas de `/v1`.
+
+    Corre una vez al arrancar y después en bucle. Un cron sería más prolijo,
+    pero agrega una pieza que hay que instalar y vigilar aparte; esto vive y
+    muere con el proceso, que para una limpieza sin urgencia alcanza.
+
+    Cualquier error se registra y el bucle sigue: que falle una purga no puede
+    tirar abajo la app.
+    """
+    while True:
+        try:
+            borradas = await repo.purgar_conversaciones_openai(dias)
+            if borradas:
+                logger.info("conversaciones_openai_purgadas", cantidad=borradas, dias=dias)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - una purga fallida no rompe nada
+            logger.warning("purga_fallida", error_type=type(exc).__name__)
+        await asyncio.sleep(cada_horas * 3600)
 
 
 async def _sumar_herramientas_mcp(
@@ -163,6 +218,8 @@ def create_app(
         init_errores(resolved_settings)
         trazas = build_trazas(resolved_settings)
 
+        _avisar_si_hay_varios_workers(resolved_settings.env)
+
         repo = repository or build_repository(
             resolved_settings.use_postgres, resolved_settings.database_url
         )
@@ -236,9 +293,19 @@ def create_app(
                 herramientas=[tool.name for tool in tool_registry.all()],
                 storage="postgres" if resolved_settings.use_postgres else "memoria",
             )
+            purga: asyncio.Task[None] | None = None
+            if resolved_settings.openai_retencion_dias > 0:
+                purga = asyncio.create_task(
+                    _purgar_periodicamente(repo, resolved_settings.openai_retencion_dias)
+                )
+
             try:
                 yield
             finally:
+                if purga is not None:
+                    purga.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await purga
                 await run_manager.shutdown()
                 await repo.shutdown()
                 # Lo último: manda las trazas del último run antes de cerrar.

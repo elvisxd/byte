@@ -12,7 +12,7 @@ import asyncio
 import base64
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,6 +32,14 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 # `messages` no lleva su propia columna: cuelga de `conversations` por FK, así
 # que filtrar por la conversación ya decide quién puede ver sus mensajes.
 SIN_USUARIO: str | None = None
+
+# Las conversaciones que entra por `/v1/chat/completions` llevan este prefijo en
+# el título. Un cliente de OpenAI manda su historial completo en cada pedido y no
+# tiene dónde guardar un id de Byte, así que cada llamada crea una: sin purga,
+# con el canal de email de n8n activo la base crece sin techo. Es el prefijo y no
+# una columna porque no cambia nada del modelo — y si algún día hace falta
+# distinguir más orígenes, ahí sí conviene la columna.
+PREFIJO_OPENAI = "[openai] "
 # Id arbitrario pero fijo para el advisory lock de las migraciones.
 MIGRATION_LOCK_ID = 8_675_309
 PREVIEW_CHARS = 120
@@ -102,6 +110,8 @@ class Repository(Protocol):
     async def use_refresh_token(self, token_hash: str) -> RefreshResult: ...
     async def revoke_refresh_family(self, family_id: str) -> int: ...
     async def family_of_refresh_token(self, token_hash: str) -> str | None: ...
+
+    async def purgar_conversaciones_openai(self, dias: int) -> int: ...
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation: ...
     async def get_conversation(
@@ -235,6 +245,27 @@ class MemoryRepository:
                     fila["revoked_at"] = _now()
                     revocados += 1
             return revocados
+
+    async def purgar_conversaciones_openai(self, dias: int) -> int:
+        """Borra las conversaciones de `/v1` sin actividad en `dias`.
+
+        Solo las de ese origen: una conversación del chat la abrió alguien a
+        propósito y borrarla sola sería perder trabajo. Las de `/v1` las crea
+        una llamada de API que ya se llevó su respuesta.
+        """
+        corte = _now() - timedelta(days=dias)
+        async with self._lock:
+            viejas = [
+                c.id
+                for c in self._conversations.values()
+                if c.title.startswith(PREFIJO_OPENAI) and c.updated_at < corte
+            ]
+            for conversation_id in viejas:
+                del self._conversations[conversation_id]
+                self._duenos.pop(conversation_id, None)
+                for message in self._messages.pop(conversation_id, []):
+                    self._by_message_id.pop(message.id, None)
+            return len(viejas)
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         now = _now()
@@ -596,6 +627,21 @@ class PostgresRepository:
                 "UPDATE refresh_tokens SET revoked_at = now() "
                 "WHERE family_id = %s AND revoked_at IS NULL",
                 (family_id,),
+            )
+        return cur.rowcount
+
+    async def purgar_conversaciones_openai(self, dias: int) -> int:
+        """Borra las conversaciones de `/v1` sin actividad en `dias`.
+
+        Los mensajes se van con ellas por el `ON DELETE CASCADE` de la FK.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "DELETE FROM conversations "
+                "WHERE title LIKE %s AND updated_at < now() - make_interval(days => %s)",
+                # En LIKE de Postgres los corchetes no son especiales; solo lo
+                # son `%` y `_`, que el prefijo no tiene.
+                (PREFIJO_OPENAI + "%", dias),
             )
         return cur.rowcount
 

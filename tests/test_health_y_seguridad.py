@@ -1,5 +1,6 @@
 """Salud, cabeceras de seguridad y formato de errores."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import API_KEY, AUTH
@@ -144,3 +145,44 @@ def test_el_credential_id_es_estable_entre_reinicios() -> None:
     assert primero == segundo
     # Y distingue credenciales distintas, que es para lo que se usa.
     assert Credentials("otra-clave", "s" * 32).credential_id != primero
+
+
+# --- Un solo worker (Fase 4) ---
+
+
+def test_varios_workers_se_avisan_en_dev(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    """Byte guarda los runs y los nonces en memoria del proceso: con dos
+    workers, el SSE no encuentra runs del otro y el "un solo uso" de los tokens
+    vale una vez por worker.
+
+    El Dockerfile fija `--workers 1`, pero `WEB_CONCURRENCY` lo pisa sin tocarlo
+    y es lo que varios PaaS definen solos.
+    """
+    from api.main import _avisar_si_hay_varios_workers
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    _avisar_si_hay_varios_workers("dev")
+    assert "varios_workers" in caplog.text
+
+
+def test_varios_workers_no_arrancan_en_prod(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En dev avisar alcanza; en prod la garantía perdida es silenciosa y el
+    síntoma —un token que a veces vale dos veces— es imposible de diagnosticar."""
+    from api.main import _avisar_si_hay_varios_workers
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    with pytest.raises(RuntimeError, match="WEB_CONCURRENCY"):
+        _avisar_si_hay_varios_workers("prod")
+
+
+@pytest.mark.parametrize("valor", ["1", "", "no-es-un-numero"])
+def test_un_worker_o_un_valor_raro_no_molestan(
+    valor: str, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """El caso normal no tiene que decir nada, y un valor inválido tampoco
+    puede impedir que Byte arranque."""
+    from api.main import _avisar_si_hay_varios_workers
+
+    monkeypatch.setenv("WEB_CONCURRENCY", valor)
+    _avisar_si_hay_varios_workers("prod")  # no explota
+    assert "varios_workers" not in caplog.text

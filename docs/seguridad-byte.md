@@ -99,6 +99,7 @@ Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
 - [x] Langfuse: **redactar secretos y PII antes de enviar**. `api/redaccion.py` cubre claves con prefijo conocido, JWT, DSN con credenciales, emails y tarjetas (con Luhn, para no redactar ids largos). Se engancha como `mask` del cliente, que el SDK aplica sobre el input, el output y la metadata de cada observación — no depende de acordarse en cada punto de instrumentación. El README dice que activarlo manda las conversaciones a un tercero, y está apagado por defecto
 - [x] Bugsink con scrubbing de datos sensibles: `before_send` redacta el evento entero y `send_default_pii=False` evita que el SDK agregue headers, cookies e IP por su cuenta —eso incluiría la credencial con la que alguien llamó. `structlog` ya no loguea prompts en INFO
 - [ ] Idempotency keys con expiración (24 h)
+- [x] **Un solo worker**: los runs y los nonces ya canjeados viven en memoria del proceso, así que con dos el SSE no encuentra runs del otro y el "un solo uso" de `resume_token` y `events_token` vale una vez por worker. Se chequea `WEB_CONCURRENCY` al arrancar: en dev avisa, en prod no arranca
 
 ### Fase 7 — Despliegue
 - [ ] Revisar que ningún servicio interno tenga dominio público generado por accidente
