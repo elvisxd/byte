@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # --- Herramientas ---
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
     sandbox_url: str = Field(default="", alias="SANDBOX_URL")
+
+    # Carpeta que el agente puede leer con list_files/read_file/grep. Vacía —el
+    # default— significa que esas herramientas no existen: dejar que un modelo
+    # lea el disco tiene que ser una decisión explícita, no algo que se herede
+    # del directorio donde alguien arrancó el proceso.
+    project_root: str = Field(default="", alias="BYTE_PROJECT_ROOT")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

@@ -70,4 +70,26 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
     else:
         logger.warning("sin_sandbox_url", detail="el agente arranca sin ejecución de código")
 
+    # Navegar archivos es opt-in: sin BYTE_PROJECT_ROOT el agente no ve el disco.
+    if settings.project_root:
+        from pathlib import Path
+
+        from tools.archivos import build_file_tools
+
+        raiz = Path(settings.project_root).expanduser()
+        if raiz.is_dir():
+            for herramienta in build_file_tools(raiz, settings.max_tool_result_chars):
+                registry.add(herramienta)
+            logger.info(
+                "archivos_activos",
+                raiz=str(raiz.resolve()),
+                detail="el agente puede listar, leer y buscar dentro de esa carpeta",
+            )
+        else:
+            logger.warning(
+                "project_root_no_existe",
+                raiz=str(raiz),
+                detail="el agente arranca sin acceso a archivos",
+            )
+
     return registry
