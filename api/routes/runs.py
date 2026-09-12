@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from api.deps import Context, CredentialId, credential_from_request
 from api.errors import ByteError
+from db.repository import SIN_USUARIO
 from models.schemas import Message, ResumeRequest, RunResumed, RunState
 
 router = APIRouter(tags=["runs"])
@@ -101,11 +102,10 @@ async def get_run(run_id: str, ctx: Context, credential: CredentialId) -> RunSta
 
 @router.get("/messages/{message_id}", response_model=Message)
 async def get_message(message_id: str, ctx: Context, _credential: CredentialId) -> Message:
-    # FASE 4 (multi-usuario): es el único endpoint que toma un id de recurso y
-    # no verifica pertenencia. Con una sola credencial da igual; con JWT es un
-    # IDOR directo a los mensajes de otro. Al bajar user_id al Repository, este
-    # get_message tiene que filtrar por dueño como el resto.
-    message = await ctx.repository.get_message(message_id)
+    # Filtra por dueño como el resto: sin esto sería un IDOR directo a los
+    # mensajes de otro en cuanto haya más de un usuario. Hoy `SIN_USUARIO` no
+    # discrimina, pero el camino ya pasa por el filtro.
+    message = await ctx.repository.get_message(message_id, SIN_USUARIO)
     if message is None:
         raise ByteError("not_found", "El mensaje no existe", status_code=404)
     return message

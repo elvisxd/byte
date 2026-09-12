@@ -13,17 +13,38 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from db.repository import MemoryRepository, PostgresRepository, Repository, title_from_content
+from db.repository import (
+    SIN_USUARIO,
+    MemoryRepository,
+    PostgresRepository,
+    Repository,
+    title_from_content,
+)
 
 DSN = os.environ.get("BYTE_TEST_DATABASE_URL", "")
 
+# Dos dueños de prueba. Son uuid porque `conversations.user_id` es
+# `uuid REFERENCES users (id)`: Postgres rechaza cualquier otra cosa.
+ANA = "11111111-1111-4111-8111-111111111111"
+BETO = "22222222-2222-4222-8222-222222222222"
+
 
 async def _vaciar(dsn: str) -> None:
-    """Cada test arranca con la base limpia."""
+    """Cada test arranca con la base limpia y con los usuarios de prueba.
+
+    `conversations.user_id` tiene FK a `users`, así que los tests de aislamiento
+    necesitan que esos ids existan. En memoria no hace falta: no hay integridad
+    referencial que respetar.
+    """
     import psycopg
 
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-        await conn.execute("TRUNCATE conversations CASCADE")
+        await conn.execute("TRUNCATE conversations, users CASCADE")
+        for uid, email in ((ANA, "ana@ejemplo.test"), (BETO, "beto@ejemplo.test")):
+            await conn.execute(
+                "INSERT INTO users (id, email, password_hash) VALUES (%s, %s, 'x')",
+                (uid, email),
+            )
 
 
 @pytest.fixture(params=["memoria", "postgres"])
@@ -286,3 +307,68 @@ async def test_las_migraciones_se_aplican_una_sola_vez() -> None:
 
     # Una fila por migración, aunque se haya arrancado dos veces.
     assert registradas == esperadas
+
+
+# --- Aislamiento por dueño (preparación de la Fase 4) ---
+#
+# Hoy todos los call sites pasan `SIN_USUARIO`, así que el filtro no discrimina
+# y el comportamiento no cambia. Estos pasan un dueño de verdad para probar que
+# el filtro *funciona* cuando el JWT lo traiga: sin esto el parámetro sería
+# plomería sin garantía. Van por la fixture para correr también contra Postgres,
+# que es donde el `IS NOT DISTINCT FROM` de verdad se ejercita.
+#
+# El dueño tiene que ser un uuid: `conversations.user_id` es `uuid REFERENCES
+# users (id)`, y Postgres rechaza cualquier otra cosa.
+
+
+async def test_una_conversacion_de_otro_no_se_ve(repositorio: Repository) -> None:
+    ajena = await repositorio.create_conversation("de ana", user_id=ANA)
+
+    assert await repositorio.get_conversation(ajena.id, user_id=BETO) is None
+    assert await repositorio.get_conversation(ajena.id, user_id=ANA) is not None
+
+
+async def test_el_listado_solo_trae_lo_propio(repositorio: Repository) -> None:
+    await repositorio.create_conversation("de ana", user_id=ANA)
+    await repositorio.create_conversation("de beto", user_id=BETO)
+
+    de_ana, _ = await repositorio.list_conversations(10, None, user_id=ANA)
+    assert [c.title for c in de_ana] == ["de ana"]
+
+
+async def test_no_se_puede_renombrar_la_conversacion_de_otro(repositorio: Repository) -> None:
+    ajena = await repositorio.create_conversation("de ana", user_id=ANA)
+
+    assert await repositorio.set_title(ajena.id, "secuestrada", user_id=BETO) is None
+    intacta = await repositorio.get_conversation(ajena.id, user_id=ANA)
+    assert intacta is not None
+    assert intacta.title == "de ana"
+
+
+async def test_no_se_puede_borrar_la_conversacion_de_otro(repositorio: Repository) -> None:
+    ajena = await repositorio.create_conversation("de ana", user_id=ANA)
+
+    assert await repositorio.delete_conversation(ajena.id, user_id=BETO) is False
+    assert await repositorio.get_conversation(ajena.id, user_id=ANA) is not None
+
+
+async def test_un_mensaje_de_otro_no_se_lee_por_su_id(repositorio: Repository) -> None:
+    """`GET /messages/{id}` toma un id de recurso suelto: es el IDOR más directo
+    de la API si el filtro no está."""
+    ajena = await repositorio.create_conversation("de ana", user_id=ANA)
+    mensaje = await repositorio.add_message(ajena.id, "user", "algo privado")
+
+    assert await repositorio.get_message(mensaje.id, user_id=BETO) is None
+    assert await repositorio.get_message(mensaje.id, user_id=ANA) is not None
+
+
+async def test_sin_usuario_no_ve_lo_de_un_usuario_real(repositorio: Repository) -> None:
+    """El comportamiento de hoy: con `SIN_USUARIO` a los dos lados el filtro no
+    discrimina, que es lo que mantiene la API andando hasta el JWT. Pero no
+    mezcla con lo de un usuario de verdad."""
+    propia = await repositorio.create_conversation("del MVP", user_id=SIN_USUARIO)
+    await repositorio.create_conversation("de ana", user_id=ANA)
+
+    assert await repositorio.get_conversation(propia.id, SIN_USUARIO) is not None
+    items, _ = await repositorio.list_conversations(10, None, SIN_USUARIO)
+    assert [c.title for c in items] == ["del MVP"]

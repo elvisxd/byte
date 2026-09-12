@@ -93,7 +93,7 @@ Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
 - [x] Endpoint compatible con OpenAI: parámetro `model` con **lista blanca** (`byte` y el modelo configurado); un nombre arbitrario responde 404 y nunca llega a Ollama. El contenido pasa por el mismo tope que el endpoint nativo, así que entrar por `/v1` no saltea los límites de Byte
 
 ### Fase 4 — Multi-usuario y observabilidad
-- [ ] **Aislamiento por tenant:** conversaciones, mensajes, documentos, chunks y runs filtrados por `user_id` en cada consulta; verificar propiedad en `GET /runs/{id}/events`, `/cancel`, `/resume` (IDOR)
+- [~] **Aislamiento por tenant:** conversaciones, mensajes, documentos, chunks y runs filtrados por `user_id` en cada consulta; verificar propiedad en `GET /runs/{id}/events`, `/cancel`, `/resume` (IDOR). **El filtro ya está en las tres capas**: `rag/store.py` (Fase 2), `db/repository.py` (conversaciones y mensajes, con tests de aislamiento contra Postgres) y `RunManager.require`. Falta el usuario real: hoy todos los call sites pasan `SIN_USUARIO` y el filtro no discrimina
 - [ ] Contraseñas con argon2; JWT con expiración corta (15-60 min) y refresh; secreto JWT de 256 bits
 - [ ] `resume_token`: aleatorio, firmado, un solo uso, ligado a run y usuario
 - [ ] Langfuse Cloud: **redactar secretos y PII antes de enviar** (regex de claves API, emails, tarjetas); documentar en README que las trazas salen a un tercero

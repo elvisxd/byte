@@ -138,7 +138,7 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 **Lo que dejó anotado la revisión de la Fase 3** (hacerlo *antes* del JWT sale
 mucho más barato que después):
 
-- [ ] **`credential_id` deja de derivarse de la clave.** Hoy son los primeros 12
+- [x] **`credential_id` deja de derivarse de la clave.** Se deriva con HMAC bajo `BYTE_SECRET_KEY` —el mismo secreto que firma la cookie y el `resume_token`— así que sigue siendo estable pero ya no dice nada de la API key. Lo que sigue abajo era el porqué: Hoy son los primeros 12
   hex del SHA-256 **sin sal** de `BYTE_API_KEY` (`api/security.py:43`), y viaja
   al cliente en la cookie de sesión y dentro del `resume_token`, que la API
   devuelve en un cuerpo JSON. Contra una clave generada con `openssl rand` no
@@ -147,7 +147,7 @@ mucho más barato que después):
   el formato de los tokens: cuando pase a ser el identificador de tenant, cada
   usuario publicaría 48 bits del hash de su credencial en cada token. Tiene que
   ser un id opaco o el `user_id` de la base.
-- [ ] **Bajar el dueño al `Repository`.** `rag/store.py` ya filtra por `user_id`
+- [x] **Bajar el dueño al `Repository`.** `create_conversation`, `get_conversation`, `list_conversations`, `set_title`, `delete_conversation` y `get_message` toman `user_id`, con el mismo `IS NOT DISTINCT FROM` del RAG; `messages` filtra por JOIN con su conversación, sin columna propia. Las rutas pasan `SIN_USUARIO` explícito, así que buscar la constante da los puntos que el JWT tiene que cambiar. Seis tests de aislamiento corren contra memoria **y contra Postgres**. Lo que falta es el mapeo credencial → usuario, que llega con los usuarios reales. Lo de abajo era el porqué: `rag/store.py` ya filtra por `user_id`
   en todas sus consultas; `db/repository.py` no tiene el parámetro, y
   `CONVERSATIONS`/`MESSAGES` no tienen la columna. Todo `api/routes/conversations.py`
   recibe la credencial como `_credential` —exige autenticación y descarta la

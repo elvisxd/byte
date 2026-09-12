@@ -112,3 +112,35 @@ def test_el_bearer_sirve_en_toda_la_api_pero_solo_con_la_clave(cliente: TestClie
     assert cliente.get("/api/v1/tools", headers={"Authorization": "Bearer "}).status_code == 401
     # Sin el prefijo no es un Bearer: mandar la clave pelada no debería alcanzar.
     assert cliente.get("/api/v1/tools", headers={"Authorization": API_KEY}).status_code == 401
+
+
+def test_el_credential_id_no_revela_el_hash_de_la_clave() -> None:
+    """Ese valor sale al cliente: va en la cookie de sesión y dentro del
+    `resume_token`, que la API devuelve en un cuerpo JSON.
+
+    Si fuera un prefijo del SHA-256 sin sal de la API key —como era— serviría de
+    oráculo para confirmar los aciertos de un diccionario offline. Contra una
+    clave de `openssl rand -hex 32` da igual; contra una elegida a mano, no.
+    """
+    import hashlib
+
+    from api.security import Credentials
+
+    clave = "cambiame"
+    credenciales = Credentials(clave, "s" * 32)
+    hash_de_la_clave = hashlib.sha256(clave.encode()).hexdigest()
+
+    assert credenciales.credential_id not in hash_de_la_clave
+    assert not hash_de_la_clave.startswith(credenciales.credential_id)
+
+
+def test_el_credential_id_es_estable_entre_reinicios() -> None:
+    """El rate limiting y el dueño de un run lo necesitan estable: si cambiara
+    en cada arranque, los runs de antes quedarían sin dueño reconocible."""
+    from api.security import Credentials
+
+    primero = Credentials("la-clave", "s" * 32).credential_id
+    segundo = Credentials("la-clave", "s" * 32).credential_id
+    assert primero == segundo
+    # Y distingue credenciales distintas, que es para lo que se usa.
+    assert Credentials("otra-clave", "s" * 32).credential_id != primero

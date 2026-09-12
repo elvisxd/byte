@@ -9,6 +9,7 @@ Decisiones (ver docs/seguridad-byte.md):
 """
 
 import hashlib
+import hmac
 import secrets
 import time
 
@@ -29,9 +30,18 @@ def hash_secret(value: str) -> str:
 class Credentials:
     """Guarda el hash de la API key y valida las que llegan."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, secret_key: str = "") -> None:
         # El valor en claro no se conserva: solo su hash.
         self._key_hash = hash_secret(api_key) if api_key else ""
+        # El id se deriva con HMAC bajo el secreto de firma, no del hash de la
+        # clave: ver `credential_id`.
+        self._id = (
+            hmac.new(
+                secret_key.encode("utf-8"), self._key_hash.encode("utf-8"), hashlib.sha256
+            ).hexdigest()[:12]
+            if self._key_hash and secret_key
+            else self._key_hash[:12]
+        )
 
     @property
     def configured(self) -> bool:
@@ -39,8 +49,24 @@ class Credentials:
 
     @property
     def credential_id(self) -> str:
-        """Identificador estable y no sensible, para rate limiting y dueño del run."""
-        return self._key_hash[:12] if self._key_hash else "anon"
+        """Identificador estable y no sensible, para rate limiting y dueño del run.
+
+        **No** es un prefijo del hash de la API key, aunque sea estable como uno:
+        este valor sale hacia el cliente en la cookie de sesión y dentro del
+        `resume_token` (que la API devuelve en un cuerpo JSON), y ahí un prefijo
+        del SHA-256 sin sal de la clave sería un oráculo para confirmar aciertos
+        de un diccionario offline. Contra `openssl rand -hex 32` da igual;
+        contra una clave elegida a mano, no.
+
+        Se deriva con HMAC bajo `BYTE_SECRET_KEY`, que ya es el secreto que
+        firma esos mismos tokens: sin él, el id no dice nada de la clave. Sigue
+        siendo estable entre reinicios mientras no cambien ni la clave ni el
+        secreto, que es lo que el rate limiting y el dueño de un run necesitan.
+
+        Cuando la Fase 4 traiga usuarios reales, esto pasa a ser el `user_id` de
+        la base y esta derivación desaparece.
+        """
+        return self._id or "anon"
 
     def verify(self, provided: str | None) -> bool:
         if not self._key_hash or not provided:

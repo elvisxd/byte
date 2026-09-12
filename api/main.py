@@ -147,7 +147,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        credentials = Credentials(resolved_settings.api_key)
+        credentials = Credentials(resolved_settings.api_key, resolve_secret_key(resolved_settings))
         if not credentials.configured:
             if resolved_settings.env == "prod":
                 raise RuntimeError("BYTE_API_KEY es obligatorio con BYTE_ENV=prod")

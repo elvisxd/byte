@@ -30,9 +30,15 @@ Los tests de `test_repositorio.py` corren contra Postgres si hay uno:
 
 ```bash
 cd docker && docker compose up -d postgres && cd ..
-BYTE_TEST_DATABASE_URL=postgresql://byte:byte@localhost:5432/byte uv run pytest -q
+# Una base aparte: los tests hacen TRUNCATE, y apuntarlos a `byte` borraría
+# las conversaciones de desarrollo. El puerto sale de POSTGRES_PORT (5433 por
+# defecto en el compose), no del 5432 del contenedor.
+docker exec byte-postgres-1 psql -U byte -d postgres -c "CREATE DATABASE byte_test"
+BYTE_TEST_DATABASE_URL=postgresql://byte:byte@localhost:5433/byte_test uv run pytest -q
 ```
 
 Sin la variable se saltean. Correr los mismos tests contra las dos
-implementaciones es lo que encontró el bug de paginación del PR #9: en memoria
-pasaba, en Postgres reventaba.
+implementaciones es lo que encontró el bug de paginación del PR #9 —en memoria
+pasaba, en Postgres reventaba— y lo que después mostró que el aislamiento por
+dueño necesitaba usuarios reales en `users`: la FK de `conversations.user_id` no
+existe en la implementación en memoria.

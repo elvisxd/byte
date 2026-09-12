@@ -21,6 +21,16 @@ from models.schemas import Conversation, ConversationListItem, Message, MessageR
 logger = get_logger("db")
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+# El dueño de una conversación. `conversations.user_id` existe desde el MVP
+# (001_mvp.sql) pero nadie la escribía ni la leía: las consultas ya filtran, y
+# mientras el valor sea siempre el mismo el filtro no discrimina. Cuando el JWT
+# traiga el usuario real, reemplazar los usos de esta constante por el del
+# request — buscarla da los puntos exactos, que es para lo que existe.
+#
+# `messages` no lleva su propia columna: cuelga de `conversations` por FK, así
+# que filtrar por la conversación ya decide quién puede ver sus mensajes.
+SIN_USUARIO: str | None = None
 # Id arbitrario pero fijo para el advisory lock de las migraciones.
 MIGRATION_LOCK_ID = 8_675_309
 PREVIEW_CHARS = 120
@@ -62,16 +72,22 @@ class Repository(Protocol):
     async def shutdown(self) -> None: ...
     async def ping(self) -> bool: ...
 
-    async def create_conversation(self, title: str) -> Conversation: ...
-    async def get_conversation(self, conversation_id: str) -> Conversation | None: ...
+    async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation: ...
+    async def get_conversation(
+        self, conversation_id: str, user_id: str | None = None
+    ) -> Conversation | None: ...
     async def list_conversations(
-        self, limit: int, cursor: str | None
+        self, limit: int, cursor: str | None, user_id: str | None = None
     ) -> tuple[list[ConversationListItem], str | None]: ...
-    async def set_title(self, conversation_id: str, title: str) -> Conversation | None: ...
+    async def set_title(
+        self, conversation_id: str, title: str, user_id: str | None = None
+    ) -> Conversation | None: ...
     async def set_summary(
         self, conversation_id: str, summary: str, up_to_message_id: str | None
     ) -> Conversation | None: ...
-    async def delete_conversation(self, conversation_id: str) -> bool: ...
+    async def delete_conversation(
+        self, conversation_id: str, user_id: str | None = None
+    ) -> bool: ...
 
     async def add_message(
         self,
@@ -81,7 +97,7 @@ class Repository(Protocol):
         metadata: dict[str, Any] | None = None,
         langfuse_trace_id: str | None = None,
     ) -> Message: ...
-    async def get_message(self, message_id: str) -> Message | None: ...
+    async def get_message(self, message_id: str, user_id: str | None = None) -> Message | None: ...
     async def list_messages(
         self,
         conversation_id: str,
@@ -97,6 +113,9 @@ class MemoryRepository:
 
     def __init__(self) -> None:
         self._conversations: dict[str, Conversation] = {}
+        # Dueño por conversación. En Postgres es `conversations.user_id`, que
+        # existe desde el MVP; acá hace falta un dict propio.
+        self._duenos: dict[str, str | None] = {}
         self._messages: dict[str, list[Message]] = {}
         self._by_message_id: dict[str, Message] = {}
         self._lock = asyncio.Lock()
@@ -113,22 +132,37 @@ class MemoryRepository:
     async def ping(self) -> bool:
         return True
 
-    async def create_conversation(self, title: str) -> Conversation:
+    async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         now = _now()
         conversation = Conversation(id=_new_id(), title=title, created_at=now, updated_at=now)
         async with self._lock:
             self._conversations[conversation.id] = conversation
+            self._duenos[conversation.id] = user_id
             self._messages[conversation.id] = []
         return conversation
 
-    async def get_conversation(self, conversation_id: str) -> Conversation | None:
+    def _es_de(self, conversation_id: str, user_id: str | None) -> bool:
+        """Si esa conversación le pertenece a ese usuario.
+
+        Con `SIN_USUARIO` a los dos lados es siempre cierto, que es el
+        comportamiento de hoy; con usuarios reales, decide.
+        """
+        return self._duenos.get(conversation_id) == user_id
+
+    async def get_conversation(
+        self, conversation_id: str, user_id: str | None = None
+    ) -> Conversation | None:
+        if not self._es_de(conversation_id, user_id):
+            return None
         return self._conversations.get(conversation_id)
 
     async def list_conversations(
-        self, limit: int, cursor: str | None
+        self, limit: int, cursor: str | None, user_id: str | None = None
     ) -> tuple[list[ConversationListItem], str | None]:
         ordered = sorted(
-            self._conversations.values(), key=lambda c: (c.updated_at, c.id), reverse=True
+            (c for c in self._conversations.values() if self._es_de(c.id, user_id)),
+            key=lambda c: (c.updated_at, c.id),
+            reverse=True,
         )
         if cursor:
             decoded = _decode_cursor(cursor)
@@ -156,10 +190,12 @@ class MemoryRepository:
             return ""
         return messages[-1].content[:PREVIEW_CHARS]
 
-    async def set_title(self, conversation_id: str, title: str) -> Conversation | None:
+    async def set_title(
+        self, conversation_id: str, title: str, user_id: str | None = None
+    ) -> Conversation | None:
         async with self._lock:
             conversation = self._conversations.get(conversation_id)
-            if conversation is None:
+            if conversation is None or not self._es_de(conversation_id, user_id):
                 return None
             updated = conversation.model_copy(update={"title": title, "updated_at": _now()})
             self._conversations[conversation_id] = updated
@@ -180,11 +216,14 @@ class MemoryRepository:
             self._conversations[conversation_id] = updated
             return updated
 
-    async def delete_conversation(self, conversation_id: str) -> bool:
+    async def delete_conversation(self, conversation_id: str, user_id: str | None = None) -> bool:
         async with self._lock:
-            if conversation_id not in self._conversations:
+            if conversation_id not in self._conversations or not self._es_de(
+                conversation_id, user_id
+            ):
                 return False
             del self._conversations[conversation_id]
+            self._duenos.pop(conversation_id, None)
             for message in self._messages.pop(conversation_id, []):
                 self._by_message_id.pop(message.id, None)
             return True
@@ -218,8 +257,11 @@ class MemoryRepository:
             )
             return message
 
-    async def get_message(self, message_id: str) -> Message | None:
-        return self._by_message_id.get(message_id)
+    async def get_message(self, message_id: str, user_id: str | None = None) -> Message | None:
+        mensaje = self._by_message_id.get(message_id)
+        if mensaje is None or not self._es_de(mensaje.conversation_id, user_id):
+            return None
+        return mensaje
 
     async def list_messages(
         self,
@@ -341,39 +383,43 @@ class PostgresRepository:
     _CONVERSATION_COLS = "id, title, summary, summary_up_to_message_id, created_at, updated_at"
     _MESSAGE_COLS = "id, conversation_id, role, content, metadata, langfuse_trace_id, created_at"
 
-    async def create_conversation(self, title: str) -> Conversation:
+    async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                "INSERT INTO conversations (title) VALUES (%s) "
+                "INSERT INTO conversations (title, user_id) VALUES (%s, %s) "
                 f"RETURNING {self._CONVERSATION_COLS}",
-                (title,),
+                (title, user_id),
             )
             row = await cur.fetchone()
         return self._to_conversation(row)
 
-    async def get_conversation(self, conversation_id: str) -> Conversation | None:
+    async def get_conversation(
+        self, conversation_id: str, user_id: str | None = None
+    ) -> Conversation | None:
         if not _is_uuid(conversation_id):
             return None
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                f"SELECT {self._CONVERSATION_COLS} FROM conversations WHERE id = %s",
-                (conversation_id,),
+                f"SELECT {self._CONVERSATION_COLS} FROM conversations "
+                "WHERE id = %s AND user_id IS NOT DISTINCT FROM %s",
+                (conversation_id, user_id),
             )
             row = await cur.fetchone()
         return self._to_conversation(row) if row else None
 
     async def list_conversations(
-        self, limit: int, cursor: str | None
+        self, limit: int, cursor: str | None, user_id: str | None = None
     ) -> tuple[list[ConversationListItem], str | None]:
         # Se pide una fila extra para saber si hay página siguiente.
         decoded = _decode_cursor(cursor) if cursor else None
         params: tuple[Any, ...]
-        where = ""
+        # El filtro por dueño va siempre; el del cursor solo cuando hay página.
+        where = "WHERE c.user_id IS NOT DISTINCT FROM %s"
         if decoded:
-            where = "WHERE (c.updated_at, c.id) < (%s, %s)"
-            params = (decoded[0], decoded[1], limit + 1)
+            where += " AND (c.updated_at, c.id) < (%s, %s)"
+            params = (user_id, decoded[0], decoded[1], limit + 1)
         else:
-            params = (limit + 1,)
+            params = (user_id, limit + 1)
         query = f"""
             SELECT c.id, c.title, c.updated_at,
                    COALESCE((
@@ -405,14 +451,17 @@ class PostgresRepository:
         )
         return items, next_cursor
 
-    async def set_title(self, conversation_id: str, title: str) -> Conversation | None:
+    async def set_title(
+        self, conversation_id: str, title: str, user_id: str | None = None
+    ) -> Conversation | None:
         if not _is_uuid(conversation_id):
             return None
         async with self._pool.connection() as conn:
             cur = await conn.execute(
                 f"""UPDATE conversations SET title = %s, updated_at = now()
-                    WHERE id = %s RETURNING {self._CONVERSATION_COLS}""",
-                (title, conversation_id),
+                    WHERE id = %s AND user_id IS NOT DISTINCT FROM %s
+                    RETURNING {self._CONVERSATION_COLS}""",
+                (title, conversation_id, user_id),
             )
             row = await cur.fetchone()
         return self._to_conversation(row) if row else None
@@ -433,11 +482,14 @@ class PostgresRepository:
             row = await cur.fetchone()
         return self._to_conversation(row) if row else None
 
-    async def delete_conversation(self, conversation_id: str) -> bool:
+    async def delete_conversation(self, conversation_id: str, user_id: str | None = None) -> bool:
         if not _is_uuid(conversation_id):
             return False
         async with self._pool.connection() as conn:
-            cur = await conn.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
+            cur = await conn.execute(
+                "DELETE FROM conversations WHERE id = %s AND user_id IS NOT DISTINCT FROM %s",
+                (conversation_id, user_id),
+            )
         return cur.rowcount > 0
 
     async def add_message(
@@ -467,12 +519,19 @@ class PostgresRepository:
                 )
         return self._to_message(row)
 
-    async def get_message(self, message_id: str) -> Message | None:
+    async def get_message(self, message_id: str, user_id: str | None = None) -> Message | None:
         if not _is_uuid(message_id):
             return None
+        # `messages` no lleva `user_id`: el dueño es el de su conversación, así
+        # que el filtro va por el JOIN. Una columna propia podría desincronizarse
+        # con la de la conversación, que es la que manda.
+        cols = ", ".join(f"m.{c}" for c in self._MESSAGE_COLS.split(", "))
         async with self._pool.connection() as conn:
             cur = await conn.execute(
-                f"SELECT {self._MESSAGE_COLS} FROM messages WHERE id = %s", (message_id,)
+                f"""SELECT {cols} FROM messages m
+                    JOIN conversations c ON c.id = m.conversation_id
+                    WHERE m.id = %s AND c.user_id IS NOT DISTINCT FROM %s""",
+                (message_id, user_id),
             )
             row = await cur.fetchone()
         return self._to_message(row) if row else None

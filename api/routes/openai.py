@@ -32,7 +32,7 @@ from agent.events import AGUI
 from api.deps import Context, CredentialId, limiter, runs_limit
 from api.errors import ByteError
 from api.logging import get_logger
-from db.repository import title_from_content
+from db.repository import SIN_USUARIO, title_from_content
 from models.schemas import ChatCompletionRequest, OpenAIModel, OpenAIModelList
 
 logger = get_logger("api.openai")
@@ -151,7 +151,7 @@ async def chat_completions(
     # vino, y el mismo largo que cualquier otra conversación — este campo se
     # lista en la web y en el CLI, y la Fase 4 lo va a exportar a Langfuse.
     conversacion = await ctx.repository.create_conversation(
-        f"[openai] {title_from_content(contenido)}"
+        f"[openai] {title_from_content(contenido)}", SIN_USUARIO
     )
     # Sin `preparar` acá: `RunManager.start` ya lo llama, y la conversación
     # recién creada no puede tener un run en curso ni una aprobación pendiente.
@@ -189,7 +189,9 @@ async def chat_completions(
     if run.status == "error":
         raise ByteError("run_failed", "El run terminó con error", status_code=500)
 
-    mensaje = await ctx.repository.get_message(run.message_id) if run.message_id else None
+    mensaje = (
+        await ctx.repository.get_message(run.message_id, SIN_USUARIO) if run.message_id else None
+    )
     if mensaje is None:
         raise ByteError("run_failed", "El run no produjo respuesta", status_code=500)
 
