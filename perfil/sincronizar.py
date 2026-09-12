@@ -15,6 +15,7 @@ Esto no reescribe el CV, que es tuyo. Solo los números que envejecen solos.
     uv run python perfil/sincronizar.py --aplicar # corrige, imprime y copia
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -24,17 +25,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from perfil.actualizar import todo  # noqa: E402
 
-CV_DIR = Path.home() / "Downloads" / "cv-elvis"
+
+# Las rutas salen del entorno, no del código: son de la máquina de quien lo usa
+# —y llevan su nombre de usuario y su correo—, así que escribirlas acá las
+# publicaría junto con el repo.
+def _ruta(variable: str, defecto: str = "") -> Path | None:
+    valor = os.environ.get(variable, defecto)
+    return Path(valor).expanduser() if valor else None
+
+
+CV_DIR = _ruta("BYTE_CV_DIR", "~/Downloads/cv-elvis") or Path.home()
 HTMLS = [CV_DIR / "build" / "cv-en.html", CV_DIR / "build" / "cv-es.html"]
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-PORTFOLIO = Path("/Volumes/APPLE-SSD/dev/my-porfolio-next")
+PORTFOLIO = _ruta("BYTE_PORTFOLIO_DIR")
 # Google Drive, que es de donde salen los CV que se mandan desde el teléfono —
-# y por eso los que más importa que estén al día. La carpeta la crea la app de
-# Drive; si no está montada, se saltea sin fallar.
-# Ojo con el espacio final de "Currículum ": así se llama la carpeta en Drive.
-DRIVE = (
-    Path.home() / "Library/CloudStorage/GoogleDrive-elvisreyxd@gmail.com/Mi unidad/Currículum "
-)
+# y por eso los que más importa que estén al día. Si no está montado o no está
+# configurado, se saltea sin fallar.
+DRIVE = _ruta("BYTE_DRIVE_CV_DIR")
 
 # De qué HTML sale cada PDF, y con qué nombre se guarda en cada destino. Los
 # nombres difieren entre la carpeta de trabajo y el portfolio, así que se
@@ -121,10 +128,17 @@ def imprimir() -> bool:
         destino = CV_DIR / nombres[0]
         resultado = subprocess.run(  # noqa: S603 - rutas fijas de este archivo
             [
-                str(CHROME), "--headless", "--disable-gpu", "--no-pdf-header-footer",
-                f"--print-to-pdf={destino}", f"file://{html}",
+                str(CHROME),
+                "--headless",
+                "--disable-gpu",
+                "--no-pdf-header-footer",
+                f"--print-to-pdf={destino}",
+                f"file://{html}",
             ],
-            capture_output=True, text=True, timeout=180, check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
         )
         if not destino.is_file() or destino.stat().st_size < 10_000:
             # Un PDF de menos de 10 KB no tiene la foto ni el contenido: algo
@@ -135,8 +149,8 @@ def imprimir() -> bool:
         print(f"  ✓ {destino.name} ({destino.stat().st_size:,} bytes)")
 
         # La copia del portfolio, que es la que ve quien entra a la web.
-        publico = PORTFOLIO / "public"
-        if publico.is_dir():
+        publico = PORTFOLIO / "public" if PORTFOLIO else None
+        if publico and publico.is_dir():
             shutil.copy2(destino, publico / nombres[1])
             print(f"      → portfolio/public/{nombres[1]}")
 
@@ -146,7 +160,7 @@ def imprimir() -> bool:
             shutil.copy2(destino, DRIVE / destino.name)
             print(f"      → Drive/{destino.name}")
 
-    if ok and (PORTFOLIO / ".git").is_dir():
+    if ok and PORTFOLIO and (PORTFOLIO / ".git").is_dir():
         print("\n  El portfolio quedó con los PDF nuevos sin commitear.")
         print(f"  Revisalos y subilos:  cd {PORTFOLIO} && git add public && git commit")
     return ok

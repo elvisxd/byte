@@ -8,3 +8,17 @@
 # `openssl rand`, pero el commit quedó en main (PR #7) y gitleaks escanea todo
 # el historial. La clave nunca dio acceso a nada.
 9272e29346ec029a17a11bc432ca3b6b3759371f:.github/workflows/ci.yml:generic-api-key:59
+
+# Los secretos de mentira de tests/test_redaccion.py: `abc123def456`,
+# `sk_live_51AbCdEf…`, un JWT de ejemplo y una clave RSA vacía entre sus
+# delimitadores. Son las entradas que verifican que la redacción los atrape —
+# un archivo que prueba detección de secretos tiene que contener cosas con
+# forma de secreto, y no hay forma de escribirlo sin que un scanner las marque.
+# Ninguno vale en ningún lado.
+13935351ea2205d6de23d3453d87559e6e37cde7:tests/test_redaccion.py:generic-api-key:55
+13935351ea2205d6de23d3453d87559e6e37cde7:tests/test_redaccion.py:generic-api-key:56
+13935351ea2205d6de23d3453d87559e6e37cde7:tests/test_redaccion.py:generic-api-key:59
+fe5c576c52158e071becda9d5b2a0fba014cfb4c:tests/test_redaccion.py:stripe-access-token:202
+fe5c576c52158e071becda9d5b2a0fba014cfb4c:tests/test_redaccion.py:private-key:218
+95efbdcf5b9661d15a703bce0c0c26e29740ba17:tests/test_redaccion.py:generic-api-key:51
+95efbdcf5b9661d15a703bce0c0c26e29740ba17:tests/test_redaccion.py:jwt:36

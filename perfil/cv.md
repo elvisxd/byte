@@ -5,7 +5,8 @@
 10 years building full-stack software. Recent work: integrating large language
 models and predictive systems into products running in production.
 
-- elvisreyxd@gmail.com · +1 (407) 437-9559
+- Contacto: ver `build/cv-{en,es}.html` — el correo y el teléfono no se
+  versionan acá para que este archivo pueda vivir en un repo público
 - linkedin.com/in/elvis-pino · github.com/elvisxd · my-porfolio-next.vercel.app
 - Orlando, Florida · Open to relocation & remote work
 
