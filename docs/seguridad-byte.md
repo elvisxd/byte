@@ -87,7 +87,7 @@ Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
 - [ ] Borrado real de chunks al borrar un documento
 
 ### Fase 3 — MCP, n8n y compatibilidad OpenAI
-- [ ] Solo servidores MCP propios o revisados a mano; leer las descripciones de tools antes de conectarlos (tool poisoning)
+- [x] Solo servidores MCP propios o revisados a mano; leer las descripciones de tools antes de conectarlos (tool poisoning). `BYTE_MCP_SERVERS` es una lista blanca: el modelo no elige a qué host se conecta Byte. Solo http(s) — `stdio` implicaría lanzar procesos. Las descripciones se sanean (acotadas, en una línea, delimitadores neutralizados, atribuidas al servidor) pero **no** se envuelven con `wrap_untrusted`: medido contra qwen3:8b, envolverlas rompe el tool calling (0 de 3 llamadas contra 3 de 3). El resultado de la herramienta sí se envuelve. Una herramienta MCP no puede tapar a una nativa
 - [ ] Credenciales de n8n con el mínimo permiso; n8n en red privada
 - [ ] Si se agrega herramienta de abrir URL: **bloquear IPs privadas, `localhost`, `*.railway.internal` y endpoints de metadata** (SSRF), lista de dominios permitidos si es posible
 - [ ] Endpoint compatible con OpenAI: parámetro `model` con **lista blanca**; nunca pasar nombres de modelo arbitrarios a Ollama

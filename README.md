@@ -20,7 +20,7 @@ Python · FastAPI · LangGraph · Ollama (Qwen3-Coder-30B-A3B) · PostgreSQL + p
 Un módulo por carpeta; cada carpeta tiene su README explicando qué va ahí.
 
 ```
-api/  agent/  tools/  sandbox/  mcp/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  docs/
+api/  agent/  tools/  sandbox/  mcp_client/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  docs/
 ```
 
 ## Cómo correrlo
@@ -97,6 +97,25 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 ```
 
 ## Qué hay hoy
+
+### Fase 3 — herramientas externas por MCP
+
+- **Cliente MCP** (`mcp_client/`): los servidores se declaran en
+  `BYTE_MCP_SERVERS` como `nombre=url` y sus herramientas entran al registro del
+  agente junto a las nativas, con `source: "mcp:<nombre>"`. Un servidor caído no
+  impide arrancar, igual que Byte arranca sin Tavily o sin sandbox
+- **Lista blanca**: el modelo no elige a qué host se conecta Byte. Solo http(s):
+  `stdio` implicaría lanzar procesos, que es otra superficie de ataque
+- **Contra el tool poisoning**: los argumentos se validan contra el esquema que
+  declara el servidor antes de ejecutar; el resultado entra al prompt marcado
+  como contenido no confiable; la descripción se sanea y se atribuye
+  (`[servidor MCP 'x'] …`); y una herramienta externa no puede tapar a una
+  nativa —`code_exec` sigue siendo el sandbox de Byte
+- **La descripción no se envuelve** en los delimitadores, a diferencia del
+  resultado: medido contra qwen3:8b, envolverla rompe el tool calling (0 de 3
+  llamadas contra 3 de 3). El porqué está en `mcp_client/README.md`
+
+Falta de esta fase: el endpoint compatible con OpenAI y n8n.
 
 ### Fase 2 — memoria y RAG
 

@@ -489,8 +489,13 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     """La ventana que se queda abierta: preguntá, responde, y sigue esperando.
 
     Mantiene una sola conversación entre turnos, así que el agente se acuerda de
-    lo anterior. Ctrl-C corta la respuesta en curso pero no la sesión; para eso
-    están Ctrl-D y /salir.
+    lo anterior.
+
+    Ctrl-C no cierra de una: corta lo que esté pasando (la respuesta en curso, o
+    la línea a medio escribir) y avisa que otro seguido sí sale. Con un modelo
+    local que tarda minutos, Ctrl-C se usa sobre todo para cancelar, y perder la
+    sesión entera por querer cortar un run sería peor. Dos seguidos cierran,
+    como en Node o en el REPL de Python; Ctrl-D cierra de una.
     """
     _bienvenida(byte, url, interactivo=True)
     print()
@@ -501,15 +506,25 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
         return _error(str(exc))
 
     prompt = _color("❯ ", AMBAR)
+    armado = False  # un Ctrl-C ya recibido: el próximo cierra
     while sesion.seguir:
         try:
             entrada = input(prompt).strip()
         except EOFError:  # Ctrl-D
             print()
             break
-        except KeyboardInterrupt:  # Ctrl-C en el prompt: descarta la línea
+        except KeyboardInterrupt:
+            # Ctrl-C en el prompt: descarta la línea. El segundo seguido sale.
             print()
+            if armado:
+                break
+            armado = True
+            print(_color("(press Ctrl-C again to exit)", GRIS))
             continue
+
+        # Cualquier cosa que no sea otro Ctrl-C desarma la salida: quien siguió
+        # escribiendo no se estaba yendo.
+        armado = False
 
         if not entrada:
             continue
@@ -525,6 +540,7 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
         except KeyboardInterrupt:
             # El run sigue del lado de la API; acá solo se deja de esperarlo.
             print(_color("· stopped waiting for the answer", GRIS))
+            armado = True  # otro Ctrl-C seguido cierra, como en el prompt
             continue
         except (RuntimeError, httpx.HTTPError) as exc:
             _error(str(exc))

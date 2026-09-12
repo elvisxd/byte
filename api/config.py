@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")
+    # Servidores MCP, como `nombre=url,otro=url`. Es una lista blanca: el modelo
+    # no elige a qué host se conecta Byte. Solo http(s) — stdio implicaría que
+    # Byte lanza procesos, que es otra superficie de ataque y otra decisión.
+    # Ojo con lo que se declara acá: las descripciones de sus herramientas las
+    # lee el modelo (tool poisoning, docs/seguridad-byte.md).
+    mcp_servers: str = Field(default="", alias="BYTE_MCP_SERVERS")
+    mcp_timeout_s: float = Field(default=30.0, alias="BYTE_MCP_TIMEOUT_S")
 
     # --- Límites del agente (seguridad: costos y loops) ---
     max_iterations: int = Field(default=6, alias="BYTE_MAX_ITERATIONS")

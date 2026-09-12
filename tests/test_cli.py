@@ -606,3 +606,77 @@ def test_los_comandos_en_espanol_tambien_andan(
     _tecleado(monkeypatch, "/ayuda")
     assert cli() == 0
     assert "/exit" in capsys.readouterr().out
+
+
+# --- Salir con el teclado ---
+
+
+def _teclas(monkeypatch: pytest.MonkeyPatch, *entradas: object) -> None:
+    """Como `_tecleado`, pero una entrada puede ser una excepción (Ctrl-C)."""
+    pendientes = iter(entradas)
+
+    def falso_input(_prompt: str = "") -> str:
+        try:
+            siguiente = next(pendientes)
+        except StopIteration:
+            raise EOFError from None
+        if isinstance(siguiente, BaseException):
+            raise siguiente
+        return str(siguiente)
+
+    monkeypatch.setattr("builtins.input", falso_input)
+
+
+def test_un_ctrl_c_solo_no_cierra_el_chat(
+    cli, en_terminal, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Con un modelo local que tarda minutos, Ctrl-C se usa para cancelar: que
+    cerrara la sesión entera sería peor que no tenerlo."""
+    _teclas(monkeypatch, KeyboardInterrupt(), "hola")
+    assert cli() == 0
+    salida = capsys.readouterr().out
+    assert "again to exit" in salida, "no avisó que el próximo Ctrl-C cierra"
+    assert "Listo." in salida, "la pregunta después del Ctrl-C no se atendió"
+
+
+def test_dos_ctrl_c_seguidos_cierran_el_chat(
+    cli, en_terminal, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _teclas(monkeypatch, KeyboardInterrupt(), KeyboardInterrupt(), "esto ya no se pregunta")
+    assert cli() == 0
+    salida = capsys.readouterr().out
+    assert "Listo." not in salida, "siguió andando después del segundo Ctrl-C"
+    assert "Bye" in salida
+
+
+def test_escribir_algo_entre_medio_desarma_la_salida(
+    cli, en_terminal, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Quien siguió escribiendo no se estaba yendo: el Ctrl-C de hace tres
+    turnos no debería cerrarle la sesión."""
+    _teclas(monkeypatch, KeyboardInterrupt(), "hola", KeyboardInterrupt(), "y otra más")
+    assert cli() == 0
+    assert capsys.readouterr().out.count("Listo.") == 2, "la segunda pregunta no se atendió"
+
+
+def test_cancelar_una_respuesta_deja_armada_la_salida(
+    cli, en_terminal, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C mientras piensa cancela; otro seguido cierra, igual que en el prompt."""
+    monkeypatch.setattr(
+        byte_cli, "_preguntar_en_vivo", lambda *_a: (_ for _ in ()).throw(KeyboardInterrupt())
+    )
+    _teclas(monkeypatch, "una pregunta larga", KeyboardInterrupt(), "esto ya no se pregunta")
+    assert cli() == 0
+    salida = capsys.readouterr().out
+    assert "stopped waiting" in salida
+    assert "Listo." not in salida, "no cerró con el Ctrl-C que siguió a la cancelación"
+
+
+def test_ctrl_d_cierra_de_una(
+    cli, en_terminal, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """El atajo de siempre para cerrar una entrada no necesita confirmación."""
+    _teclas(monkeypatch)  # sin entradas: el primer input() ya da EOFError
+    assert cli() == 0
+    assert "again to exit" not in capsys.readouterr().out

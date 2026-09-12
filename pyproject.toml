@@ -26,6 +26,7 @@ dependencies = [
     "pypdf>=5.1",
     # FastAPI lo necesita para leer los uploads multipart de POST /documents.
     "python-multipart>=0.0.18",
+    "mcp>=1.12",
 ]
 
 [project.optional-dependencies]

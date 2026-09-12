@@ -53,6 +53,44 @@ def _build_rag(settings: Settings, repo: Repository) -> Any:
     return build_rag_service(settings, pool)
 
 
+async def _sumar_herramientas_mcp(
+    settings: Settings, registry: ToolRegistry, stack: AsyncExitStack
+) -> None:
+    """Conecta los servidores MCP declarados y suma sus herramientas al registro.
+
+    Se hace acá y no en `build_registry` porque conectar es asíncrono: cada
+    servidor es un handshake y un `list_tools`. Un servidor caído no impide
+    arrancar — el agente sigue con las herramientas que tenga, igual que arranca
+    sin Tavily o sin sandbox.
+
+    Un nombre repetido no pisa a una herramienta nativa: `code_exec` tiene que
+    seguir siendo el sandbox de Byte aunque un servidor externo declare otra con
+    ese nombre (docs/seguridad-byte.md, tool poisoning).
+    """
+    from mcp_client.client import conectar_servidores
+
+    herramientas, servidores = await conectar_servidores(
+        settings.mcp_servers, settings.max_tool_result_chars, settings.mcp_timeout_s
+    )
+
+    async def cerrar_todo() -> None:
+        for servidor in servidores:
+            await servidor.cerrar()
+
+    stack.push_async_callback(cerrar_todo)
+
+    for herramienta in herramientas:
+        if registry.get(herramienta.name) is not None:
+            logger.warning(
+                "mcp_herramienta_duplicada",
+                herramienta=herramienta.name,
+                origen=herramienta.source,
+                detail="ya existe una con ese nombre; se ignora la del servidor MCP",
+            )
+            continue
+        registry.add(herramienta)
+
+
 async def _build_checkpointer(settings: Settings, stack: AsyncExitStack) -> Any:
     """Checkpointer de LangGraph: Postgres cuando hay DSN, memoria en dev.
 
@@ -118,6 +156,11 @@ def create_app(
             tool_registry = registry or build_registry(
                 resolved_settings, rag.store if rag else None
             )
+            # Las herramientas MCP se suman al registro ya armado: conectar es
+            # asíncrono (handshake por servidor) y build_registry no lo es. Las
+            # conexiones viven lo que vive la app, y el stack las cierra.
+            if registry is None and resolved_settings.mcp_servers:
+                await _sumar_herramientas_mcp(resolved_settings, tool_registry, stack)
             modelo = llm or build_llm(resolved_settings)
             graph = build_graph(
                 modelo,
