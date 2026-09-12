@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -742,6 +743,26 @@ def test_sin_sesion_se_usa_la_api_key(cli, config_aparte, capsys) -> None:
     assert "sin sesión" in capsys.readouterr().out
 
 
+def _parchear_login(monkeypatch: pytest.MonkeyPatch, transporte: TestClient) -> None:
+    """El login arma su propio cliente httpx —a propósito, para no usar el token
+    de la sesión anterior— así que hace falta apuntarlo a la app de pruebas."""
+
+    class ClienteDeLogin:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "ClienteDeLogin":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, ruta: str, **kwargs: object) -> object:
+            return transporte.post(f"/api/v1{ruta}", headers=AUTH_HEADER, **kwargs)
+
+    monkeypatch.setattr(byte_cli.httpx, "Client", ClienteDeLogin)
+
+
 def test_el_login_guarda_la_sesion(
     crear_cliente: Callable[..., TestClient], config_aparte, monkeypatch, capsys
 ) -> None:
@@ -759,6 +780,7 @@ def test_el_login_guarda_la_sesion(
         json={"email": "ana@ejemplo.com", "password": "una-contraseña-larga"},
         headers=AUTH_HEADER,
     )
+    _parchear_login(monkeypatch, transporte)
     monkeypatch.setattr(getpass, "getpass", lambda *_a: "una-contraseña-larga")
 
     assert byte_cli.main(["login", "ana@ejemplo.com"]) == 0
@@ -784,11 +806,38 @@ def test_una_contrasena_incorrecta_no_deja_sesion(
         json={"email": "ana@ejemplo.com", "password": "una-contraseña-larga"},
         headers=AUTH_HEADER,
     )
+    _parchear_login(monkeypatch, transporte)
     monkeypatch.setattr(getpass, "getpass", lambda *_a: "no-es-la-correcta")
 
     assert byte_cli.main(["login", "ana@ejemplo.com"]) == 1
     assert sesion.leer("http://localhost:8000") is None
     assert "incorrect" in capsys.readouterr().err.lower()
+
+
+def test_el_login_no_usa_el_token_de_la_sesion_anterior(
+    crear_cliente: Callable[..., TestClient], config_aparte, monkeypatch
+) -> None:
+    """Un 401 de "contraseña incorrecta" es indistinguible del de "access
+    vencido": yendo por `pedir`, cada intento fallido gastaba una rotación del
+    refresh. Entrar no debería depender de estar ya adentro."""
+    import getpass
+
+    from cli import sesion
+
+    renovaciones = {"cuantas": 0}
+    monkeypatch.setattr(
+        byte_cli.Byte, "_renovar", lambda self: renovaciones.__setitem__("cuantas", 1) or False
+    )
+
+    transporte = crear_cliente()
+    monkeypatch.setenv("BYTE_API_KEY", API_KEY)
+    _parchear_transporte(monkeypatch, transporte)
+    _parchear_login(monkeypatch, transporte)
+    sesion.guardar("http://localhost:8000", "access-viejo", "refresh-viejo", "ana@ejemplo.com")
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "la-que-sea-larga")
+
+    byte_cli.main(["login", "otra@ejemplo.com"])
+    assert renovaciones["cuantas"] == 0, "el login gastó una rotación del refresh"
 
 
 def test_el_cliente_usa_el_token_cuando_hay_sesion(config_aparte) -> None:
@@ -806,3 +855,189 @@ def test_el_cliente_usa_el_token_cuando_hay_sesion(config_aparte) -> None:
     con_sesion._api_key = "la-clave"
     assert con_sesion._cabeceras() == {"Authorization": "Bearer tok"}
     assert sesion is not None  # el import se usa arriba
+
+
+def test_el_stream_tambien_renueva_el_token(config_aparte, monkeypatch) -> None:
+    """El chat arranca el run con un POST (que pasa por `pedir` y renueva) y
+    después abre el SSE. Si el access vence justo entre los dos, el stream daba
+    "credencial inválida" en medio de una respuesta — de lo más confuso que le
+    puede pasar a alguien que está escribiendo."""
+    from cli import sesion
+
+    llamadas = {"abiertas": 0, "renovaciones": 0}
+
+    class RespuestaFalsa:
+        def __init__(self, status: int) -> None:
+            self.status_code = status
+            self.headers = {"content-type": "text/event-stream"}
+            self.text = ""
+
+        def read(self) -> bytes:
+            return b""
+
+        def iter_lines(self):
+            yield "event: RUN_FINISHED"
+            yield 'data: {"status": "finished"}'
+            yield ""
+
+        def close(self) -> None:
+            return None
+
+    def abrir(self: byte_cli.Byte, _ruta: str) -> RespuestaFalsa:
+        llamadas["abiertas"] += 1
+        # El primero da 401 (access vencido), el segundo ya va con el nuevo.
+        return RespuestaFalsa(401 if llamadas["abiertas"] == 1 else 200)
+
+    def renovar(self: byte_cli.Byte) -> bool:
+        llamadas["renovaciones"] += 1
+        return True
+
+    sesion.guardar("http://localhost:8000", "vencido", "ref", "ana@ejemplo.com")
+    monkeypatch.setattr(byte_cli.Byte, "_abrir_stream", abrir)
+    monkeypatch.setattr(byte_cli.Byte, "_renovar", renovar)
+
+    with byte_cli.Byte("http://localhost:8000", "clave") as cliente:
+        eventos = list(cliente.eventos("/runs/x/events"))
+
+    assert llamadas["renovaciones"] == 1, "no renovó ante el 401 del stream"
+    assert llamadas["abiertas"] == 2, "no reintentó tras renovar"
+    assert eventos and eventos[0][0] == "RUN_FINISHED"
+
+
+def test_el_banner_dice_con_quien_estas_trabajando(cli, config_aparte, monkeypatch, capsys) -> None:
+    """Con sesión iniciada, quién sos es parte del estado: sin eso no hay forma
+    de saber si lo que escribís queda a tu nombre o al de la instancia."""
+    from cli import sesion
+
+    monkeypatch.setattr(byte_cli, "_interactiva", lambda: False)
+    sesion.guardar("http://localhost:8000", "tok", "ref", "ana@ejemplo.com")
+
+    assert cli() == 0
+    assert "ana@ejemplo.com" in capsys.readouterr().out
+
+
+def test_sin_sesion_el_banner_no_habla_de_usuarios(cli, config_aparte, capsys) -> None:
+    """La API key es el caso normal: ponerle una etiqueta sería ruido."""
+    assert cli() == 0
+    salida = capsys.readouterr().out
+    assert "@" not in salida.split("What it can use")[0]
+
+
+# --- Lo que salió de revisar la fase ---
+
+
+def test_el_archivo_de_sesion_se_endurece_si_ya_existia(config_aparte, tmp_path) -> None:
+    """El modo de `os.open` **solo aplica al crear**: un archivo preexistente en
+    0666 se quedaba en 0666, con el refresh adentro."""
+    import os
+    import stat
+
+    from cli import sesion
+
+    archivo = tmp_path / "byte" / "sesion.json"
+    archivo.parent.mkdir(parents=True)
+    archivo.write_text("{}", encoding="utf-8")
+    os.chmod(archivo, 0o666)  # noqa: S103 - el escenario a reproducir es justo este
+
+    sesion.guardar("http://localhost:8000", "tok", "ref", "ana@ejemplo.com")
+    assert stat.S_IMODE(os.stat(archivo).st_mode) == 0o600
+
+
+def test_un_symlink_no_se_lleva_el_token(config_aparte, tmp_path) -> None:
+    """Un symlink plantado en `sesion.json` se seguía: el token acababa en el
+    buzón de quien lo plantó, y `os.stat` le mostraba a la víctima un
+    tranquilizador 0600 —el del destino, no el del enlace."""
+    import os
+
+    from cli import sesion
+
+    buzon = tmp_path / "buzon.json"
+    buzon.write_text("", encoding="utf-8")
+    enlace = tmp_path / "byte" / "sesion.json"
+    enlace.parent.mkdir(parents=True)
+    os.symlink(buzon, enlace)
+
+    with pytest.raises(RuntimeError, match="de forma segura"):
+        sesion.guardar("http://localhost:8000", "tok-secreto", "ref", "ana@ejemplo.com")
+    assert buzon.read_text(encoding="utf-8") == "", "el token se filtró al symlink"
+
+
+def test_un_xdg_relativo_no_deja_el_token_en_el_directorio_actual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Con un valor relativo el token caía donde se corrió `byte`, que puede ser
+    un repo. La especificación dice ignorar lo que no sea absoluto."""
+    from cli import sesion
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", "configuracion-relativa")
+    assert "configuracion-relativa" not in sesion.ruta_visible()
+    assert sesion.ruta_visible().startswith("/")
+
+
+def test_dos_terminales_no_se_matan_la_sesion(config_aparte, monkeypatch) -> None:
+    """Dos terminales abiertas es el caso normal: las dos cargan el mismo
+    refresh al arrancar. Sin releer el archivo, la segunda presentaba uno ya
+    gastado —el servidor lo lee como reuso, revoca la familia entera— y quien no
+    hizo nada mal tenía que volver a entrar."""
+    from cli import sesion
+
+    sesion.guardar("http://localhost:8000", "access-1", "refresh-1", "ana@ejemplo.com")
+    primera = byte_cli.Byte.__new__(byte_cli.Byte)
+    primera._url = "http://localhost:8000"
+    primera._api_key = ""
+    primera._sesion = sesion.leer("http://localhost:8000")
+    segunda = byte_cli.Byte.__new__(byte_cli.Byte)
+    segunda._url = "http://localhost:8000"
+    segunda._api_key = ""
+    segunda._sesion = sesion.leer("http://localhost:8000")
+    segunda._cliente = primera._cliente = httpx.Client()
+
+    # La primera renueva (lo simula guardando lo que el servidor devolvería).
+    sesion.guardar("http://localhost:8000", "access-2", "refresh-2", "ana@ejemplo.com")
+
+    # La segunda no debería intentar canjear su refresh viejo: ya hay uno nuevo.
+    assert segunda._renovar() is True
+    assert segunda._sesion["access_token"] == "access-2"
+    assert sesion.leer("http://localhost:8000") is not None, "se borró la sesión"
+    primera._cliente.close()
+
+
+def test_el_logout_avisa_si_el_servidor_no_confirmo(config_aparte, monkeypatch, capsys) -> None:
+    """Con `BYTE_URL` terminada en barra, la URL quedaba `//api/v1/auth/logout`
+    → 404. Como `httpx.post` no levanta por status, se imprimía "sesión
+    cerrada" mientras el refresh seguía vivo 14 días."""
+    from cli import sesion
+
+    class Respuesta:
+        status_code = 404
+
+    monkeypatch.setattr(byte_cli.httpx, "post", lambda *_a, **_k: Respuesta())
+    monkeypatch.setenv("BYTE_URL", "http://localhost:8000/")
+    sesion.guardar("http://localhost:8000", "tok", "ref", "ana@ejemplo.com")
+
+    assert byte_cli.main(["logout"]) == 0
+    salida = capsys.readouterr().out
+    assert "sigue válido" in salida, "dijo que cerró sin que el servidor confirmara"
+    # Y el archivo local se borra igual: es lo único que se pudo hacer.
+    assert sesion.leer("http://localhost:8000") is None
+
+
+def test_el_logout_arma_bien_la_url_con_barra_final(config_aparte, monkeypatch) -> None:
+    """El arreglo de verdad: que la URL no tenga la doble barra."""
+    from cli import sesion
+
+    vistas: list[str] = []
+
+    class Respuesta:
+        status_code = 204
+
+    def espiar(url: str, **_kwargs: object) -> Respuesta:
+        vistas.append(url)
+        return Respuesta()
+
+    monkeypatch.setattr(byte_cli.httpx, "post", espiar)
+    monkeypatch.setenv("BYTE_URL", "http://localhost:8000/")
+    sesion.guardar("http://localhost:8000", "tok", "ref", "ana@ejemplo.com")
+
+    byte_cli.main(["logout"])
+    assert vistas == ["http://localhost:8000/api/v1/auth/logout"]

@@ -24,8 +24,17 @@ from typing import Any
 
 
 def _directorio() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME")
-    return Path(base) / "byte" if base else Path.home() / ".config" / "byte"
+    """Dónde vive la sesión.
+
+    `XDG_CONFIG_HOME` solo se respeta si es una ruta absoluta, como pide la
+    especificación: con un valor relativo el token terminaba en el directorio
+    desde el que se corrió `byte` —posiblemente dentro de un repo— en vez de en
+    el home.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME", "")
+    if base and Path(base).is_absolute():
+        return Path(base) / "byte"
+    return Path.home() / ".config" / "byte"
 
 
 def _archivo() -> Path:
@@ -46,6 +55,35 @@ def _todo() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return datos if isinstance(datos, dict) else {}
+
+
+def _escribir(datos: dict[str, Any]) -> None:
+    """Guarda el archivo garantizando que quede privado.
+
+    Tres cosas, y cada una cierra un agujero que el modo de `os.open` solo no
+    tapa:
+
+    - **`O_NOFOLLOW`**: el modo no se aplica si el archivo ya existe, y un
+      symlink plantado en `sesion.json` se seguiría — el token acabaría en el
+      buzón de quien lo plantó, mientras `os.stat` le muestra a la víctima un
+      tranquilizador 0600 (el del destino, no el del enlace).
+    - **`fchmod` sobre el descriptor**: un archivo preexistente en 0666 se
+      quedaba en 0666, con el refresh adentro. Va sobre el descriptor ya
+      abierto y no sobre la ruta, para que nadie lo cambie en el medio.
+    - **El modo en `os.open`**: para que nazca privado y no haya una ventana
+      entre crearlo y ajustarlo.
+    """
+    archivo = _archivo()
+    try:
+        descriptor = os.open(archivo, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        # ELOOP es el symlink; el resto, permisos o un directorio en el medio.
+        raise RuntimeError(
+            f"no se pudo escribir {archivo} de forma segura: {exc.strerror}"
+        ) from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as salida:
+        os.fchmod(salida.fileno(), 0o600)
+        json.dump(datos, salida, indent=2)
 
 
 def leer(url: str) -> dict[str, Any] | None:
@@ -71,12 +109,7 @@ def guardar(url: str, access_token: str, refresh_token: str, email: str) -> None
         "email": email,
     }
 
-    archivo = _archivo()
-    # Se crea con los permisos correctos desde el principio: escribir primero y
-    # ajustar después deja una ventana en la que el token es legible por otros.
-    descriptor = os.open(archivo, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as salida:
-        json.dump(datos, salida, indent=2)
+    _escribir(datos)
 
 
 def borrar(url: str) -> bool:
@@ -84,10 +117,7 @@ def borrar(url: str) -> bool:
     datos = _todo()
     if datos.pop(url.rstrip("/"), None) is None:
         return False
-    archivo = _archivo()
-    descriptor = os.open(archivo, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as salida:
-        json.dump(datos, salida, indent=2)
+    _escribir(datos)
     return True
 
 

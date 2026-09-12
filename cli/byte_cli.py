@@ -9,7 +9,6 @@ igual contra una instancia remota que contra la local.
 """
 
 import argparse
-import contextlib
 import getpass
 import json
 import os
@@ -211,9 +210,24 @@ class Byte:
         El access dura 30 minutos y el refresh 14 días: sin esto habría que
         volver a entrar cada media hora, que es justo lo que el refresh evita.
         El refresh se rota en cada uso, así que el nuevo se guarda enseguida.
+
+        **Se relee el archivo antes de renovar**, y si otra terminal ya renovó
+        se usa lo que dejó en vez de intentar de nuevo. Dos terminales abiertas
+        es el caso normal: las dos cargan el mismo refresh al arrancar, y sin
+        esto la segunda presentaba uno ya gastado — el servidor lo lee como
+        reuso, revoca la familia entera, y quien no hizo nada mal tiene que
+        volver a entrar.
         """
         if not self._sesion or not self._sesion.get("refresh_token"):
             return False
+
+        en_disco = sesion.leer(self._url)
+        if en_disco and en_disco.get("access_token") != self._sesion.get("access_token"):
+            # Otra terminal renovó mientras tanto: se toma lo suyo y listo.
+            self._sesion = en_disco
+            self._cliente.headers.update(self._cabeceras())
+            return True
+
         try:
             respuesta = self._cliente.post(
                 "/auth/refresh",
@@ -231,10 +245,14 @@ class Byte:
             return False
 
         datos = respuesta.json()
+        # Una respuesta 200 sin los campos esperados no debería salir como un
+        # traceback pelado: es un servidor que cambió, no un bug del usuario.
+        if not isinstance(datos, dict) or not datos.get("access_token"):
+            return False
         sesion.guardar(
             self._url,
             datos["access_token"],
-            datos["refresh_token"],
+            datos.get("refresh_token", ""),
             self._sesion.get("email", ""),
         )
         self._sesion = sesion.leer(self._url)
@@ -258,14 +276,29 @@ class Byte:
             raise RuntimeError(_mensaje_de_error(respuesta))
         return None if respuesta.status_code == 204 else respuesta.json()
 
+    def _abrir_stream(self, ruta: str) -> httpx.Response:
+        """Abre el stream sin leerlo, para poder mirar el código antes."""
+        peticion = self._cliente.build_request("GET", ruta, timeout=TIMEOUT_LARGO)
+        return self._cliente.send(peticion, stream=True)
+
     def eventos(self, ruta: str) -> Iterator[tuple[str, dict[str, Any]]]:
         """Los eventos AG-UI de un run, a medida que llegan.
 
         Un SSE trae bloques separados por una línea en blanco; de cada uno solo
         interesan `event:` y `data:`. Los comentarios de keepalive (`:`) se
         ignoran solos porque no tienen ninguno de los dos campos.
+
+        Un 401 acá también renueva y reintenta, igual que en `pedir`. La ventana
+        es angosta —el POST que arranca el run ya renovó hace milisegundos— pero
+        si el access vence justo entre los dos, el chat falla con "credencial
+        inválida" en medio de una respuesta, que es de lo más confuso que puede
+        pasarle a alguien que está escribiendo.
         """
-        with self._cliente.stream("GET", ruta, timeout=TIMEOUT_LARGO) as respuesta:
+        respuesta = self._abrir_stream(ruta)
+        if respuesta.status_code == 401 and self._sesion and self._renovar():
+            respuesta.close()
+            respuesta = self._abrir_stream(ruta)
+        try:
             if respuesta.status_code >= 400:
                 respuesta.read()
                 raise RuntimeError(_mensaje_de_error(respuesta))
@@ -281,6 +314,11 @@ class Byte:
                     except json.JSONDecodeError:
                         pass  # un evento ilegible no debería cortar el stream
                     tipo, datos = "", ""
+        finally:
+            # Sin esto la conexión queda abierta si quien consume el generador
+            # corta antes de tiempo — por ejemplo con Ctrl-C en medio de una
+            # respuesta, que es justo cuando más pasa.
+            respuesta.close()
 
 
 def _config() -> tuple[str, str]:
@@ -362,6 +400,10 @@ def _panel_identidad(byte: Byte, url: str, ancho: int) -> list[str]:
     except Exception:  # noqa: BLE001 - la bienvenida no puede fallar por esto
         filas.append(_centrar(_color("○ no connection", ROJO), ancho))
     filas.append(_centrar(_color(url, GRIS), ancho))
+    # Con quién se está trabajando. Sin sesión no se dice nada: la API key es
+    # el caso normal y ponerle una etiqueta sería ruido.
+    if byte.email:
+        filas.append(_centrar(_color(byte.email, CREMA), ancho))
     return filas
 
 
@@ -1013,17 +1055,30 @@ def cmd_login(byte: Byte, args: argparse.Namespace) -> int:
     que creás es tuyo y nadie más lo ve.
     """
     url, _ = _config()
-    email = args.email or input("email: ").strip()
+    email = (args.email or input("email: ")).strip()
     # La contraseña por `getpass`, que no la muestra ni la deja en el historial
     # del shell. Por eso tampoco hay un `--password`.
     password = getpass.getpass("contraseña: ")
     if not email or not password:
         return _error("hacen falta el email y la contraseña")
 
+    # El login va con la API key y **no** con el token de la sesión anterior: el
+    # 401 de "contraseña incorrecta" es indistinguible del de "access vencido",
+    # así que `pedir` intentaba renovar y gastaba una rotación del refresh por
+    # cada intento fallido. Entrar no debería depender de estar ya adentro.
+    _, clave = _config()
     try:
-        datos = byte.pedir("POST", "/auth/login", json={"email": email, "password": password})
-    except RuntimeError as exc:
-        return _error(str(exc))
+        with httpx.Client(
+            base_url=url.rstrip("/") + "/api/v1",
+            headers={"X-API-Key": clave} if clave else {},
+            timeout=30.0,
+        ) as anonimo:
+            respuesta = anonimo.post("/auth/login", json={"email": email, "password": password})
+        if respuesta.status_code >= 400:
+            return _error(_mensaje_de_error(respuesta))
+        datos = respuesta.json()
+    except httpx.HTTPError as exc:
+        return _error(f"no se pudo entrar: {type(exc).__name__}")
 
     sesion.guardar(url, datos["access_token"], datos["refresh_token"], email)
     print(_color(f"✓ hola, {email}", VERDE))
@@ -1045,14 +1100,31 @@ def cmd_logout(_byte: Byte, _args: argparse.Namespace) -> int:
 
     # Se habla con la API sin el `Byte` de afuera: su cliente ya tiene el token
     # cargado y acá hace falta mandar solo el refresh.
-    with contextlib.suppress(httpx.HTTPError):
-        httpx.post(
-            f"{url}/api/v1/auth/logout",
+    #
+    # `rstrip("/")` no es cosmético: con `BYTE_URL` terminada en barra la URL
+    # quedaba `//api/v1/auth/logout` → 404, y como `httpx.post` no levanta por
+    # status se imprimía "sesión cerrada" mientras el refresh seguía vivo 14
+    # días. `sesion.leer/borrar` sí normalizan, así que la parte local
+    # funcionaba y nada delataba el fallo.
+    revocado = False
+    try:
+        respuesta = httpx.post(
+            f"{url.rstrip('/')}/api/v1/auth/logout",
             json={"refresh_token": guardada.get("refresh_token", "")},
             timeout=10.0,
         )
+        revocado = respuesta.status_code < 400
+    except httpx.HTTPError:
+        revocado = False
+
     sesion.borrar(url)
-    print(_color("✓ sesión cerrada", VERDE))
+    if revocado:
+        print(_color("✓ sesión cerrada", VERDE))
+        return 0
+    # Borrar el archivo local es lo único que se pudo hacer: hay que decirlo,
+    # porque el refresh sigue valiendo para quien lo tenga.
+    print(_color("✓ sesión borrada de esta máquina", VERDE))
+    print(_color("  ⚠ el servidor no confirmó la revocación: el token sigue válido allá", AMBAR))
     return 0
 
 

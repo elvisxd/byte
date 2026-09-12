@@ -37,8 +37,19 @@ refresh que vale 14 días— y se renueva solo cuando el access vence a los 30
 minutos, así que no hay que volver a entrar. Hay una sesión por instancia:
 apuntar `BYTE_URL` a otra no pisa la local.
 
-`logout` revoca el refresh en el servidor además de borrar el archivo: borrarlo
-solo dejaría la sesión viva 14 días para quien tuviera el token.
+El archivo se escribe con `O_NOFOLLOW` y se le ajustan los permisos sobre el
+descriptor: sin lo primero, un symlink plantado ahí se llevaría el token; sin lo
+segundo, un archivo que ya existiera con permisos laxos se quedaría así.
+
+Con **dos terminales abiertas** —el caso normal— la que renueva segunda relee el
+archivo antes de intentarlo: si la otra ya renovó, usa lo que dejó. Sin eso
+presentaría un refresh gastado, el servidor lo leería como reuso y revocaría la
+sesión de las dos.
+
+`logout` revoca el refresh en el servidor además de borrar el archivo —borrarlo
+solo dejaría la sesión viva 14 días para quien tuviera el token— y **avisa si el
+servidor no confirmó**: el archivo local se borra igual, pero saber que el token
+sigue vivo allá es lo que permite hacer algo al respecto.
 
 Para escribir `byte` a secas, un alias en tu shell:
 
