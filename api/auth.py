@@ -1,0 +1,127 @@
+"""Usuarios: contraseñas con argon2 y JWT de vida corta.
+
+Es la mitad de la Fase 4 que convierte `SIN_USUARIO` en alguien. Lo que no
+cambia: los endpoints siguen siendo los mismos y la API key sigue valiendo
+(docs/api-contrato-byte.md). Un JWT es otra forma de llegar, no otra API.
+
+Decisiones (docs/seguridad-byte.md):
+
+- **argon2id** para las contraseñas, con los parámetros por defecto de
+  `argon2-cffi`, que sigue las recomendaciones del RFC 9106. No se elige a mano
+  un coste: la librería lo sube cuando el consenso cambia, y `check_needs_rehash`
+  deja migrar los hashes viejos en el próximo login sin pedirle nada al usuario.
+- **JWT de 30 minutos.** El contrato pide 15-60. Corto porque no hay revocación:
+  un token robado vale hasta que expire, y no hay lista negra que lo corte.
+- **El secreto es `BYTE_SECRET_KEY`**, el mismo que firma la cookie y los tokens
+  de un solo uso. Un secreto aparte para JWT sería una variable más que rotar y
+  un archivo más donde olvidarla; el checklist pide 256 bits, que es lo que
+  `resolve_secret_key` ya exige.
+- **El login no dice si el email existe.** Responde lo mismo ante un email
+  desconocido y una contraseña incorrecta, y gasta el mismo tiempo: sin eso,
+  `/auth/login` es un oráculo para enumerar usuarios.
+"""
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
+
+from api.logging import get_logger
+
+logger = get_logger("api.auth")
+
+ALGORITMO = "HS256"
+
+# Un hash de descarte para gastar el mismo tiempo cuando el email no existe. Sin
+# esto, el login responde mucho más rápido ante un usuario desconocido que ante
+# una contraseña incorrecta, y esa diferencia se mide: es una forma de enumerar
+# quién está registrado.
+_HASH_SEÑUELO = (
+    "$argon2id$v=19$m=65536,t=3,p=4$c2Vub3Vlbm9zZW51ZWxv$"
+    "j8iC1cMMvoMzjhfpR3fPCGGiKlMgg0M2llH1V1x6y0Y"
+)
+
+
+class Passwords:
+    """Hashea y verifica contraseñas con argon2id."""
+
+    def __init__(self) -> None:
+        self._hasher = PasswordHasher()
+
+    def hash(self, password: str) -> str:
+        return self._hasher.hash(password)
+
+    def verify(self, password_hash: str, password: str) -> bool:
+        """Si la contraseña corresponde a ese hash.
+
+        Se atrapa `VerificationError` entera, no solo `VerifyMismatchError`: un
+        hash corrupto o truncado en la base levanta la clase padre, y eso tiene
+        que ser un login fallido, no un 500 que además delata que el usuario
+        existe. `InvalidHashError` cubre el caso de un valor que ni siquiera
+        parece un hash.
+        """
+        try:
+            self._hasher.verify(password_hash, password)
+        except (VerificationError, InvalidHashError):
+            return False
+        return True
+
+    def gastar_tiempo(self) -> None:
+        """Verifica contra un hash de descarte, para que un email desconocido
+        cueste lo mismo que una contraseña incorrecta."""
+        self.verify(_HASH_SEÑUELO, "no importa")
+
+    def necesita_rehash(self, password_hash: str) -> bool:
+        """Si el hash quedó con parámetros viejos. Se rehashea en el login, que
+        es el único momento en que la contraseña en claro está disponible."""
+        try:
+            return self._hasher.check_needs_rehash(password_hash)
+        except InvalidHashError:
+            return False
+
+
+class JWTService:
+    """Emite y verifica los access token."""
+
+    def __init__(self, secret_key: str, ttl_s: int) -> None:
+        self._secret = secret_key
+        self._ttl_s = ttl_s
+
+    @property
+    def ttl_s(self) -> int:
+        return self._ttl_s
+
+    def issue(self, user_id: str) -> str:
+        ahora = datetime.now(UTC)
+        return jwt.encode(
+            {
+                "sub": user_id,
+                "iat": ahora,
+                "exp": ahora + timedelta(seconds=self._ttl_s),
+            },
+            self._secret,
+            algorithm=ALGORITMO,
+        )
+
+    def verify(self, token: str | None) -> str | None:
+        """El `user_id` del token, o `None` si no sirve.
+
+        `algorithms` explícito y `require: ["sub", "exp"]`: sin lo primero, un
+        token con `alg: none` pasaría; sin lo segundo, uno sin `exp` valdría
+        para siempre.
+        """
+        if not token:
+            return None
+        try:
+            datos: dict[str, Any] = jwt.decode(
+                token,
+                self._secret,
+                algorithms=[ALGORITMO],
+                options={"require": ["sub", "exp"]},
+            )
+        except jwt.InvalidTokenError:
+            return None
+        sub = datos.get("sub")
+        return sub if isinstance(sub, str) and sub else None

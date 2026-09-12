@@ -7,10 +7,12 @@ from fastapi import Depends, Request
 from slowapi import Limiter
 
 from agent.runner import RunManager
+from api.auth import JWTService, Passwords
 from api.config import Settings, get_settings
 from api.errors import ByteError
 from api.security import SESSION_COOKIE, Credentials, TokenService
 from db.repository import Repository
+from models.schemas import User
 from tools.base import ToolRegistry
 
 
@@ -21,6 +23,8 @@ class AppContext:
     settings: Settings
     credentials: Credentials
     tokens: TokenService
+    passwords: Passwords
+    jwt: JWTService
     repository: Repository
     runs: RunManager
     registry: ToolRegistry
@@ -38,6 +42,14 @@ def get_context(request: Request) -> AppContext:
 Context = Annotated[AppContext, Depends(get_context)]
 
 
+def _bearer(request: Request) -> str | None:
+    """El valor de `Authorization: Bearer`, si lo hay."""
+    autorizacion = request.headers.get("Authorization", "")
+    if not autorizacion.startswith("Bearer "):
+        return None
+    return autorizacion[7:].strip() or None
+
+
 def credential_from_request(request: Request) -> str | None:
     """Identifica la credencial: X-API-Key (CLI), Bearer (clientes OpenAI) o
     cookie de sesión (web).
@@ -50,13 +62,17 @@ def credential_from_request(request: Request) -> str | None:
     api_key = request.headers.get("X-API-Key")
     if api_key and ctx.credentials.verify(api_key):
         return ctx.credentials.credential_id
-    # `Authorization: Bearer` es lo único que mandan los clientes de OpenAI
-    # (Open WebUI, Continue.dev, el SDK): sin esto, /v1/chat/completions sería
-    # inalcanzable para ellos. Es la misma clave, por otro header.
-    autorizacion = request.headers.get("Authorization", "")
-    if autorizacion.startswith("Bearer "):
-        clave = autorizacion[7:].strip()
-        if clave and ctx.credentials.verify(clave):
+    # `Authorization: Bearer` lleva dos cosas distintas, y se prueban en este
+    # orden: primero el JWT de un usuario (Fase 4), después la API key estática,
+    # que es lo único que mandan los clientes de OpenAI y lo que n8n guarda en
+    # sus credenciales. Un JWT válido gana porque identifica a alguien; la clave
+    # es una credencial de instancia.
+    portador = _bearer(request)
+    if portador:
+        user_id = ctx.jwt.verify(portador)
+        if user_id:
+            return user_id
+        if ctx.credentials.verify(portador):
             return ctx.credentials.credential_id
     session = request.cookies.get(SESSION_COOKIE)
     verified = ctx.tokens.verify_session(session)
@@ -73,6 +89,25 @@ async def require_credential(request: Request) -> str:
 
 
 CredentialId = Annotated[str, Depends(require_credential)]
+
+
+async def require_user(request: Request) -> User:
+    """El usuario del JWT, para los endpoints que necesitan una persona.
+
+    La API key no sirve acá: identifica a la instancia, no a alguien. `/me` con
+    una API key no tendría qué responder.
+    """
+    ctx: AppContext | None = getattr(request.app.state, "ctx", None)
+    user_id = ctx.jwt.verify(_bearer(request)) if ctx else None
+    usuario = await ctx.repository.get_user(user_id) if ctx and user_id else None
+    if usuario is None:
+        # 401 y no 403: falta la credencial correcta, no permisos. Y el mismo
+        # mensaje para un token inválido que para uno de un usuario borrado.
+        raise ByteError("unauthorized", "Hace falta un token de usuario", status_code=401)
+    return usuario
+
+
+CurrentUser = Annotated[User, Depends(require_user)]
 
 
 def rate_limit_key(request: Request) -> str:

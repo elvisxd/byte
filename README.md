@@ -99,6 +99,22 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 
 ## Qué hay hoy
 
+### Fase 4 (en curso) — usuarios con JWT
+
+- **`POST /auth/register`, `POST /auth/login`, `GET /me`**: contraseñas con
+  **argon2id** y un JWT de 30 minutos. El token va en `Authorization: Bearer`,
+  el mismo header que la API key —se prueba primero el JWT y después la clave—,
+  así que los clientes de OpenAI y n8n siguen funcionando sin cambios
+- **El login no dice si un email existe**: mismo mensaje y mismo tiempo ante un
+  email desconocido y una contraseña incorrecta, para que no se pueda enumerar
+  quién está registrado
+- **El filtro por dueño está en las tres capas** (documentos, conversaciones y
+  runs), con tests de aislamiento que corren también contra Postgres
+
+Falta que el usuario del JWT reemplace a `SIN_USUARIO` en las rutas: hoy alguien
+se autentica, pero las consultas siguen pasando la constante. Y falta el
+refresh: el token vence a los 30 minutos y hay que volver a entrar.
+
 ### Fase 3 — herramientas externas por MCP
 
 - **Cliente MCP** (`mcp_client/`): los servidores se declaran en

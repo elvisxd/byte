@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # Los events_token duran 60 s y son de un solo uso (contrato de la API).
     events_token_ttl_s: int = Field(default=60, alias="BYTE_EVENTS_TOKEN_TTL_S")
     session_ttl_s: int = Field(default=86400, alias="BYTE_SESSION_TTL_S")
+    # 30 minutos: el contrato pide 15-60. Corto porque no hay revocación — un
+    # token robado vale hasta que expire y no hay lista negra que lo corte.
+    jwt_ttl_s: int = Field(default=1800, alias="BYTE_JWT_TTL_S")
     # Del otro lado del modo seguro hay una persona decidiendo: el token dura
     # más que el del stream, y mientras tanto el run pausado no se descarta.
     resume_token_ttl_s: int = Field(default=3600, alias="BYTE_RESUME_TOKEN_TTL_S")

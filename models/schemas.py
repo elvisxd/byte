@@ -8,7 +8,7 @@ como resultados de búsqueda, nunca como recurso propio.
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 MessageRole = Literal["user", "assistant", "tool"]
 RunStatusValue = Literal["running", "paused", "finished", "cancelled", "error"]
@@ -28,6 +28,39 @@ class Message(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     langfuse_trace_id: str | None = None
     created_at: datetime
+
+
+class User(BaseModel):
+    """Un usuario. El hash de la contraseña nunca sale de `db/`: este modelo es
+    lo que la API puede devolver."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    created_at: datetime
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    # 12 caracteres como mínimo, que es lo que recomienda NIST para una
+    # contraseña sin complejidad obligatoria. El tope existe porque argon2 hashea
+    # lo que le den: sin él, un cuerpo de 1 MB es un DoS de CPU por request.
+    password: str = Field(min_length=12, max_length=256)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=256)
+
+
+class TokenResponse(BaseModel):
+    """El formato que pide el contrato, que es el de OAuth2 password grant."""
+
+    access_token: str
+    # "bearer" es el tipo de token de OAuth2, no un secreto (S105 lo confunde).
+    token_type: Literal["bearer"] = "bearer"  # noqa: S105
+    expires_in: int
 
 
 class Conversation(BaseModel):

@@ -129,7 +129,7 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 - [x] Sumar n8n como módulo opcional conectado por MCP: ingesta automática de documentos y un canal externo (WhatsApp o email). Tres workflows en `n8n/`: ingesta al RAG, canal de email (se eligió sobre WhatsApp: no necesita cuenta de empresa ni aprobación de Meta) y n8n como servidor MCP. Servicio en el compose bajo el perfil `n8n`. Probado con n8n 2.38.7: importan sin errores y Byte usa una herramienta de n8n de punta a punta
 
 ### Fase 4 — API completa, debugging y observabilidad (estimación: 2 semanas)
-- [ ] Autenticación JWT multi-usuario (argon2, expiración corta) y aislamiento por `user_id` en todas las consultas y endpoints de runs
+- [~] Autenticación JWT multi-usuario (argon2, expiración corta) y aislamiento por `user_id` en todas las consultas y endpoints de runs. **Hecho:** `POST /auth/register`, `POST /auth/login` (JWT de 30 min, HS256 bajo `BYTE_SECRET_KEY`) y `GET /me`; contraseñas con argon2id y rehash automático en el login; el Bearer acepta JWT o API key, en ese orden. El filtro por dueño está en las tres capas. **Falta:** que el `user_id` del JWT *reemplace* a `SIN_USUARIO` en las rutas — hoy un usuario se autentica pero todas las consultas siguen pasando la constante
 - [ ] Redacción de PII/secretos antes de enviar trazas a Langfuse
 - [ ] Bugsink self-hosted (1 contenedor) para tracking de errores
 - [ ] Langfuse Cloud (plan gratuito) para trazas del agente, guardando `langfuse_trace_id` en `MESSAGES`

@@ -372,3 +372,64 @@ async def test_sin_usuario_no_ve_lo_de_un_usuario_real(repositorio: Repository) 
     assert await repositorio.get_conversation(propia.id, SIN_USUARIO) is not None
     items, _ = await repositorio.list_conversations(10, None, SIN_USUARIO)
     assert [c.title for c in items] == ["del MVP"]
+
+
+# --- Usuarios (Fase 4) ---
+
+
+async def test_crear_y_buscar_un_usuario(repositorio: Repository) -> None:
+    creado = await repositorio.create_user("ana@ejemplo.com", "hash-falso")
+    assert creado is not None
+
+    encontrado = await repositorio.get_user_by_email("ana@ejemplo.com")
+    assert encontrado is not None
+    usuario, password_hash = encontrado
+    assert usuario.id == creado.id
+    assert password_hash == "hash-falso"
+    assert (await repositorio.get_user(creado.id)).email == "ana@ejemplo.com"
+
+
+async def test_el_email_es_unico(repositorio: Repository) -> None:
+    """Lo decide el UNIQUE de la tabla, no un SELECT previo: entre consultar y
+    escribir pueden entrar dos registros con el mismo email."""
+    assert await repositorio.create_user("ana@ejemplo.com", "h1") is not None
+    assert await repositorio.create_user("ana@ejemplo.com", "h2") is None
+
+
+async def test_el_email_se_normaliza(repositorio: Repository) -> None:
+    """`Ana@X.com` y `ana@x.com` son la misma persona."""
+    await repositorio.create_user("  ANA@Ejemplo.com  ", "h")
+    assert await repositorio.get_user_by_email("ana@ejemplo.com") is not None
+    assert await repositorio.create_user("ana@ejemplo.com", "h2") is None
+
+
+async def test_un_usuario_que_no_existe_no_rompe(repositorio: Repository) -> None:
+    assert await repositorio.get_user_by_email("nadie@ejemplo.com") is None
+    assert await repositorio.get_user("no-es-un-uuid") is None
+    assert await repositorio.get_user("99999999-9999-4999-8999-999999999999") is None
+
+
+async def test_se_puede_migrar_el_hash(repositorio: Repository) -> None:
+    """El login rehashea cuando los parámetros de argon2 quedaron viejos."""
+    creado = await repositorio.create_user("ana@ejemplo.com", "hash-viejo")
+    assert creado is not None
+
+    assert await repositorio.set_password_hash(creado.id, "hash-nuevo") is True
+    _, guardado = await repositorio.get_user_by_email("ana@ejemplo.com")
+    assert guardado == "hash-nuevo"
+
+
+async def test_borrar_un_usuario_arrastra_sus_conversaciones(repositorio: Repository) -> None:
+    """La FK es `ON DELETE CASCADE`: no pueden quedar conversaciones sin dueño
+    apuntando a un usuario que ya no existe."""
+    if not isinstance(repositorio, PostgresRepository):
+        pytest.skip("la implementación en memoria no tiene integridad referencial")
+
+    creado = await repositorio.create_user("ana@ejemplo.com", "h")
+    assert creado is not None
+    conversacion = await repositorio.create_conversation("suya", user_id=creado.id)
+
+    async with repositorio.pool.connection() as conn:
+        await conn.execute("DELETE FROM users WHERE id = %s", (creado.id,))
+
+    assert await repositorio.get_conversation(conversacion.id, user_id=creado.id) is None

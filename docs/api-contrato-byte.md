@@ -131,7 +131,13 @@ Si se quiere GraphQL en el CV: **Strawberry** montado en `/graphql` con *queries
 ---
 
 ## Autenticación — Fase 4
-**POST `/auth/register`** `{ email, password }` → `201` · **POST `/auth/login`** → `{ "access_token", "token_type": "bearer", "expires_in" }` · **GET `/me`**
+**Implementado.** **POST `/auth/register`** `{ email, password }` → `201 User` (`409 conflict` si el email ya está) · **POST `/auth/login`** → `{ "access_token", "token_type": "bearer", "expires_in" }` · **GET `/me`** → `User`.
+
+- La contraseña pide 12 caracteres como mínimo y 256 como máximo: argon2 hashea lo que le den, y sin tope un cuerpo grande es un DoS de CPU por request.
+- El email se normaliza (minúsculas, sin espacios) y es único.
+- El JWT va en `Authorization: Bearer`, el **mismo header** que la API key: se prueba primero el JWT y después la clave, así que los clientes de OpenAI y n8n siguen andando sin cambios.
+- `GET /me` **solo** responde con un JWT: una API key identifica a la instancia, no a alguien.
+- `POST /auth/login` responde lo mismo —y tarda lo mismo— ante un email desconocido y una contraseña incorrecta. Los dos endpoints van bajo el rate limit de runs, que es el más estricto.
 
 ---
 

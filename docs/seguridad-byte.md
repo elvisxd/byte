@@ -94,7 +94,7 @@ Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
 
 ### Fase 4 — Multi-usuario y observabilidad
 - [~] **Aislamiento por tenant:** conversaciones, mensajes, documentos, chunks y runs filtrados por `user_id` en cada consulta; verificar propiedad en `GET /runs/{id}/events`, `/cancel`, `/resume` (IDOR). **El filtro ya está en las tres capas**: `rag/store.py` (Fase 2), `db/repository.py` (conversaciones y mensajes, con tests de aislamiento contra Postgres) y `RunManager.require`. Falta el usuario real: hoy todos los call sites pasan `SIN_USUARIO` y el filtro no discrimina
-- [ ] Contraseñas con argon2; JWT con expiración corta (15-60 min) y refresh; secreto JWT de 256 bits
+- [~] Contraseñas con **argon2id** (parámetros por defecto de `argon2-cffi`, RFC 9106; `check_needs_rehash` migra los hashes viejos en el login); **JWT de 30 min** firmado con `BYTE_SECRET_KEY`, que `resolve_secret_key` ya exige de 256 bits. `algorithms` explícito y `require: [sub, exp]`: un `alg: none` o un token sin expiración no valen. El login no distingue email inexistente de contraseña incorrecta, ni en el mensaje ni en el tiempo. **Falta el refresh**: hoy el token vence a los 30 min y hay que volver a entrar
 - [ ] `resume_token`: aleatorio, firmado, un solo uso, ligado a run y usuario
 - [ ] Langfuse Cloud: **redactar secretos y PII antes de enviar** (regex de claves API, emails, tarjetas); documentar en README que las trazas salen a un tercero
 - [ ] Bugsink con scrubbing de datos sensibles; `structlog` sin prompts completos en INFO

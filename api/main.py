@@ -21,11 +21,13 @@ from slowapi.middleware import SlowAPIMiddleware
 from agent.graph import build_graph
 from agent.llm import build_llm
 from agent.runner import RunManager
+from api.auth import JWTService, Passwords
 from api.config import Settings, get_settings
 from api.deps import AppContext, limiter
 from api.errors import error_response, register_error_handlers
 from api.logging import configure_logging, get_logger, new_request_id, set_request_id
 from api.routes import (
+    auth,
     conversations,
     documents,
     execute,
@@ -208,6 +210,8 @@ def create_app(
                 settings=resolved_settings,
                 credentials=credentials,
                 tokens=tokens,
+                passwords=Passwords(),
+                jwt=JWTService(resolve_secret_key(resolved_settings), resolved_settings.jwt_ttl_s),
                 repository=repo,
                 runs=run_manager,
                 registry=tool_registry,
@@ -316,6 +320,7 @@ def create_app(
     }
     for router in (
         health.router,
+        auth.router,
         session.router,
         conversations.router,
         runs.router,

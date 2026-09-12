@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from api.logging import get_logger
-from models.schemas import Conversation, ConversationListItem, Message, MessageRole
+from models.schemas import Conversation, ConversationListItem, Message, MessageRole, User
 
 logger = get_logger("db")
 
@@ -72,6 +72,12 @@ class Repository(Protocol):
     async def shutdown(self) -> None: ...
     async def ping(self) -> bool: ...
 
+    # --- Usuarios (Fase 4) ---
+    async def create_user(self, email: str, password_hash: str) -> User | None: ...
+    async def get_user_by_email(self, email: str) -> tuple[User, str] | None: ...
+    async def get_user(self, user_id: str) -> User | None: ...
+    async def set_password_hash(self, user_id: str, password_hash: str) -> bool: ...
+
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation: ...
     async def get_conversation(
         self, conversation_id: str, user_id: str | None = None
@@ -112,6 +118,9 @@ class MemoryRepository:
     """Implementación en memoria. Sin durabilidad: solo dev y tests."""
 
     def __init__(self) -> None:
+        # Usuario → (usuario, hash de su contraseña). El hash vive acá y no en
+        # el modelo: `User` es lo que la API puede devolver.
+        self._usuarios: dict[str, tuple[User, str]] = {}
         self._conversations: dict[str, Conversation] = {}
         # Dueño por conversación. En Postgres es `conversations.user_id`, que
         # existe desde el MVP; acá hace falta un dict propio.
@@ -131,6 +140,34 @@ class MemoryRepository:
 
     async def ping(self) -> bool:
         return True
+
+    async def create_user(self, email: str, password_hash: str) -> User | None:
+        """Devuelve `None` si el email ya está tomado, como el UNIQUE de Postgres."""
+        email = email.strip().lower()
+        async with self._lock:
+            if any(u.email == email for u, _ in self._usuarios.values()):
+                return None
+            usuario = User(id=_new_id(), email=email, created_at=_now())
+            self._usuarios[usuario.id] = (usuario, password_hash)
+            return usuario
+
+    async def get_user_by_email(self, email: str) -> tuple[User, str] | None:
+        """El usuario y su hash. El hash solo sale por acá, para el login."""
+        email = email.strip().lower()
+        return next((par for par in self._usuarios.values() if par[0].email == email), None)
+
+    async def get_user(self, user_id: str) -> User | None:
+        par = self._usuarios.get(user_id)
+        return par[0] if par else None
+
+    async def set_password_hash(self, user_id: str, password_hash: str) -> bool:
+        """Para migrar un hash con parámetros viejos en el login."""
+        async with self._lock:
+            par = self._usuarios.get(user_id)
+            if par is None:
+                return False
+            self._usuarios[user_id] = (par[0], password_hash)
+            return True
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         now = _now()
@@ -382,6 +419,56 @@ class PostgresRepository:
 
     _CONVERSATION_COLS = "id, title, summary, summary_up_to_message_id, created_at, updated_at"
     _MESSAGE_COLS = "id, conversation_id, role, content, metadata, langfuse_trace_id, created_at"
+
+    @staticmethod
+    def _to_user(row: dict[str, Any]) -> User:
+        return User(id=str(row["id"]), email=row["email"], created_at=row["created_at"])
+
+    async def create_user(self, email: str, password_hash: str) -> User | None:
+        """`None` si el email ya está tomado: lo decide el UNIQUE de la tabla.
+
+        `ON CONFLICT DO NOTHING` en vez de consultar antes: entre el SELECT y el
+        INSERT pueden entrar dos registros con el mismo email, y el índice único
+        es la única garantía real.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                """INSERT INTO users (email, password_hash) VALUES (%s, %s)
+                   ON CONFLICT (email) DO NOTHING
+                   RETURNING id, email, created_at""",
+                (email.strip().lower(), password_hash),
+            )
+            row = await cur.fetchone()
+        return self._to_user(row) if row else None
+
+    async def get_user_by_email(self, email: str) -> tuple[User, str] | None:
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT id, email, created_at, password_hash FROM users WHERE email = %s",
+                (email.strip().lower(),),
+            )
+            row = await cur.fetchone()
+        return (self._to_user(row), row["password_hash"]) if row else None
+
+    async def get_user(self, user_id: str) -> User | None:
+        if not _is_uuid(user_id):
+            return None
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT id, email, created_at FROM users WHERE id = %s", (user_id,)
+            )
+            row = await cur.fetchone()
+        return self._to_user(row) if row else None
+
+    async def set_password_hash(self, user_id: str, password_hash: str) -> bool:
+        """Para migrar un hash con parámetros viejos en el login."""
+        if not _is_uuid(user_id):
+            return False
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id)
+            )
+        return cur.rowcount > 0
 
     async def create_conversation(self, title: str, user_id: str | None = None) -> Conversation:
         async with self._pool.connection() as conn:
