@@ -175,6 +175,25 @@ def test_varios_workers_no_arrancan_en_prod(monkeypatch: pytest.MonkeyPatch) -> 
         _avisar_si_hay_varios_workers("prod")
 
 
+def test_varios_workers_no_arrancan_en_railway_aunque_el_env_diga_dev(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Olvidarse de `BYTE_ENV=prod` no puede degradar el corte a un warning.
+
+    `env` tiene default `dev`, así que el guard anterior —que solo cortaba con
+    `env == "prod"`— protegía justo el caso en que uno se acordó de configurar
+    la variable, y se callaba en el que se la olvidó. Ese es el orden al revés:
+    la duda tiene que ser motivo para cortar. Railway exporta `RAILWAY_*` en
+    todos sus deploys sin que nadie lo configure.
+    """
+    from api.main import _avisar_si_hay_varios_workers
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    with pytest.raises(RuntimeError, match="WEB_CONCURRENCY"):
+        _avisar_si_hay_varios_workers("dev")
+
+
 @pytest.mark.parametrize("valor", ["1", "", "no-es-un-numero"])
 def test_un_worker_o_un_valor_raro_no_molestan(
     valor: str, monkeypatch: pytest.MonkeyPatch, caplog

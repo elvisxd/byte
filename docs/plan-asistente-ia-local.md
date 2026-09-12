@@ -174,8 +174,12 @@ mucho más barato que después):
   worker.** Ya era una restricción deliberada —el Dockerfile fija
   `--workers 1` y lo dice— pero era solo un comentario: `WEB_CONCURRENCY` lo
   pisa sin tocar el Dockerfile, y es lo que varios PaaS definen solos (Railway
-  incluido, que es el deploy de la Fase 7). Ahora se chequea al arrancar: en
-  dev avisa, en prod no arranca. Mover los runs y los nonces a Postgres es lo
+  incluido, que es el deploy de la Fase 7). Ahora se chequea al arrancar y se
+  corta salvo que sea dev en una máquina de desarrollo: `env` tiene default
+  `dev`, así que cortar solo con `BYTE_ENV=prod` dejaba el olvido —el caso que
+  de verdad pasa— degradado a un warning entre los logs del arranque. Una
+  variable `RAILWAY_*`, que define la plataforma sin que nadie se acuerde,
+  alcanza para no arrancar. Mover los runs y los nonces a Postgres es lo
   que haría falta para escalar horizontalmente, y queda para cuando eso se
   necesite de verdad.
 

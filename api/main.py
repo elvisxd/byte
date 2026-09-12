@@ -77,9 +77,19 @@ def _avisar_si_hay_varios_workers(env: str) -> None:
     del `events_token` deja de ser una garantía — el mismo token se canjea una
     vez por worker.
 
-    El Dockerfile fija `--workers 1`, pero `WEB_CONCURRENCY` lo pisa sin tocarlo
-    y es lo que varios PaaS —Railway incluido, que es el deploy de la Fase 7—
-    definen solo. En prod se corta el arranque; en dev alcanza con avisar.
+    El Dockerfile fija `--workers 1` y eso le gana al entorno —uvicorn solo mira
+    `WEB_CONCURRENCY` si no se le pasó el flag— pero el flag deja de estar en
+    cuanto alguien corre la app de otra forma, que es exactamente lo que hace un
+    PaaS con su propio start command. Railway define `WEB_CONCURRENCY` solo, en
+    función de la memoria del plan.
+
+    **Se corta salvo que sea dev en una máquina de desarrollo.** La versión
+    anterior cortaba solo con `env == "prod"`, y eso protegía el caso en que uno
+    se acordó de poner `BYTE_ENV=prod` — pero `env` tiene default `dev`, así que
+    olvidarse de la variable en Railway degradaba el corte a un warning entre
+    los logs del arranque. La señal que hay que respetar es la duda: si no se
+    puede afirmar que esto es una máquina de desarrollo, se corta. `RAILWAY_*`
+    lo define la plataforma y no depende de que nadie se acuerde de nada.
     """
     try:
         workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
@@ -93,7 +103,11 @@ def _avisar_si_hay_varios_workers(env: str) -> None:
         "workers el SSE no encuentra runs de otro proceso y los tokens de un "
         "solo uso valen una vez por worker. Sacá WEB_CONCURRENCY o dejalo en 1."
     )
-    if env == "prod":
+    # Un PaaS se delata solo: Railway exporta RAILWAY_ENVIRONMENT en todos sus
+    # deploys. Si hay alguna de estas, `env=dev` es un olvido, no una intención.
+    en_un_paas = any(nombre.startswith("RAILWAY_") for nombre in os.environ)
+
+    if env == "prod" or en_un_paas:
         raise RuntimeError(f"WEB_CONCURRENCY={workers} no está soportado. {detalle}")
     logger.warning("varios_workers", workers=workers, detail=detalle)
 
