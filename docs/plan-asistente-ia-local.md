@@ -135,6 +135,42 @@ Objetivo: un agente funcionando de punta a punta, chico pero real. Sin RAG, MCP,
 - [ ] Langfuse Cloud (plan gratuito) para trazas del agente, guardando `langfuse_trace_id` en `MESSAGES`
 - [ ] Ampliar la cobertura de tests (el CI con pytest existe desde el MVP)
 
+**Lo que dejó anotado la revisión de la Fase 3** (hacerlo *antes* del JWT sale
+mucho más barato que después):
+
+- [ ] **`credential_id` deja de derivarse de la clave.** Hoy son los primeros 12
+  hex del SHA-256 **sin sal** de `BYTE_API_KEY` (`api/security.py:43`), y viaja
+  al cliente en la cookie de sesión y dentro del `resume_token`, que la API
+  devuelve en un cuerpo JSON. Contra una clave generada con `openssl rand` no
+  importa; contra una elegida a mano —o contra el `cambiame` del `.env.example`—
+  es un diccionario offline con oráculo de confirmación. Y ya está cementado en
+  el formato de los tokens: cuando pase a ser el identificador de tenant, cada
+  usuario publicaría 48 bits del hash de su credencial en cada token. Tiene que
+  ser un id opaco o el `user_id` de la base.
+- [ ] **Bajar el dueño al `Repository`.** `rag/store.py` ya filtra por `user_id`
+  en todas sus consultas; `db/repository.py` no tiene el parámetro, y
+  `CONVERSATIONS`/`MESSAGES` no tienen la columna. Todo `api/routes/conversations.py`
+  recibe la credencial como `_credential` —exige autenticación y descarta la
+  identidad—, así que con multi-usuario cada una de esas rutas es un IDOR. El
+  modelo a copiar está en `RunManager.require` (`agent/runner.py:191`), que
+  compara el dueño y responde 404 para no permitir enumeración.
+- [ ] **Decidir qué pasa con `Authorization: Bearer`.** Desde la Fase 3 acepta
+  la API key estática, que es lo único que mandan los clientes de OpenAI y lo
+  que n8n guarda en sus credenciales. El contrato ya planea un JWT en el mismo
+  header: van a convivir un token de 15-60 min y una clave eterna, y hay que
+  decidir explícitamente si la clave sigue valiendo para `/v1` o si esos
+  clientes pasan a un token de servicio aparte.
+- [ ] **Política de retención para las conversaciones de `/v1`.** Cada pedido
+  crea una, y no se borran: con el canal de email de n8n activo, cada correo
+  entrante deja una permanente. Además el título lleva los primeros 60
+  caracteres del mensaje, así que la redacción de PII para Langfuse tiene que
+  cubrir `CONVERSATIONS.title`, no solo el cuerpo.
+- [ ] **`resume_token` y `events_token` de un solo uso solo valen con un worker.**
+  Los nonces gastados viven en un dict de proceso (`api/security.py:70`), igual
+  que los runs (`agent/runner.py:186`). Con más de un worker el mismo token se
+  canjea una vez por cada uno, y `require()` no encuentra los runs de otro
+  proceso.
+
 ### Fase 5 — Frontend real con la identidad Byte (estimación: 2-3 semanas)
 - [x] Evolucionar la página HTML mínima a FastAPI + Jinja con la identidad Byte, consumiendo el streaming SSE (sin HTMX: el chat ya tenía resuelta la reconexión con `Last-Event-ID`)
 - [x] Las pantallas diseñadas en Canva: chat, historial agrupado por `updated_at` (Hoy / Ayer / Esta semana) en la sidebar, y carga de documentos con arrastrar y soltar y `status` en etiquetas. Sin barra de progreso: la ingesta no reporta avance parcial, así que el estado es de tres valores

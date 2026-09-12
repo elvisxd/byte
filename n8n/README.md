@@ -96,9 +96,18 @@ Lo que el checklist pedía (`docs/seguridad-byte.md`, Fase 3), y por qué:
 - **Credenciales con el mínimo permiso.** La de Byte solo necesita subir
   documentos y preguntar; la de correo, una casilla dedicada y una contraseña de
   aplicación, no la del correo personal.
-- **El canal de email filtra por remitente.** Sin eso, cualquiera que sepa la
-  dirección le gasta el modelo, le hace buscar en la web y le llena el
-  historial. Es la condición más importante de ese workflow.
+- **El canal de email filtra por remitente**, comparando la dirección extraída
+  de los ángulos contra la lista, como elemento exacto. Sin eso, cualquiera que
+  sepa la dirección le gasta el modelo, le hace buscar en la web y le llena el
+  historial.
+
+  **Pero el `From` lo escribe quien manda el correo.** Falsificarlo es escribir
+  una línea, y el flujo responde a esa misma dirección: quien lo haga recibe la
+  respuesta. Lo que de verdad frena eso es SPF/DKIM/DMARC **del proveedor de la
+  casilla** —Gmail y Fastmail rechazan o marcan un correo que los falla antes de
+  que llegue a IMAP—, no el workflow. Si la casilla está en un servidor propio
+  sin esas comprobaciones, el filtro por remitente no alcanza: ahí conviene
+  chequear `Authentication-Results` en el mismo nodo antes de dejar pasar.
 - **Las descripciones de las herramientas MCP son texto de afuera.** Byte las
   sanea y las atribuye (`[servidor MCP 'n8n'] …`), pero eso protege del prompt
   injection, no de conectar un servidor que hace algo distinto de lo que dice:

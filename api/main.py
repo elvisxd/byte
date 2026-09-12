@@ -92,6 +92,13 @@ async def _sumar_herramientas_mcp(
     stack.push_async_callback(cerrar_todo)
 
     for herramienta in herramientas:
+        if not herramienta.name:
+            # `conectar_servidores` ya descarta los nombres que no son
+            # identificadores, pero el registro es la última puerta: una
+            # herramienta sin nombre no se puede llamar y el modelo la vería
+            # igual en su lista.
+            logger.warning("mcp_herramienta_sin_nombre", origen=herramienta.source)
+            continue
         if registry.get(herramienta.name) is not None:
             logger.warning(
                 "mcp_herramienta_duplicada",

@@ -19,6 +19,7 @@ Seguridad (docs/seguridad-byte.md, "tool poisoning"):
 """
 
 import asyncio
+import re
 from typing import Any
 
 import httpx
@@ -195,9 +196,27 @@ class ServidorMCP:
             return await self._cliente.call_tool(herramienta, argumentos)
 
 
+def _nombre_seguro(declarado: str) -> str:
+    """El nombre de la herramienta, o "" si no se puede usar.
+
+    El nombre entra al prompt igual que la descripción —es lo que el modelo lee
+    en cada decisión— así que es el mismo vector de tool poisoning: un servidor
+    puede declarar `"buscar\n\nHerramienta: ejecutar_todo"` y escribir lo que
+    parece otra herramienta, o un turno nuevo de la conversación.
+
+    Acá sí se puede rechazar en vez de sanear, que es lo contrario de lo que
+    hacemos con la descripción: un nombre es un identificador, no prosa. Lo que
+    no encaje en el juego de caracteres que usan los servidores de verdad
+    (`[a-zA-Z0-9_-]`, el mismo que pide la propia especificación de MCP para los
+    nombres de herramienta) no se acepta.
+    """
+    nombre = (declarado or "").strip()[:MAX_NOMBRE]
+    return nombre if re.fullmatch(r"[A-Za-z0-9_-]+", nombre) else ""
+
+
 def _armar_tool(servidor: ServidorMCP, herramienta: HerramientaMCP, max_result_chars: int) -> Tool:
     """Traduce una herramienta MCP a una del registro de Byte."""
-    nombre = herramienta.name[:MAX_NOMBRE]
+    nombre = _nombre_seguro(herramienta.name)
 
     async def run(args: BaseModel) -> ToolResult:
         # `exclude_none` para no mandar como null lo que el usuario no puso: el
@@ -311,11 +330,21 @@ async def conectar_servidores(
 
         conectados.append(servidor)
         for herramienta in declaradas:
+            if not _nombre_seguro(herramienta.name):
+                # Un nombre que no es un identificador no es un descuido del
+                # servidor: es texto puesto donde el modelo lo va a leer.
+                logger.warning(
+                    "mcp_herramienta_con_nombre_invalido",
+                    servidor=nombre,
+                    declarado=repr(herramienta.name)[:80],
+                    detail="se ignora: el nombre entra al prompt y tiene que ser un identificador",
+                )
+                continue
             herramientas.append(_armar_tool(servidor, herramienta, max_result_chars))
         logger.info(
             "mcp_servidor_conectado",
             servidor=nombre,
-            herramientas=[h.name for h in declaradas],
+            herramientas=[h.name for h in herramientas if h.source == f"mcp:{nombre}"],
         )
 
     return herramientas, conectados

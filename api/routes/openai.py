@@ -32,6 +32,7 @@ from agent.events import AGUI
 from api.deps import Context, CredentialId, limiter, runs_limit
 from api.errors import ByteError
 from api.logging import get_logger
+from db.repository import title_from_content
 from models.schemas import ChatCompletionRequest, OpenAIModel, OpenAIModelList
 
 logger = get_logger("api.openai")
@@ -145,7 +146,13 @@ async def chat_completions(
     # Una conversación por pedido: el cliente de OpenAI manda su historial
     # completo cada vez y no tiene dónde guardar un id de Byte. Quedan en la
     # base como cualquier otra, así que se ven en la web y en `byte conversations`.
-    conversacion = await ctx.repository.create_conversation(f"[openai] {contenido[:60]}")
+    # El título se arma como en el endpoint nativo (`title_from_content`): aplana
+    # espacios y corta con elipsis. Lleva el prefijo para distinguir de dónde
+    # vino, y el mismo largo que cualquier otra conversación — este campo se
+    # lista en la web y en el CLI, y la Fase 4 lo va a exportar a Langfuse.
+    conversacion = await ctx.repository.create_conversation(
+        f"[openai] {title_from_content(contenido)}"
+    )
     # Sin `preparar` acá: `RunManager.start` ya lo llama, y la conversación
     # recién creada no puede tener un run en curso ni una aprobación pendiente.
     # Llamarlo dos veces duplicaba un viaje al checkpointer por pedido.
