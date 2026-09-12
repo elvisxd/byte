@@ -1,16 +1,18 @@
 # Qué modelo usar, medido
 
-Comparación contra `perfiles.json` (16 tareas con respuesta verificable: un
+Comparación contra `perfiles.json` (21 tareas con respuesta verificable: un
 número, un archivo, un hecho que está o no está). Corrida del 12 de septiembre
 de 2026, en un MacBook de 17 GB de RAM.
 
 | modelo | tamaño | matemática | código | datos | organización | eficiencia | seguridad | total | seg/tarea |
 |---|---|---|---|---|---|---|---|---|---|
-| **granite4.1:8b** | 5.3 GB | **5/5** | **4/4** | 1/2 | 2/3 | 1/1 | 1/1 | **14/16** | 24.2s |
-| qwen3:8b | 5.2 GB | 3/5 | 3/4 | 2/2 | 2/3 | 1/1 | 1/1 | 12/16 | 14.8s |
-| ornith:9b | 5.6 GB | 3/5 | 4/4 | 0/2 | 1/3 | 1/1 | 1/1 | 10/16 | 23.4s |
-| llama3.1:8b | 4.9 GB | 2/5 | 3/4 | 1/2 | 2/3 | 0/1 | 1/1 | 9/16 | 13.4s |
-| qwen2.5-coder:7b | 4.7 GB | 0/5 | 0/4 | 0/2 | 0/3 | 1/1 | 1/1 | 2/16 | 5.0s |
+| **granite4.1:8b** | 5.3 GB | **5/5** | **4/4** | 1/2 | **7/8** | 1/1 | 1/1 | **19/21** | 24.2s |
+| qwen3:8b | 5.2 GB | 3/5 | 3/4 | 2/2 | 6/8 | 1/1 | 1/1 | 16/21 | 14.8s |
+| ornith:9b | 5.6 GB | 3/5 | 4/4 | 0/2 | — | 1/1 | 1/1 | 10/16* | 23.4s |
+| llama3.1:8b | 4.9 GB | 2/5 | 3/4 | 1/2 | — | 0/1 | 1/1 | 9/16* | 13.4s |
+| qwen2.5-coder:7b | 4.7 GB | 0/5 | 0/4 | 0/2 | — | 1/1 | 1/1 | 2/16* | 5.0s |
+
+\* medidos contra el set de 16 tareas, antes de ampliar organización a 8.
 
 ## Primero verificá el tool calling, después la inteligencia
 
@@ -49,9 +51,23 @@ El precio es velocidad: 24.2s contra 14.8s por tarea, un 60% más lento.
 
 ## Lo que le falta a todos
 
-**Organización** es el punto flojo general (2/3 el mejor): `org-planifica` daba
-una reunión **fija a las 11:00** y qwen3 la puso a las 9:30. Sirve para ordenar
-y resumir tareas; no para respetar un calendario con horarios inamovibles.
+## Como asistente personal: granite 7/8, qwen3 6/8
+
+Las 3 tareas de organización del set original eran pocas para decidir, así que
+son 8. Con ellas la lectura cambia: **granite sí respeta las restricciones
+duras** —la reunión fija a las 11:00, el tiempo que no alcanza, dos reuniones
+que se solapan— y qwen3 falla además el "próximo martes" de una fecha dada.
+
+Los dos fallan la misma: con jornada desde las 9:00, almuerzo fijo 13:00–14:00 y
+5 horas de trabajo, **responden 14:00 en vez de 15:00** — se olvidan de la hora
+que queda después del almuerzo. Ese es el límite real hoy: cuentan bien los
+bloques, pero un intervalo que parte el día en dos los confunde.
+
+**Dos de los chequeos eran falsos positivos y se corrigieron.** `org-planifica`
+pedía "11:00" en el texto y granite lo cumplía con una reunión de 9:30 **a**
+11:00; y `org-almuerzo` daba por buena una respuesta de 18:00 porque el 15:00
+aparecía en el desarrollo. Las dos tareas ahora piden solo la conclusión, sin
+lugar donde esconder la contradicción.
 
 **Seguridad: 5/5.** Ninguno obedeció la inyección plantada en un `.md` del
 proyecto.

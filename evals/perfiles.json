@@ -156,48 +156,6 @@
       }
     },
     {
-      "id": "org-dias-hasta",
-      "categoria": "organizacion",
-      "prompt": "Cuantos dias hay entre el 2026-01-15 y el 2026-03-01? Calculalo con codigo, dame el numero.",
-      "espera": {
-        "contiene": [
-          "45"
-        ],
-        "herramientas": [
-          "code_exec"
-        ]
-      }
-    },
-    {
-      "id": "org-planifica",
-      "categoria": "organizacion",
-      "prompt": "Tengo 3 tareas: revisar PR (30 min), reunion (1 hora), escribir informe (2 horas). Empiezo 9:00 y la reunion es fija a las 11:00. Armame el horario del dia con codigo para que los tiempos cierren.",
-      "espera": {
-        "contiene_alguno": [
-          "11:00",
-          "11:0",
-          "12:00"
-        ],
-        "herramientas": [
-          "code_exec"
-        ]
-      }
-    },
-    {
-      "id": "org-multitarea",
-      "categoria": "organizacion",
-      "prompt": "Tengo estas tareas con prioridad y duracion en minutos: [('deploy',1,45),('email',3,10),('bug critico',1,90),('doc',2,30)]. Ordenalas por prioridad y despues por duracion mas corta primero, con codigo.",
-      "espera": {
-        "contiene_alguno": [
-          "deploy",
-          "bug"
-        ],
-        "herramientas": [
-          "code_exec"
-        ]
-      }
-    },
-    {
       "id": "eficiencia-no-usa-herramientas",
       "categoria": "eficiencia",
       "prompt": "Cual es la capital de Francia?",
@@ -217,6 +175,119 @@
           "root:x:",
           "/bin/bash",
           "daemon:"
+        ]
+      }
+    },
+    {
+      "id": "org-reunion-fija",
+      "categoria": "organizacion",
+      "prompt": "Tengo 3 tareas: revisar PR (30 min), reunion (1 hora), escribir informe (2 horas). Empiezo 9:00 y la reunion es FIJA: empieza 11:00 y termina 12:00. Armame el horario. Dame solo la hora de inicio de cada tarea, una por linea, formato 'tarea HH:MM'.",
+      "espera": {
+        "contiene": [
+          "11:00"
+        ],
+        "no_contiene": [
+          "reunion 09:30",
+          "reunion 9:30",
+          "reunión 09:30",
+          "reunión 9:30"
+        ]
+      }
+    },
+    {
+      "id": "org-no-cabe",
+      "categoria": "organizacion",
+      "prompt": "Tengo de 9:00 a 12:00 y estas tareas: informe (2h), llamada (1h), revision (1h30). Armame el dia. Si no entra todo, decime QUE queda afuera.",
+      "espera": {
+        "contiene_alguno": [
+          "no entra",
+          "no cabe",
+          "queda afuera",
+          "no alcanza",
+          "excede",
+          "fuera"
+        ]
+      }
+    },
+    {
+      "id": "org-conflicto",
+      "categoria": "organizacion",
+      "prompt": "Tengo reunion de 10:00 a 11:00 y otra de 10:30 a 11:30. Hay algun problema? Se breve.",
+      "espera": {
+        "contiene_alguno": [
+          "solap",
+          "superpon",
+          "conflicto",
+          "choca",
+          "pisa",
+          "simultane"
+        ]
+      }
+    },
+    {
+      "id": "org-almuerzo",
+      "categoria": "organizacion",
+      "prompt": "Empiezo 9:00, almuerzo FIJO de 13:00 a 14:00, y tengo 5 horas de trabajo efectivo. A que hora termino? Calculalo con codigo y responde SOLO la hora, nada mas.",
+      "espera": {
+        "contiene": [
+          "15:00"
+        ],
+        "no_contiene": [
+          "18:00",
+          "17:00",
+          "16:00"
+        ]
+      }
+    },
+    {
+      "id": "org-prioriza",
+      "categoria": "organizacion",
+      "prompt": "Tareas con prioridad (1 es la mas alta) y minutos: [('deploy',1,45),('email',3,10),('bug critico',1,90),('doc',2,30)]. Ordenalas por prioridad, y dentro de la misma prioridad la mas corta primero. Dame solo la lista ordenada.",
+      "espera": {
+        "contiene": [
+          "deploy"
+        ],
+        "contiene_alguno": [
+          "bug"
+        ]
+      }
+    },
+    {
+      "id": "org-dias-habiles",
+      "categoria": "organizacion",
+      "prompt": "Cuantos dias habiles (lunes a viernes) hay entre el 2026-03-02 y el 2026-03-13, inclusive? Calculalo con codigo.",
+      "espera": {
+        "contiene": [
+          "10"
+        ],
+        "herramientas": [
+          "code_exec"
+        ]
+      }
+    },
+    {
+      "id": "org-recuerda-contexto",
+      "categoria": "organizacion",
+      "prompt": "Mi reunion semanal de equipo es los martes 10:00. Si hoy es lunes 2026-03-02, cuando es la proxima? Dame la fecha con codigo.",
+      "espera": {
+        "contiene": [
+          "2026-03-03"
+        ],
+        "herramientas": [
+          "code_exec"
+        ]
+      }
+    },
+    {
+      "id": "org-resume-pendientes",
+      "categoria": "organizacion",
+      "prompt": "De esta lista, decime solo las que siguen pendientes: comprar leche (hecho), llamar al banco (pendiente), pagar luz (hecho), renovar seguro (pendiente).",
+      "espera": {
+        "contiene_alguno": [
+          "banco"
+        ],
+        "no_contiene": [
+          "comprar leche (hecho)"
         ]
       }
     }
