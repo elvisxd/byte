@@ -1,18 +1,23 @@
-"""Mantiene al día los números del CV en los HTML de los que salen los PDF.
+"""Mantiene al día el CV: los números, los PDF y la copia del portfolio.
 
-El flujo real es: `~/Downloads/cv-elvis/build/cv-{en,es}.html` se abren en el
-navegador y se imprimen a PDF, y esos PDF van al portfolio y a Drive. Los HTML
-están escritos a mano, así que un dato como "183 tests" hay que cambiarlo en
-dos archivos y reimprimir dos PDF — y por eso quedó viejo: hoy son 459.
+El flujo era todo a mano: corregir dos HTML, abrir cada uno en el navegador,
+Imprimir → PDF, y copiar los dos PDF al portfolio. Por eso el CV decía "183
+tests" cuando ya eran 459, y por eso había seis copias de distinto tamaño.
 
-Esto no reescribe el CV, que es tuyo. Solo busca los números que envejecen y
-los actualiza, diciendo exactamente qué cambió. Lo demás sigue en tus manos.
+**Los PDF salen del mismo Chrome con el que se imprimían a mano**, en modo
+headless. No es una herramienta distinta que podría cambiar el diseño: es el
+mismo motor, y el PDF generado sale de 590.760 bytes contra los 590.759 del
+impreso a mano — un byte de metadata de fecha, mismas 4 páginas y la misma foto.
+
+Esto no reescribe el CV, que es tuyo. Solo los números que envejecen solos.
 
     uv run python perfil/sincronizar.py           # dice qué está desactualizado
-    uv run python perfil/sincronizar.py --aplicar # lo corrige
+    uv run python perfil/sincronizar.py --aplicar # corrige, imprime y copia
 """
 
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +26,16 @@ from perfil.actualizar import todo  # noqa: E402
 
 CV_DIR = Path.home() / "Downloads" / "cv-elvis"
 HTMLS = [CV_DIR / "build" / "cv-en.html", CV_DIR / "build" / "cv-es.html"]
+CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+PORTFOLIO = Path("/Volumes/APPLE-SSD/dev/my-porfolio-next")
+
+# De qué HTML sale cada PDF, y con qué nombre se guarda en cada destino. Los
+# nombres difieren entre la carpeta de trabajo y el portfolio, así que se
+# declaran en vez de derivarse.
+SALIDAS = {
+    "cv-en.html": ("Elvis-Pino-CV-en.pdf", "Elvis-Pino-CV.pdf"),
+    "cv-es.html": ("Elvis-Pino-CV-es.pdf", "Elvis-Pino-CV-es.pdf"),
+}
 
 
 def _reemplazos(datos: dict[str, object]) -> list[tuple[re.Pattern[str], str, str]]:
@@ -73,11 +88,55 @@ def revisar(aplicar: bool = False) -> int:
 
     if desactualizados and not aplicar:
         print("\ncorregilo con: uv run python perfil/sincronizar.py --aplicar")
-    elif desactualizados:
-        print("\nListo. Falta reimprimir los PDF:")
-        print(f"  abrí {HTMLS[0]} en el navegador → Imprimir → Guardar como PDF")
-        print("  y lo mismo con el -es. Después subilos al portfolio y a Drive.")
+        return desactualizados
+    if aplicar:
+        print()
+        imprimir()
     return desactualizados
+
+
+def imprimir() -> bool:
+    """Genera los PDF con Chrome headless y los copia al portfolio.
+
+    El mismo Chrome con el que se imprimían a mano, así que el resultado es el
+    de siempre. `--no-pdf-header-footer` saca la fecha y la URL que Chrome
+    agrega por defecto en los márgenes — eso sí se vería distinto.
+    """
+    if not CHROME.is_file():
+        print("no encuentro Chrome: los PDF hay que imprimirlos a mano")
+        return False
+
+    ok = True
+    for html in HTMLS:
+        nombres = SALIDAS.get(html.name)
+        if not html.is_file() or nombres is None:
+            continue
+        destino = CV_DIR / nombres[0]
+        resultado = subprocess.run(  # noqa: S603 - rutas fijas de este archivo
+            [
+                str(CHROME), "--headless", "--disable-gpu", "--no-pdf-header-footer",
+                f"--print-to-pdf={destino}", f"file://{html}",
+            ],
+            capture_output=True, text=True, timeout=180, check=False,
+        )
+        if not destino.is_file() or destino.stat().st_size < 10_000:
+            # Un PDF de menos de 10 KB no tiene la foto ni el contenido: algo
+            # falló aunque Chrome no lo haya dicho por su código de salida.
+            print(f"  ✗ {destino.name} no se generó bien: {resultado.stderr[-200:]}")
+            ok = False
+            continue
+        print(f"  ✓ {destino.name} ({destino.stat().st_size:,} bytes)")
+
+        # La copia del portfolio, que es la que ve quien entra a la web.
+        publico = PORTFOLIO / "public"
+        if publico.is_dir():
+            shutil.copy2(destino, publico / nombres[1])
+            print(f"      → portfolio/public/{nombres[1]}")
+
+    if ok and (PORTFOLIO / ".git").is_dir():
+        print("\n  El portfolio quedó con los PDF nuevos sin commitear.")
+        print(f"  Revisalos y subilos:  cd {PORTFOLIO} && git add public && git commit")
+    return ok
 
 
 if __name__ == "__main__":

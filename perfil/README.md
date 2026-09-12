@@ -46,8 +46,16 @@ uv run python perfil/sincronizar.py            # dice qué está viejo
 uv run python perfil/sincronizar.py --aplicar  # lo corrige
 ```
 
-Reimprimir los PDF sigue siendo manual: el navegador es lo que da el resultado
-que ya te gusta, y automatizarlo con otra herramienta cambiaría el diseño.
+Los PDF se generan con **el mismo Chrome** con el que se imprimían a mano, en
+modo headless — no es otra herramienta que podría cambiar el diseño, es el mismo
+motor. El generado sale de 590.760 bytes contra los 590.759 del impreso a mano:
+un byte de metadata de fecha, las mismas 4 páginas y la misma foto.
+
+Y se copian solos a `portfolio/public/`. Lo único que queda en tus manos es
+revisarlos y hacer el commit del portfolio, que es una decisión de publicar.
+
+Google Drive no está montado como carpeta local, así que esas copias siguen
+siendo manuales. Si montás Drive para escritorio, se puede agregar.
 
 ## Cómo se mantiene
 
