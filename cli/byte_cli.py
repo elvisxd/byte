@@ -84,7 +84,25 @@ class Estado:
     stderr para no ensuciar una salida redirigida. Sin terminal no dibuja nada.
     """
 
-    CUADROS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    CUADROS = "✢✳✻✽✻✳"
+
+    # Palabras que rotan mientras el modelo piensa, en vez de un "Working" fijo.
+    # Un modelo local tarda decenas de segundos y la línea quieta parece colgada;
+    # que cambie cada pocos segundos dice "sigo acá" sin prometer progreso que no
+    # se puede medir. Solo se usan cuando el verbo es genérico: si el stream dijo
+    # "Searching the web", eso es información de verdad y no se pisa.
+    OCURRENCIAS = (
+        "Reticulating",
+        "Pondering",
+        "Percolating",
+        "Noodling",
+        "Simmering",
+        "Cogitating",
+        "Ruminating",
+        "Marinating",
+    )
+    # Cada cuántos segundos cambia la palabra.
+    CADA = 4.0
 
     def __init__(self, texto: str = "Working") -> None:
         self._texto = texto
@@ -156,13 +174,29 @@ class Estado:
                 texto, detalle = self._texto, self._detalle
             cuadro = self.CUADROS[i % len(self.CUADROS)]
             segundos = time.monotonic() - self._arranque
-            cola = f" {GRIS}{detalle}{FIN}" if detalle else ""
+
+            # El verbo genérico se reemplaza por una palabra que rota; uno
+            # específico ("Searching the web") se respeta, porque dice algo que
+            # la palabra inventada no sabe.
+            # Con el verbo genérico la palabra rota y el paréntesis aporta el
+            # "thinking"; con uno específico ("Searching the web") ese mismo
+            # texto ya está a la izquierda, y repetirlo adentro solo gasta
+            # ancho de línea.
+            if texto == "Working":
+                palabra = self.OCURRENCIAS[int(segundos / self.CADA) % len(self.OCURRENCIAS)]
+                dentro = f"{segundos:.0f}s · thinking"
+            else:
+                palabra = texto
+                dentro = f"{segundos:.0f}s"
+
+            # `detalle` —la consulta, el archivo— va adentro cuando lo hay.
+            if detalle:
+                dentro += f" · {detalle}"
             sys.stderr.write(
-                f"\r\033[2K{AMBAR}{cuadro}{FIN} {CREMA}{texto}{FIN}"
-                f"{cola} {GRIS}{segundos:.0f}s{FIN}"
+                f"\r\033[2K{AMBAR}{cuadro}{FIN} {CREMA}{palabra}…{FIN} {GRIS}({dentro}){FIN}"
             )
             sys.stderr.flush()
-            time.sleep(0.08)
+            time.sleep(0.12)
             i += 1
 
 
@@ -634,6 +668,13 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
         if not entrada:
             continue
 
+        # La pregunta se vuelve a escribir en gris, arriba de su respuesta.
+        # `input()` deja lo tipeado pegado a lo que venga después, y con
+        # respuestas largas —o después de una línea de trabajo— no se distingue
+        # dónde termina lo que preguntaste y empieza lo que contestó. Repetirla
+        # cuesta dos líneas y convierte la sesión en algo que se puede releer.
+        _eco_de_la_pregunta(entrada)
+
         if entrada.startswith("/"):
             _comando_del_chat(byte, entrada, sesion)
             if sesion.seguir:
@@ -886,6 +927,33 @@ def _preguntar_en_vivo(byte: Byte, conversacion: str, pregunta: str, safe: bool)
     }
 
 
+def _eco_de_la_pregunta(pregunta: str) -> None:
+    """Reescribe la pregunta arriba de su respuesta, para poder releer la sesión.
+
+    El `input()` ya dejó lo tipeado en pantalla, pegado a lo que venga después:
+    con una respuesta larga no se distingue dónde termina lo que preguntaste y
+    empieza lo que contestó. Acá se **reemplaza** esa línea por la misma en gris,
+    con aire arriba y abajo.
+
+    Reemplazar y no repetir: imprimirla de nuevo la deja dos veces, una vez en el
+    color del prompt y otra en gris. Se sube una línea (`\033[F`), se borra
+    (`\033[2K`) y se escribe la versión final.
+
+    Una pregunta de varias líneas no se toca: habría que contar cuántas ocupó
+    después del ajuste al ancho de la terminal, y equivocarse borra la respuesta
+    anterior. Ahí alcanza con el aire.
+
+    Solo en pantalla: redirigido a un archivo, el eco sería ruido.
+    """
+    if not _en_pantalla():
+        return
+    cabe = len(pregunta) + 2 <= shutil.get_terminal_size((80, 24)).columns
+    if "\n" not in pregunta and cabe:
+        sys.stdout.write("\033[F\033[2K")
+    print(_color(f"❯ {pregunta}", GRIS))
+    print()
+
+
 def _mostrar_pausa(datos: dict[str, Any]) -> None:
     """Modo seguro: el run espera una decisión humana. Se muestra el código y se
     resuelve con `byte approve` / `byte reject`."""
@@ -928,14 +996,26 @@ def _mostrar_respuesta(datos: dict[str, Any]) -> None:
         nombres = sorted({f.get("filename") or f.get("url", "") for f in fuentes} - {""})
         if nombres:
             pie.append("Sources: " + " · ".join(nombres))
-    # Por debajo de un segundo el número no dice nada; se omite en vez de "0s".
-    if datos.get("segundos", 0) >= 1:
-        pie.append(f"{datos['segundos']:.0f}s")
     if datos.get("herramientas"):
         pie.append(" · ".join(datos["herramientas"]))
+    # Por debajo de un segundo el número no dice nada; se omite en vez de "0s".
+    if datos.get("segundos", 0) >= 1:
+        pie.append(f"Worked for {_duracion(datos['segundos'])}")
     if pie:
         print()
-        print(_color("  ".join(pie), GRIS))
+        print(_color("✻ " + "  ·  ".join(pie), GRIS))
+
+
+def _duracion(segundos: float) -> str:
+    """`26s`, o `2m 5s` cuando pasa del minuto.
+
+    Un modelo local pasa el minuto seguido, y `143s` obliga a dividir mentalmente
+    para saber si eso fue mucho.
+    """
+    if segundos < 60:
+        return f"{segundos:.0f}s"
+    minutos, resto = divmod(int(segundos), 60)
+    return f"{minutos}m {resto}s" if resto else f"{minutos}m"
 
 
 def cmd_ask(byte: Byte, args: argparse.Namespace) -> int:

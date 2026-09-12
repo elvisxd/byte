@@ -1041,3 +1041,79 @@ def test_el_logout_arma_bien_la_url_con_barra_final(config_aparte, monkeypatch) 
 
     byte_cli.main(["logout"])
     assert vistas == ["http://localhost:8000/api/v1/auth/logout"]
+
+
+# --- La línea de estado y la separación entre turnos (Fase 6) ---
+
+
+def test_el_verbo_generico_rota_y_el_especifico_se_respeta() -> None:
+    """`Working` fijo durante un minuto parece colgado; una palabra que cambia
+    dice "sigo acá". Pero cuando el stream sabe qué está pasando —"Searching the
+    web"— esa información no se pisa con una palabra inventada."""
+    from cli.byte_cli import Estado
+
+    palabras = Estado.OCURRENCIAS
+    assert len(set(palabras)) == len(palabras), "hay palabras repetidas"
+
+    # A los 0s y a los CADA segundos no puede tocar la misma.
+    primera = palabras[0]
+    segunda = palabras[int(Estado.CADA / Estado.CADA) % len(palabras)]
+    assert primera != segunda
+
+
+def test_el_eco_reemplaza_la_linea_en_vez_de_repetirla(capsys, monkeypatch) -> None:
+    """`input()` ya dejó lo tipeado en pantalla. Imprimir la pregunta otra vez la
+    deja dos veces —una en el color del prompt y otra en gris—, que es justo lo
+    que se quería evitar. Se sube una línea y se borra antes de escribirla."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    cli._eco_de_la_pregunta("hola")
+    salida = capsys.readouterr().out
+    assert "\033[F\033[2K" in salida, "no borró la línea del input()"
+    assert salida.count("hola") == 1, "la pregunta quedó duplicada"
+
+
+def test_una_pregunta_de_varias_lineas_no_borra_nada(capsys, monkeypatch) -> None:
+    """Con varias líneas habría que contar cuántas ocupó después del ajuste al
+    ancho de la terminal, y equivocarse borra la respuesta anterior. Ahí se
+    prefiere el aire al reemplazo."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    cli._eco_de_la_pregunta("una\ndos")
+    assert "\033[F" not in capsys.readouterr().out
+
+
+def test_una_pregunta_mas_larga_que_la_terminal_tampoco(capsys, monkeypatch) -> None:
+    """Si la línea se envolvió, ocupó dos: borrar una sola deja media pregunta
+    colgada arriba."""
+    import shutil
+
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda _d=None: os.terminal_size((40, 24)))
+    cli._eco_de_la_pregunta("x" * 60)
+    assert "\033[F" not in capsys.readouterr().out
+
+
+def test_el_eco_no_sale_si_la_salida_esta_redirigida(capsys, monkeypatch) -> None:
+    """Redirigido a un archivo el eco es ruido: lo que se quiere guardar es la
+    respuesta."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
+    cli._eco_de_la_pregunta("hola")
+    assert capsys.readouterr().out == ""
+
+
+def test_la_duracion_pasa_a_minutos() -> None:
+    """Un modelo local pasa el minuto seguido, y `143s` obliga a dividir
+    mentalmente para saber si eso fue mucho."""
+    from cli.byte_cli import _duracion
+
+    assert _duracion(26) == "26s"
+    assert _duracion(59) == "59s"
+    assert _duracion(60) == "1m"
+    assert _duracion(125) == "2m 5s"
