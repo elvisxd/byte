@@ -3,10 +3,29 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 
+from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from models.schemas import HARD_MAX_MESSAGE_CHARS
+
+# ⚠ EL .env TAMBIÉN TIENE QUE LLEGAR A `os.environ`, y no es redundante con el
+# `env_file` de abajo: aquél solo puebla `Settings`, y hay código que lee el
+# entorno directo porque no pasa por ahí — `paper/mercado.py` (BYTE_PAPER_SCRIPTS),
+# `paper/sesion.py` (BYTE_PAPER_DB), `paper/trace.py` y `paper/publicar.py`
+# (PANEL_URL, PANEL_TOKEN). Sin esto, esas cuatro variables escritas en el .env
+# se ignoran: la sesión aborta con «falta BYTE_PAPER_SCRIPTS» y el SQLite cae al
+# default relativo en vez de al repo de trading.
+#
+# No se notaba porque en el Codespace `devcontainer.json` las pone en el entorno
+# por `remoteEnv`, así que allí funcionaba por coincidencia y no por diseño. En
+# una máquina local no hay remoteEnv y el fallo aflora.
+#
+# `override=False` (el default) es lo que mantiene esa coincidencia sana: lo que
+# ya está en el entorno gana sobre el archivo, así que el Codespace y `docker run
+# -e` siguen mandando. Y al correr en el import, ocurre antes que los fixtures de
+# los tests que limpian variables con monkeypatch: no se las reintroduce.
+load_dotenv(override=False)
 
 
 class Settings(BaseSettings):
