@@ -1290,7 +1290,10 @@ def test_al_salir_se_borra_el_marco(capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
     cli._borrar_marco()
     salida = capsys.readouterr().out
-    assert salida.count("\033[2K") == 4, "no borra las cuatro líneas del marco"
+    # Cinco: la barra de estado, la regla de abajo, el prompt, la de arriba, y
+    # una de más porque `\033[F` no baja del borde superior —sobrar es inocuo,
+    # quedarse corto deja media regla debajo del "Bye".
+    assert salida.count("\033[2K") == 5, "no borra las líneas del marco y la barra"
 
 
 def test_al_abrir_el_chat_se_limpia_la_pantalla(capsys, monkeypatch) -> None:
@@ -1492,3 +1495,48 @@ def test_todas_las_herramientas_tienen_descripcion() -> None:
 
     for nombre in ("list_files", "read_file", "grep", "ver_cv", "regenerar_cv"):
         assert QUE_HACE.get(nombre), f"{nombre} no tiene descripción"
+
+
+# --- La barra de estado ---
+
+
+def test_la_barra_muestra_el_modelo_activo(monkeypatch) -> None:
+    """Con `/model` se cambia y después no hay forma de recordar cuál quedó."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    sesion = cli.Sesion("c1", safe=False)
+    sesion.modelo_default = "granite4.1:8b"
+    assert "granite4.1:8b" in cli._barra_de_estado(sesion)
+
+    sesion.modelo = "qwen3:8b"
+    assert "qwen3:8b" in cli._barra_de_estado(sesion), "no muestra el modelo elegido"
+
+
+def test_la_barra_avisa_del_modo_seguro(monkeypatch) -> None:
+    """Es lo que decide si el agente va a pedir permiso antes de ejecutar
+    código: olvidarse de que está puesto se nota recién cuando algo se frena."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    sesion = cli.Sesion("c1", safe=True)
+    assert "safe" in cli._barra_de_estado(sesion)
+    assert "safe" not in cli._barra_de_estado(cli.Sesion("c1", safe=False))
+
+
+def test_la_barra_dice_sobre_qué_proyecto_mira(monkeypatch) -> None:
+    """La carpeta la decide la API, no el entorno del CLI: el agente corre en
+    otro proceso y es su configuración la que manda."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    sesion = cli.Sesion("c1", safe=False)
+    sesion.proyecto = "mi-repo"
+    assert "mi-repo" in cli._barra_de_estado(sesion)
+
+
+def test_sin_terminal_no_hay_barra(monkeypatch) -> None:
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
+    assert cli._barra_de_estado(cli.Sesion("c1", safe=True)) == ""

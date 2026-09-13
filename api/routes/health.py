@@ -1,5 +1,7 @@
 """Salud del servicio. `/health` es público y mínimo; el detalle pide credencial."""
 
+from pathlib import Path
+
 from fastapi import APIRouter
 
 from agent.llm import ollama_status
@@ -35,4 +37,5 @@ async def health_details(ctx: Context, _credential: CredentialId) -> HealthDetai
         sandbox=sandbox,
         version=settings.version,
         models=[settings.ollama_model, *ctx.runs.modelos()],
+        project=Path(settings.project_root).name if settings.project_root else "",
     )

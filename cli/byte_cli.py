@@ -9,6 +9,7 @@ igual contra una instancia remota que contra la local.
 """
 
 import argparse
+import contextlib
 import getpass
 import json
 import os
@@ -674,6 +675,11 @@ class Sesion:
         self.seguir = True
         # Modelo elegido con `/model`. Vacío = el default de la instancia.
         self.modelo = ""
+        # El de la instancia, para la barra de estado: preguntarlo en cada turno
+        # sería un viaje a la API por una línea que no cambia.
+        self.modelo_default = ""
+        # La carpeta sobre la que el agente puede leer archivos, si hay alguna.
+        self.proyecto = ""
         # El resumen de una línea al final de cada respuesta. **Apagado por
         # defecto**: cuesta una llamada más al modelo —con uno local son 5-10 s
         # extra por turno— y no todas las respuestas lo necesitan. Se enciende
@@ -775,6 +781,13 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     except (RuntimeError, httpx.HTTPError) as exc:
         return _error(str(exc))
 
+    # El modelo de la instancia, una vez: la barra lo muestra en cada turno y
+    # preguntarlo cada vez sería un viaje a la API por una línea que no cambia.
+    with contextlib.suppress(Exception):
+        salud = byte.pedir("GET", "/health/details")
+        sesion.modelo_default = str(salud.get("model", ""))
+        sesion.proyecto = str(salud.get("project", ""))
+
     prompt = _color("❯ ", AMBAR)
     armado = False  # un Ctrl-C ya recibido: el próximo cierra
     while sesion.seguir:
@@ -783,7 +796,7 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
             # procesa su argumento carácter por carácter para poder reimprimirlo
             # al editar, y en el camino parte la regla con un `\r` — quedaba
             # cortada a la mitad en terminales anchas.
-            sys.stdout.write(_marco_del_prompt())
+            sys.stdout.write(_marco_del_prompt(sesion))
             sys.stdout.flush()
             entrada = input(prompt).strip()
         except EOFError:  # Ctrl-D
@@ -1166,8 +1179,39 @@ def _limpiar_pantalla() -> None:
     sys.stdout.flush()
 
 
-def _marco_del_prompt() -> str:
-    """Las dos reglas que enmarcan dónde se escribe.
+def _barra_de_estado(sesion: "Sesion") -> str:
+    """La línea debajo del prompt: con qué estás trabajando ahora mismo.
+
+    El editor de al lado no se puede consultar —VS Code no expone qué archivo
+    está abierto a los programas de su terminal—, así que esto muestra lo que
+    Byte sí sabe y que de otro modo hay que recordar: qué modelo responde, en
+    qué carpeta mira los archivos, y si el modo seguro está puesto.
+
+    **Solo lo que cambia entre sesiones.** Poner acá todo lo que se sabe
+    convertiría la barra en otro banner; lo que gana su lugar es lo que uno
+    olvida y afecta la próxima respuesta.
+    """
+    if not _en_pantalla():
+        return ""
+
+    partes = [sesion.modelo or sesion.modelo_default or "?"]
+
+    # La carpeta del proyecto la dice la API: el agente corre en otro proceso y
+    # es su configuración la que decide qué archivos puede leer, no el entorno
+    # del CLI.
+    if sesion.proyecto:
+        partes.append(sesion.proyecto)
+
+    if sesion.safe:
+        partes.append("safe mode")
+    if sesion.recap:
+        partes.append("recap")
+
+    return _color("  " + "  ·  ".join(partes), GRIS)
+
+
+def _marco_del_prompt(barra_de: "Sesion | None" = None) -> str:
+    """Las dos reglas que enmarcan dónde se escribe, y la barra de estado.
 
     En una conversación larga, el `❯` solo se pierde entre el texto de la
     respuesta anterior: cuesta encontrar dónde termina lo que leíste y empieza
@@ -1199,9 +1243,13 @@ def _marco_del_prompt() -> str:
     # parte la pantalla, que es para lo que está.
     ancho = min(shutil.get_terminal_size((ANCHO_MAXIMO, 24)).columns, ANCHO_MAXIMO)
     regla = _color("─" * ancho, GRIS)
-    # Tres líneas: regla, una vacía donde va el prompt, y la regla de abajo. El
-    # `\033[F` deja el cursor en la **columna 0** de la línea anterior, así que
-    # sin la línea vacía el `❯` se escribiría encima de la primera regla.
+    # Cuatro líneas: regla, una vacía donde va el prompt, la regla de abajo y la
+    # barra de estado. Se sube dos veces con `\033[F` para dejar el cursor en la
+    # línea del prompt — que queda en **columna 0**, por eso hace falta la línea
+    # vacía: sin ella el `❯` se escribiría encima de la primera regla.
+    barra = _barra_de_estado(barra_de) if barra_de else ""
+    if barra:
+        return f"{regla}\n\n{regla}\n{barra}\033[F\033[F"
     return f"{regla}\n\n{regla}\033[F"
 
 
@@ -1217,7 +1265,7 @@ def _borrar_marco() -> None:
     # Una de más: `\033[F` no baja del borde superior de la pantalla, así que
     # sobrar es inocuo, mientras que quedarse corto deja media regla colgada
     # debajo del "Bye".
-    sys.stdout.write("\r\033[2K" + "\033[F\033[2K" * 3)
+    sys.stdout.write("\n\r\033[2K\033[F" + "\r\033[2K" + "\033[F\033[2K" * 3)
     sys.stdout.flush()
 
 
@@ -1255,6 +1303,9 @@ def _eco_de_la_pregunta(pregunta: str) -> None:
         # superior de la pantalla, así que sobrar es inocuo —el escape no hace
         # nada— mientras que quedarse corto deja media regla colgada sobre la
         # pregunta, que es el resto que se veía.
+        # El cursor está en la línea del prompt (el marco lo dejó ahí), así que
+        # hay que bajar a la barra, borrarla, y subir borrando todo el resto.
+        sys.stdout.write("\n\r\033[2K\033[F")
         sys.stdout.write("\r\033[2K")
         ocupadas = max(1, -(-(len(pregunta) + 2) // max(1, ancho)))
         sys.stdout.write("\033[F\033[2K" * (ocupadas + 2))

@@ -273,6 +273,10 @@ class HealthDetails(BaseModel):
     # Los modelos entre los que se puede cambiar, con el activo primero. Es lo
     # que el CLI lee para `/model` sin tener que conocer la configuración.
     models: list[str] = []
+    # El nombre de la carpeta que el agente puede leer, si hay alguna. Solo el
+    # nombre y no la ruta: el CLI la muestra en su barra de estado, y la ruta
+    # entera ocuparía la línea sin decir más de lo que dice "byte".
+    project: str = ""
 
 
 # --- Compatibilidad con OpenAI (Fase 3) ---
