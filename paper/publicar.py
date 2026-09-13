@@ -110,6 +110,10 @@ def _prediccion(fila: dict[str, Any]) -> dict[str, Any]:
         "nivel": fila["nivel"],
         "hacia": fila["hacia"],
         "probabilidad": fila["probabilidad"],
+        # En qué gráfico lo vio. Un 60% en 15m es scalping y en 4h es una tesis
+        # de medio día: agrupar sin distinguirlas mediría el promedio de dos
+        # cosas distintas.
+        "temporalidad": fila.get("temporalidad"),
         "regimenMedido": fila["regimen_medido"],
         "regimenDicho": fila["regimen_dicho"],
         "razonamiento": fila["razonamiento"],
