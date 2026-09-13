@@ -87,8 +87,15 @@ def test_produccion_no_arranca_en_memoria() -> None:
 
 async def test_el_recorte_conserva_el_system_prompt_y_lo_ultimo() -> None:
     """`retrieve_context` descarta por identidad de objeto: si `trim_messages`
-    devolviera copias, borraría los mensajes equivocados. Esto lo detecta."""
-    grafo = build_graph(FakeLLM([text_turn("ok")]), ToolRegistry(), num_ctx=1024)
+    devolviera copias, borraría los mensajes equivocados. Esto lo detecta.
+
+    `num_ctx=2048` y no 1024: con 1024 el presupuesto son 614 tokens y el system
+    prompt solo ya ocupa ~625, así que no entraba **nada** más y el test fallaba
+    por una razón distinta de la que mide. Con 2048 el prompt y la pregunta
+    nueva entran, y los dos mensajes viejos (~750 tokens cada uno) no — que es
+    exactamente la situación que se está probando.
+    """
+    grafo = build_graph(FakeLLM([text_turn("ok")]), ToolRegistry(), num_ctx=2048)
     grabador = _Grabador()
     estado = {
         "messages": [

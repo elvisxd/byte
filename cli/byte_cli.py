@@ -680,6 +680,9 @@ class Sesion:
         self.modelo_default = ""
         # La carpeta sobre la que el agente puede leer archivos, si hay alguna.
         self.proyecto = ""
+        # Lo que se eligió de un menú de opciones: se manda en la vuelta
+        # siguiente como si se hubiera escrito.
+        self.pendiente = ""
         # El resumen de una línea al final de cada respuesta. **Apagado por
         # defecto**: cuesta una llamada más al modelo —con uno local son 5-10 s
         # extra por turno— y no todas las respuestas lo necesitan. Se enciende
@@ -791,6 +794,13 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     prompt = _color("❯ ", AMBAR)
     armado = False  # un Ctrl-C ya recibido: el próximo cierra
     while sesion.seguir:
+        if sesion.pendiente:
+            # Lo elegido del menú anterior: ya se mostró en pantalla, así que se
+            # usa directo sin volver a pedir ni volver a imprimirlo.
+            entrada, sesion.pendiente = sesion.pendiente, ""
+            _preguntar_y_mostrar(byte, sesion, entrada)
+            continue
+
         try:
             # El marco va por stdout y no como prompt de `input()`: readline
             # procesa su argumento carácter por carácter para poder reimprimirlo
@@ -831,25 +841,8 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
                 print()
             continue
 
-        try:
-            datos = _preguntar_en_vivo(
-                byte, sesion.conversacion, entrada, sesion.safe, sesion.modelo
-            )
-        except KeyboardInterrupt:
-            # El run sigue del lado de la API; acá solo se deja de esperarlo.
-            print(_color("· stopped waiting for the answer", GRIS))
-            armado = True  # otro Ctrl-C seguido cierra, como en el prompt
-            continue
-        except (RuntimeError, httpx.HTTPError) as exc:
-            _error(str(exc))
-            continue
-
-        if datos.get("status") == "paused":
-            _mostrar_pausa(datos)
-        else:
-            _mostrar_respuesta(datos)
-            if sesion.recap:
-                _mostrar_recap(byte, sesion, entrada, datos)
+        if not _preguntar_y_mostrar(byte, sesion, entrada):
+            armado = True  # se cortó con Ctrl-C: otro seguido cierra
         print()
 
     # Al salir, el marco quedó dibujado alrededor del prompt vacío: se borra
@@ -1056,6 +1049,40 @@ def _parrafos(texto: str) -> Iterator[str]:
         yield "\n".join(bloque)
 
 
+def _preguntar_y_mostrar(byte: Byte, sesion: "Sesion", entrada: str) -> bool:
+    """Una vuelta completa: preguntar, mostrar, y recoger lo que se elija.
+
+    Devuelve False solo si se cortó con Ctrl-C, que es lo que el bucle necesita
+    para armar la salida. Está separado del bucle porque se llama desde dos
+    lados: cuando el usuario escribe, y cuando eligió una opción del menú
+    anterior —y ahí no hay que volver a pedir nada.
+    """
+    try:
+        datos = _preguntar_en_vivo(byte, sesion.conversacion, entrada, sesion.safe, sesion.modelo)
+    except KeyboardInterrupt:
+        # El run sigue del lado de la API; acá solo se deja de esperarlo.
+        print(_color("· stopped waiting for the answer", GRIS))
+        return False
+    except (RuntimeError, httpx.HTTPError) as exc:
+        _error(str(exc))
+        return True
+
+    if datos.get("status") == "paused":
+        _mostrar_pausa(datos)
+        return True
+
+    elegida = _mostrar_respuesta(datos)
+    if sesion.recap:
+        _mostrar_recap(byte, sesion, entrada, datos)
+    if elegida:
+        # Lo elegido se manda como si se hubiera escrito: el agente sigue en la
+        # misma conversación y no hace falta repetir el contexto.
+        print()
+        print(_color(f"❯ {elegida}", GRIS))
+        sesion.pendiente = elegida
+    return True
+
+
 def _preguntar_en_vivo(
     byte: Byte, conversacion: str, pregunta: str, safe: bool, modelo: str = ""
 ) -> dict[str, Any]:
@@ -1208,6 +1235,120 @@ def _barra_de_estado(sesion: "Sesion") -> str:
         partes.append("recap")
 
     return _color("  " + "  ·  ".join(partes), GRIS)
+
+
+def _opciones_de(texto: str) -> tuple[str, str, list[dict[str, str]]]:
+    """Separa el bloque ```opciones del final de una respuesta.
+
+    Devuelve (respuesta sin el bloque, pregunta, opciones). Si no hay bloque,
+    las opciones vienen vacías y el texto sale intacto.
+
+    Se parsea acá y no en el servidor porque es presentación: quien use la API
+    por HTTP recibe la respuesta entera, con su bloque, y decide qué hacer.
+    """
+    encontrado = re.search(r"```opciones\s*\n(.*?)```", texto, re.S)
+    if not encontrado:
+        return texto, "", []
+
+    lineas = [x.strip() for x in encontrado.group(1).strip().splitlines() if x.strip()]
+    pregunta = ""
+    opciones: list[dict[str, str]] = []
+    for linea in lineas:
+        if linea.startswith(("-", "*", "•")):
+            cuerpo = linea.lstrip("-*• ").strip()
+            etiqueta, _, detalle = cuerpo.partition("::")
+            opciones.append({"label": etiqueta.strip(), "detail": detalle.strip()})
+        elif not pregunta:
+            pregunta = linea
+
+    limpio = (texto[: encontrado.start()] + texto[encontrado.end() :]).rstrip()
+    # Menos de dos no es una elección; más de cinco no se lee de un vistazo y
+    # probablemente el modelo esté enumerando en vez de proponer caminos.
+    return limpio, pregunta, opciones if 2 <= len(opciones) <= 5 else []
+
+
+def _elegir(titulo: str, opciones: list[dict[str, str]]) -> int | None:
+    """Un menú de flechas: devuelve el índice elegido, o None si se canceló.
+
+    Con flechas y Enter, no escribiendo un número: leer tres opciones y después
+    buscar el teclado numérico rompe el hilo, y equivocarse de tecla elige algo
+    que no se quería.
+
+    Se dibuja y se redibuja en el lugar, subiendo con `\033[F`: sin eso cada
+    flecha dejaría una copia del menú en el scroll. Al terminar se borra entero
+    y queda solo la línea de lo elegido, que es lo que sirve al releer.
+
+    Sin terminal devuelve None sin dibujar nada: un menú interactivo en un pipe
+    colgaría el proceso esperando una tecla que no va a llegar.
+    """
+    if not _en_pantalla() or not sys.stdin.isatty() or not opciones:
+        return None
+
+    import termios
+    import tty
+
+    actual = 0
+    ancho = min(shutil.get_terminal_size((ANCHO_MAXIMO, 24)).columns, ANCHO_MAXIMO)
+
+    def dibujar(primera_vez: bool) -> None:
+        if not primera_vez:
+            # Subir sobre lo ya dibujado: el título, las opciones y la ayuda.
+            sys.stdout.write(f"\033[{len(opciones) + 2}F")
+        print(_color(titulo, CREMA))
+        for i, opcion in enumerate(opciones):
+            elegida = i == actual
+            marca = _color("›", AMBAR) if elegida else " "
+            texto = opcion.get("label", "")
+            color = NEGRITA + CREMA if elegida else GRIS
+            linea = f" {marca} {_color(texto, color)}"
+            detalle = opcion.get("detail", "")
+            if detalle:
+                # El detalle solo de la elegida: mostrarlos todos convierte el
+                # menú en un muro y se pierde cuál está seleccionada.
+                sobra = ancho - _visible(linea) - 5
+                if elegida and sobra > 12:
+                    linea += _color(f"  — {_recortar(detalle, sobra)}", GRIS)
+            sys.stdout.write("\033[2K" + linea + "\n")
+        sys.stdout.write("\033[2K" + _color("   ↑↓ to move · Enter to pick · Esc to skip", GRIS))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    dibujar(primera_vez=True)
+    descriptor = sys.stdin.fileno()
+    previo = termios.tcgetattr(descriptor)
+    try:
+        tty.setraw(descriptor)
+        while True:
+            tecla = sys.stdin.read(1)
+            if tecla == "\x1b":  # Esc, o el principio de una flecha
+                siguiente = sys.stdin.read(1)
+                if siguiente != "[":
+                    return None  # Esc solo: se cancela
+                direccion = sys.stdin.read(1)
+                if direccion == "A":
+                    actual = (actual - 1) % len(opciones)
+                elif direccion == "B":
+                    actual = (actual + 1) % len(opciones)
+                else:
+                    continue
+            elif tecla in ("\r", "\n"):
+                return actual
+            elif tecla == "\x03":  # Ctrl-C
+                raise KeyboardInterrupt
+            else:
+                continue
+            termios.tcsetattr(descriptor, termios.TCSADRAIN, previo)
+            dibujar(primera_vez=False)
+            tty.setraw(descriptor)
+    finally:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, previo)
+        # Borrar el menú entero: lo que queda es la línea de lo elegido, que la
+        # escribe quien llamó.
+        sys.stdout.write(f"\033[{len(opciones) + 2}F")
+        for _ in range(len(opciones) + 2):
+            sys.stdout.write("\033[2K\n")
+        sys.stdout.write(f"\033[{len(opciones) + 2}F")
+        sys.stdout.flush()
 
 
 def _marco_del_prompt(barra_de: "Sesion | None" = None) -> str:
@@ -1384,14 +1525,17 @@ def _mostrar_pausa(datos: dict[str, Any]) -> None:
     print(f"  byte reject  {datos['run_id']} {pendiente['resume_token']}")
 
 
-def _mostrar_respuesta(datos: dict[str, Any]) -> None:
+def _mostrar_respuesta(datos: dict[str, Any]) -> str:
     """La respuesta ya terminada, en bloques, y debajo de qué salió.
+
+    Devuelve lo que se eligió del menú de opciones, si la respuesta traía uno y
+    el usuario eligió algo. Vacío en cualquier otro caso.
 
     Por párrafos y no token a token: un bloque completo se lee de un vistazo,
     mientras que ver letras apareciendo obliga a esperar a que pare.
     """
     mensaje = datos["message"]
-    contenido = mensaje["content"]
+    contenido, pregunta, opciones = _opciones_de(mensaje["content"])
     # Redirigido a un archivo va el texto pelado: el pie y el aire son para leer
     # en la terminal, y ensuciarían la salida de un script.
     con_adornos = _en_pantalla()
@@ -1405,8 +1549,10 @@ def _mostrar_respuesta(datos: dict[str, Any]) -> None:
             # son parte del código, no marcas de formato.
             print(parrafo if parrafo.lstrip().startswith("```") else _pintar_markdown(parrafo))
     else:
-        print(contenido)
-        return
+        # Redirigido, el bloque de opciones se muestra tal cual: un menú
+        # interactivo en un pipe colgaría esperando una tecla.
+        print(mensaje["content"])
+        return ""
 
     # El pie: de dónde salió y cuánto costó. Es el contexto que el spinner
     # mostraba y borraba.
@@ -1424,6 +1570,13 @@ def _mostrar_respuesta(datos: dict[str, Any]) -> None:
     if pie:
         print()
         print(_color("✻ " + "  ·  ".join(pie), GRIS))
+
+    if opciones:
+        print()
+        indice = _elegir(pregunta or "¿Por dónde seguimos?", opciones)
+        if indice is not None:
+            return opciones[indice]["label"]
+    return ""
 
 
 def _duracion(segundos: float) -> str:

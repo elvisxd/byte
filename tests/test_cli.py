@@ -1540,3 +1540,67 @@ def test_sin_terminal_no_hay_barra(monkeypatch) -> None:
 
     monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
     assert cli._barra_de_estado(cli.Sesion("c1", safe=True)) == ""
+
+
+# --- El menú de opciones ---
+
+
+def test_el_bloque_de_opciones_se_separa_de_la_respuesta() -> None:
+    """El bloque es para el menú, no para leerlo: mostrarlo con sus backticks
+    sería ruido debajo de una respuesta que ya terminó."""
+    from cli.byte_cli import _opciones_de
+
+    texto, pregunta, opciones = _opciones_de(
+        "Hay dos caminos.\n\n```opciones\n¿Por dónde?\n- Uno :: rápido\n- Otro :: completo\n```"
+    )
+    assert "```" not in texto
+    assert texto.strip() == "Hay dos caminos."
+    assert pregunta == "¿Por dónde?"
+    assert [o["label"] for o in opciones] == ["Uno", "Otro"]
+    assert opciones[0]["detail"] == "rápido"
+
+
+def test_sin_bloque_el_texto_queda_intacto() -> None:
+    """Es el caso normal: la mayoría de las respuestas no ofrecen caminos."""
+    from cli.byte_cli import _opciones_de
+
+    texto, pregunta, opciones = _opciones_de("Una respuesta cualquiera.")
+    assert texto == "Una respuesta cualquiera."
+    assert opciones == []
+    assert pregunta == ""
+
+
+def test_una_sola_opcion_no_es_una_eleccion() -> None:
+    """Un menú de un elemento le hace apretar Enter a alguien para nada."""
+    from cli.byte_cli import _opciones_de
+
+    _, _, opciones = _opciones_de("```opciones\n¿Cuál?\n- Única :: la que hay\n```")
+    assert opciones == []
+
+
+def test_demasiadas_opciones_se_ignoran() -> None:
+    """Más de cinco no se leen de un vistazo, y probablemente el modelo esté
+    enumerando en vez de proponer caminos que se excluyan."""
+    from cli.byte_cli import _opciones_de
+
+    bloque = "```opciones\n¿Cuál?\n" + "".join(f"- Opción {i} :: x\n" for i in range(7)) + "```"
+    _, _, opciones = _opciones_de(bloque)
+    assert opciones == []
+
+
+def test_el_detalle_es_opcional() -> None:
+    """`- camino` sin el `::` también es una opción válida."""
+    from cli.byte_cli import _opciones_de
+
+    _, _, opciones = _opciones_de("```opciones\n¿Cuál?\n- Uno\n- Otro\n```")
+    assert [o["label"] for o in opciones] == ["Uno", "Otro"]
+    assert opciones[0]["detail"] == ""
+
+
+def test_sin_terminal_no_se_abre_el_menu(monkeypatch) -> None:
+    """Un menú interactivo en un pipe colgaría el proceso esperando una tecla
+    que no va a llegar."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
+    assert cli._elegir("¿Cuál?", [{"label": "a"}, {"label": "b"}]) is None
