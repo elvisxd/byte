@@ -142,6 +142,11 @@ CREATE TABLE IF NOT EXISTS predicciones (
     nivel           REAL    NOT NULL,
     hacia           TEXT    NOT NULL,   -- arriba | abajo
     probabilidad    REAL    NOT NULL,   -- 0.0 a 1.0, lo que el modelo dice
+    -- ⚠ EN QUÉ GRÁFICO LO VIO. Un 60% en 15m y un 60% en 4h no son la misma
+    -- afirmación: el primero es scalping y el segundo es una tesis de medio día.
+    -- Sin esto, agrupar las predicciones mezclaría escalas y la calibración
+    -- mediría el promedio de dos cosas distintas.
+    temporalidad    TEXT,               -- 15m | 1h | 4h
     -- El régimen que midió el CÓDIGO y el que DIJO ver el modelo. Separados
     -- porque la pregunta interesante es si acierta más cuando coinciden.
     regimen_medido  TEXT,
@@ -234,6 +239,7 @@ def _sellar_prediccion(
     nivel: float,
     hacia: str,
     probabilidad: float,
+    temporalidad: str = "",
 ) -> str:
     """El hash de una predicción, hermano de `_sellar`.
 
@@ -243,7 +249,9 @@ def _sellar_prediccion(
     la única cifra que aquí decide si el modelo sabe algo.
 
     El nivel y la dirección van por lo mismo: mover el nivel recontextualiza la
-    apuesta entera.
+    apuesta entera. Y la temporalidad también: un 60% en 15m y un 60% en 4h no
+    son la misma afirmación, así que cambiarla después sería reescribir qué se
+    dijo.
     """
     material = json.dumps(
         {
@@ -253,6 +261,7 @@ def _sellar_prediccion(
             "nivel": nivel,
             "hacia": hacia,
             "probabilidad": probabilidad,
+            "temporalidad": temporalidad,
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -285,6 +294,13 @@ class Registro:
         for nombre, tipo in (("stop_actual", "REAL"), ("nota_stop", "TEXT")):
             if nombre not in columnas:
                 self._con.execute(f"ALTER TABLE operaciones ADD COLUMN {nombre} {tipo}")  # noqa: S608
+
+        # La temporalidad llegó después de las primeras predicciones. Sin esto,
+        # un registro que ya tenga filas se queda sin la columna y falla al
+        # escribirla — que es exactamente lo que este método existe para evitar.
+        cols_pred = {f["name"] for f in self._con.execute("PRAGMA table_info(predicciones)")}
+        if cols_pred and "temporalidad" not in cols_pred:
+            self._con.execute("ALTER TABLE predicciones ADD COLUMN temporalidad TEXT")
 
     def abrir(
         self,
@@ -912,6 +928,7 @@ class Registro:
         razonamiento: str,
         horas_vigencia: float = 24.0,
         regimen_dicho: str = "",
+        temporalidad: str = "",
     ) -> int:
         """Registra una apuesta probabilística, sellada como una razón de entrada."""
         if hacia not in ("arriba", "abajo"):
@@ -936,6 +953,47 @@ class Registro:
                 f"{contexto.precio}: eso ya ocurrió"
             )
 
+        # ⚠ DOS PREDICCIONES A 100 DÓLARES DE DISTANCIA SON LA MISMA APUESTA.
+        # En la primera sesión el modelo predijo 76.500 y 76.400 con un ATR de
+        # ~87: si el precio baja a barrer ese pool toca las dos, así que sus
+        # resultados están correlacionados. Para la calibración eso es veneno —
+        # dos aciertos que en realidad son uno inflan la muestra sin aportar
+        # información, y con 50 predicciones así la muestra efectiva sería una
+        # fracción.
+        #
+        # El mínimo va en ATR y no en porcentaje porque tiene que adaptarse a la
+        # volatilidad y a la temporalidad: un 0.5% fijo es enorme en 15m y
+        # ridículo en 4h. Y no es un umbral de estrategia —no decide cuándo
+        # entrar—: es lo que hace que dos apuestas sean eventos distintos.
+        # ⚠ EL MÍNIMO ES 1.5 ATR Y NO 1, Y NO ES UN NÚMERO ELEGIDO A OJO. Con 1
+        # ATR estricto el caso real no se bloqueaba: el modelo predijo 76.500 y
+        # 76.400 con un ATR de ~87, y 100 > 87, así que habrían pasado las dos.
+        # Un ATR es lo que recorre UNA vela: dos niveles a esa distancia los
+        # barre el mismo movimiento. 1.5 exige que haga falta más de una vela
+        # para pasar del uno al otro, que es lo mínimo para que sean eventos
+        # separables.
+        MARGEN = 1.5
+        atr = None
+        indicadores_ctx = contexto.extra.get("indicadores")
+        if isinstance(indicadores_ctx, dict):
+            crudo = indicadores_ctx.get("atr")
+            if isinstance(crudo, int | float):
+                atr = float(crudo)
+        if atr and atr > 0:
+            minimo = atr * MARGEN
+            if abs(nivel - contexto.precio) < minimo:
+                raise ValueError(
+                    f"el nivel {nivel} está a menos de {MARGEN} ATR ({minimo:.1f}) del "
+                    f"precio {contexto.precio}: el precio lo toca por ruido, no por tu tesis"
+                )
+            for viva in self.predicciones_vivas():
+                if viva["hacia"] == hacia and abs(nivel - viva["nivel"]) < minimo:
+                    raise ValueError(
+                        f"ya hay una predicción viva en {viva['nivel']} hacia {hacia} "
+                        f"(#{viva['id']}), a menos de {MARGEN} ATR de {nivel}: sería la "
+                        "misma apuesta contada dos veces"
+                    )
+
         ahora = datetime.now(UTC)
         # El régimen que midió el código, si `mirar_mercado` lo trajo. No se le
         # pregunta al modelo: es justamente lo que se quiere contrastar.
@@ -949,8 +1007,9 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO predicciones
                (simbolo, hecha_en, vence_en, nivel, hacia, probabilidad,
-                regimen_medido, regimen_dicho, contexto, razonamiento, sello)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                regimen_medido, regimen_dicho, contexto, razonamiento,
+                temporalidad, sello)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 simbolo,
                 ahora.isoformat(),
@@ -962,6 +1021,7 @@ class Registro:
                 regimen_dicho.strip(),
                 json.dumps(asdict(contexto), ensure_ascii=False),
                 razonamiento.strip(),
+                temporalidad.strip(),
                 _sellar_prediccion(
                     contexto,
                     razonamiento.strip(),
@@ -969,6 +1029,7 @@ class Registro:
                     nivel=nivel,
                     hacia=hacia,
                     probabilidad=probabilidad,
+                    temporalidad=temporalidad.strip(),
                 ),
             ),
         )

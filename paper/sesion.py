@@ -84,6 +84,13 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    decir 0.9 y fallar cuesta mucho más que decir 0.6 y fallar, así que decí el
    número que creés, no el que suena seguro. 0.5 es una respuesta honesta.
 
+   Decí en qué gráfico lo viste —15m, 1h o 4h—: un 60% en 15m es scalping y en
+   4h es una tesis de medio día, y se miden por separado.
+
+   Y si ya hay una predicción viva, apuntá a OTRA cosa: dos niveles a un par de
+   ATR de distancia los toca el mismo movimiento, así que serían la misma
+   apuesta contada dos veces. Mirá las que están esperando en `estado_paper`.
+
 Los ejes disponibles, y qué busca cada uno:
 
 - `range-sweep`: el piso o el techo de un rango se barre CON MECHA y el precio

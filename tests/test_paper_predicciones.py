@@ -236,3 +236,91 @@ def test_con_muestra_los_tramos_salen_ordenados_por_probabilidad(
     nombres = [t["tramo"] for t in resumen["tramos"]]
     assert nombres == sorted(nombres)
     assert resumen["tasa_base"] == 1.0  # todas tocaron: la vela barre todo
+
+
+def test_dos_niveles_a_menos_de_un_atro_y_medio_son_la_misma_apuesta(
+    registro: Registro,
+) -> None:
+    """Pasó de verdad: el modelo predijo 76.500 y 76.400 con un ATR de ~87.
+
+    Si el precio baja a barrer ese pool toca los dos, así que sus resultados
+    están correlacionados. Para la calibración eso es veneno: dos aciertos que
+    en realidad son uno inflan la muestra sin aportar información, y con 50
+    predicciones así la muestra efectiva sería una fracción.
+
+    ⚠ EL MÍNIMO ES 1.5 ATR Y NO 1. Con 1 ATR estricto este caso NO se bloqueaba
+    —100 > 87— así que el arreglo no arreglaba nada. Un ATR es lo que recorre
+    una vela; hacen falta más de una para que los dos niveles sean separables.
+    """
+    ctx = Contexto(
+        precio=77300.0,
+        timestamp="2026-09-13T20:24:00Z",
+        dia_semana=6,
+        hora_utc=20,
+        extra={"indicadores": {"atr": 87.0}},
+    )
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=76500.0, hacia="abajo",
+        probabilidad=0.6, razonamiento="pool EQL", temporalidad="1h",
+    )
+    with pytest.raises(ValueError, match="misma"):
+        registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx, nivel=76400.0, hacia="abajo",
+            probabilidad=0.4, razonamiento="y", temporalidad="15m",
+        )
+    # Lejos sí entra, y hacia el otro lado también: no es un veto general.
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=76300.0, hacia="abajo",
+        probabilidad=0.3, razonamiento="z", temporalidad="4h",
+    )
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=77500.0, hacia="arriba",
+        probabilidad=0.5, razonamiento="techo", temporalidad="15m",
+    )
+    assert len(registro.predicciones_vivas()) == 3
+
+
+def test_un_nivel_pegado_al_precio_lo_toca_el_ruido(registro: Registro) -> None:
+    """A menos de 1.5 ATR, el precio lo toca por una vela normal.
+
+    Sería un acierto que no dice nada del modelo: mide la volatilidad, no su
+    lectura del gráfico.
+    """
+    ctx = Contexto(
+        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        extra={"indicadores": {"atr": 100.0}},
+    )
+    with pytest.raises(ValueError, match="ruido"):
+        registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx, nivel=77250.0, hacia="abajo",
+            probabilidad=0.6, razonamiento="x", temporalidad="15m",
+        )
+
+
+def test_la_temporalidad_se_guarda_y_entra_en_el_sello(registro: Registro) -> None:
+    """Un 60% en 15m y un 60% en 4h no son la misma afirmación.
+
+    El primero es scalping y el segundo una tesis de medio día. Sin la
+    temporalidad, agrupar las predicciones mediría el promedio de dos cosas
+    distintas; y sin ella en el sello, cambiarla después reescribiría qué se
+    dijo sin dejar rastro.
+    """
+    from paper.registro import _sellar_prediccion
+
+    ctx = Contexto(
+        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        extra={"indicadores": {"atr": 87.0}},
+    )
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=76500.0, hacia="abajo",
+        probabilidad=0.6, razonamiento="pool EQL", temporalidad="4h",
+    )
+    fila = registro.predicciones_vivas()[0]
+    assert fila["temporalidad"] == "4h"
+
+    # El mismo sello con otra temporalidad tiene que dar distinto.
+    con_otra = _sellar_prediccion(
+        ctx, fila["razonamiento"], simbolo=fila["simbolo"], nivel=fila["nivel"],
+        hacia=fila["hacia"], probabilidad=fila["probabilidad"], temporalidad="15m",
+    )
+    assert con_otra != fila["sello"], "cambiar la temporalidad tiene que romper el sello"
