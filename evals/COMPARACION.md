@@ -134,3 +134,21 @@ causa.
 Lo que queda: estos comportamientos —decidir cuándo abrir una skill, reconocer
 que una pregunta admite caminos— son de otra escala de modelo, no de 8B ni de
 14B. Ninguna configuración local los va a dar hoy.
+
+
+## Los modelos de razonamiento no sirven para agentes
+
+Buscando uno bueno para análisis financiero, los artículos de 2026 recomiendan
+`deepseek-r1` por su "precisión matemática" y `Fin-R1` como modelo de
+razonamiento financiero. `Fin-R1` no existe en el catálogo (404); `deepseek-r1`
+sí, y declara `tools` entre sus capacidades.
+
+**No las emite.** Probado con `think` encendido y apagado: en los dos casos
+explica cómo usaría la herramienta en prosa y nunca la llama. Es el mismo caso
+que qwen2.5-coder:7b — la etiqueta del catálogo dice `tools` y el modelo no las
+usa.
+
+Vale como recordatorio del criterio: **primero se verifica el tool calling con
+un POST a `/api/chat`, después se mira si el modelo es bueno.** Un modelo que
+razona magníficamente y no puede llamar una función no sirve para un agente,
+por bien que puntúe en los benchmarks de razonamiento.
