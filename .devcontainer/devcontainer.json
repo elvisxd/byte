@@ -1,0 +1,37 @@
+{
+  "name": "Byte",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+
+  // 8 núcleos y 32 GB: es la máquina más chica donde entra un modelo de 27-30B,
+  // que es lo que no cabe en una Mac de 16. Con GitHub Pro (180 core-hours) son
+  // unas 22 horas al mes, de sobra para correr los evals y decidir con datos.
+  //
+  // Codespaces no tiene GPU: el modelo corre en CPU a 5-15 tokens/s contra los
+  // ~40 de Metal en local. Sirve para MEDIR si un modelo más grande resuelve lo
+  // que granite no puede, no para usarlo a diario.
+  "hostRequirements": { "cpus": 8, "memory": "32gb", "storage": "64gb" },
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/preparar.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": {
+        // Sin esto, cada terminal nueva escribe un `source .../activate` que
+        // ocupa media pantalla. `uv run` usa el venv igual.
+        "python.terminal.activateEnvironment": false
+      }
+    }
+  },
+
+  "forwardPorts": [8000, 11434],
+  "portsAttributes": {
+    "8000": { "label": "API de Byte" },
+    "11434": { "label": "Ollama" }
+  }
+}
