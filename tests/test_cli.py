@@ -1257,18 +1257,20 @@ def test_el_marco_deja_el_prompt_en_su_propia_linea(monkeypatch) -> None:
     assert sin_color.endswith("\033[F"), "no vuelve a la línea del prompt"
 
 
-def test_la_regla_no_llena_la_terminal(monkeypatch) -> None:
-    """`─` es de ancho "ambiguo" en Unicode y hay terminales que lo pintan
-    doble: una regla del ancho completo envuelve en esas, ocupa dos líneas, y
-    el borrado —que cuenta líneas— deja un resto colgado sobre la pregunta."""
+def test_la_regla_va_de_borde_a_borde(monkeypatch) -> None:
+    """Un separador a media línea se lee como un adorno; uno completo parte la
+    pantalla, que es para lo que está. Medido en un pty: 80 caracteres `─`
+    entran en 80 columnas sin envolver, aunque Unicode los marque de ancho
+    "ambiguo"."""
     import shutil
 
     import cli.byte_cli as cli
 
     monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
     monkeypatch.setattr(shutil, "get_terminal_size", lambda _d=None: os.terminal_size((80, 24)))
-    regla = re.sub(r"\033\[[0-9;]*m", "", cli._marco_del_prompt()).split("\n")[0]
-    assert len(regla) <= 40, f"la regla ocupa {len(regla)} de 80 columnas y puede envolver"
+    reglas = re.sub(r"\033\[[0-9;]*m", "", cli._marco_del_prompt()).split("\n")
+    assert len(reglas[0]) == 80, f"la de arriba mide {len(reglas[0])}, no 80"
+    assert len(reglas[2].replace("\033[F", "")) == 80, "las dos tienen que medir igual"
 
 
 def test_sin_terminal_no_se_dibuja_el_marco(monkeypatch) -> None:

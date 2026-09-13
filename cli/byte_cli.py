@@ -1020,12 +1020,11 @@ def _marco_del_prompt() -> str:
     # que envuelva — entonces el `\033[F` sube a la línea equivocada y el prompt
     # queda arriba del marco en vez de adentro. Dos columnas lo evitan sin
     # cambiar el carácter, que es el que da el aspecto que se busca.
-    # La mitad del ancho, redondeando: `─` es de ancho "ambiguo" en Unicode y hay
-    # terminales que lo pintan doble. Con el ancho completo la regla envuelve en
-    # esas, ocupa dos líneas, y el borrado del marco —que cuenta líneas— deja un
-    # resto colgado sobre la pregunta. A la mitad entra siempre, y como separador
-    # visual cumple igual.
-    ancho = max(20, shutil.get_terminal_size((80, 24)).columns // 2)
+    # De borde a borde. Medí en un pty que 80 caracteres `─` entran en 80
+    # columnas sin envolver: aunque Unicode lo marque de ancho "ambiguo", las
+    # terminales lo pintan simple. Un separador a media línea se lee como un
+    # adorno; uno completo parte la pantalla, que es para lo que está.
+    ancho = max(20, shutil.get_terminal_size((80, 24)).columns)
     regla = _color("─" * ancho, GRIS)
     # Tres líneas: regla, una vacía donde va el prompt, y la regla de abajo. El
     # `\033[F` deja el cursor en la **columna 0** de la línea anterior, así que
