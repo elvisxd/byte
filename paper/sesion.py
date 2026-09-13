@@ -70,7 +70,12 @@ Esto es lo que tenés que hacer AHORA, en este turno:
 3. Si no hay ninguna abierta —o si además ves una entrada clara— mirá el mercado
    y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
    justifica entrar ACÁ y no cinco velas después.
-4. Si no hay nada que hacer, decilo y no operes. No entrar es una decisión
+4. Si el precio de ahora no te sirve pero SÍ sabrías a qué precio entrarías,
+   dejá una orden con `dejar_orden` en vez de no hacer nada. Entre esta sesión y
+   la siguiente pasan ~23 horas sin nadie mirando: una orden es la única forma
+   de que una tesis del tipo "entro si vuelve al borde del rango" llegue a
+   ocurrir. La razón se sella al dejarla, no al dispararse.
+5. Si no hay nada que hacer, decilo y no operes. No entrar es una decisión
    válida: forzar una entrada para "aprovechar la sesión" contamina el eje.
 
 Los ejes disponibles son range-sweep, zone-reclaim, cvd-divergence, dip-trap y
