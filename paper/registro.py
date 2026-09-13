@@ -124,6 +124,39 @@ CREATE TABLE IF NOT EXISTS ordenes (
     nota            TEXT                -- por qué se canceló, si se canceló
 );
 CREATE INDEX IF NOT EXISTS idx_ordenes ON ordenes(resuelta_en) WHERE resuelta_en IS NULL;
+
+-- ⚠ UNA PREDICCIÓN NO ES UNA OPERACIÓN, Y VA APARTE A PROPÓSITO. Mezclarlas
+-- contaminaría las dos medidas: los ejes se miden en R múltiplo sobre
+-- operaciones cerradas, y esto en Brier sobre probabilidades. Además una
+-- predicción no cuesta nada —no hay entrada, ni stop, ni riesgo—, así que
+-- acumula muestra diez veces más rápido: ~5 por sesión contra 0-1 operaciones.
+-- Ver paper/CRITERIO_PREDICCIONES.md, escrito antes que esta tabla.
+CREATE TABLE IF NOT EXISTS predicciones (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    simbolo         TEXT    NOT NULL,
+    hecha_en        TEXT    NOT NULL,   -- ISO 8601 UTC
+    vence_en        TEXT    NOT NULL,   -- pasado esto se resuelve, tocara o no
+    -- La apuesta: "¿toca `nivel` antes de vencer?". Binaria a propósito: un
+    -- Brier necesita un suceso que ocurra o no, y "¿subirá?" sin un nivel no se
+    -- puede resolver sin discutir cuánto es subir.
+    nivel           REAL    NOT NULL,
+    hacia           TEXT    NOT NULL,   -- arriba | abajo
+    probabilidad    REAL    NOT NULL,   -- 0.0 a 1.0, lo que el modelo dice
+    -- El régimen que midió el CÓDIGO y el que DIJO ver el modelo. Separados
+    -- porque la pregunta interesante es si acierta más cuando coinciden.
+    regimen_medido  TEXT,
+    regimen_dicho   TEXT,
+    contexto        TEXT    NOT NULL,   -- el gráfico al predecir, entero
+    razonamiento    TEXT    NOT NULL,   -- por qué esa probabilidad, AL PREDECIR
+    sello           TEXT    NOT NULL,
+    -- Lo de abajo lo escribe el código al resolver, nunca el modelo.
+    resuelta_en     TEXT,
+    ocurrio         INTEGER,            -- 1 si tocó el nivel, 0 si no
+    brier           REAL,               -- (probabilidad - ocurrio)²
+    precio_al_cerrar REAL
+);
+CREATE INDEX IF NOT EXISTS idx_predicciones
+    ON predicciones(resuelta_en) WHERE resuelta_en IS NULL;
 """
 
 
@@ -186,6 +219,40 @@ def _sellar(
             "direccion": direccion,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
+def _sellar_prediccion(
+    contexto: Contexto,
+    razonamiento: str,
+    *,
+    simbolo: str,
+    nivel: float,
+    hacia: str,
+    probabilidad: float,
+) -> str:
+    """El hash de una predicción, hermano de `_sellar`.
+
+    ⚠ LA PROBABILIDAD ENTRA EN EL SELLO, y es el campo que más tienta. Bajar un
+    80% a un 55% después de fallar convierte un Brier de 0.64 en uno de 0.30 sin
+    tocar nada más: el mismo fraude que `_sellar` impide con el stop, aplicado a
+    la única cifra que aquí decide si el modelo sabe algo.
+
+    El nivel y la dirección van por lo mismo: mover el nivel recontextualiza la
+    apuesta entera.
+    """
+    material = json.dumps(
+        {
+            "razonamiento": razonamiento,
+            "contexto": asdict(contexto),
+            "simbolo": simbolo,
+            "nivel": nivel,
+            "hacia": hacia,
+            "probabilidad": probabilidad,
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -825,6 +892,200 @@ class Registro:
             if sello != f["sello"]:
                 rotos.append(int(f["id"]))
         return rotos
+
+    # ── Predicciones ──────────────────────────────────────────────────────────
+    #
+    # No miden si el modelo adivina el precio: eso ya está respondido y la
+    # respuesta es que no —los ingenuos ganan a 40 modelos y 18 configuraciones
+    # bayesianas en cinco ventanas de 2016-2026—. Miden si SABE CUÁNDO NO SABE:
+    # si sus 80% aciertan más que sus 55%. Ver paper/CRITERIO_PREDICCIONES.md,
+    # que se escribió antes que este código y en su propio commit.
+
+    def predecir(
+        self,
+        *,
+        simbolo: str,
+        contexto: Contexto,
+        nivel: float,
+        hacia: str,
+        probabilidad: float,
+        razonamiento: str,
+        horas_vigencia: float = 24.0,
+        regimen_dicho: str = "",
+    ) -> int:
+        """Registra una apuesta probabilística, sellada como una razón de entrada."""
+        if hacia not in ("arriba", "abajo"):
+            raise ValueError(f"dirección desconocida: {hacia!r}")
+        if not 0.0 <= probabilidad <= 1.0:
+            raise ValueError(f"la probabilidad va de 0 a 1, no {probabilidad}")
+        if not razonamiento.strip():
+            raise ValueError("una predicción sin razonamiento escrito no se registra")
+        if horas_vigencia <= 0:
+            raise ValueError("una predicción que vence antes de existir no se registra")
+        # ⚠ EL NIVEL TIENE QUE ESTAR DEL LADO QUE DICE. Un "arriba" por debajo
+        # del precio actual ya ocurrió antes de registrarse: sería un acierto
+        # garantizado que infla la muestra sin decir nada del modelo.
+        if hacia == "arriba" and nivel <= contexto.precio:
+            raise ValueError(
+                f"'arriba' con el nivel {nivel} por debajo del precio "
+                f"{contexto.precio}: eso ya ocurrió"
+            )
+        if hacia == "abajo" and nivel >= contexto.precio:
+            raise ValueError(
+                f"'abajo' con el nivel {nivel} por encima del precio "
+                f"{contexto.precio}: eso ya ocurrió"
+            )
+
+        ahora = datetime.now(UTC)
+        # El régimen que midió el código, si `mirar_mercado` lo trajo. No se le
+        # pregunta al modelo: es justamente lo que se quiere contrastar.
+        regimen_medido = ""
+        indicadores = contexto.extra.get("indicadores")
+        if isinstance(indicadores, dict):
+            regimen = indicadores.get("regime")
+            if isinstance(regimen, dict):
+                regimen_medido = str(regimen.get("regimen") or "")
+
+        cursor = self._con.execute(
+            """INSERT INTO predicciones
+               (simbolo, hecha_en, vence_en, nivel, hacia, probabilidad,
+                regimen_medido, regimen_dicho, contexto, razonamiento, sello)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                simbolo,
+                ahora.isoformat(),
+                (ahora + timedelta(hours=horas_vigencia)).isoformat(),
+                nivel,
+                hacia,
+                probabilidad,
+                regimen_medido,
+                regimen_dicho.strip(),
+                json.dumps(asdict(contexto), ensure_ascii=False),
+                razonamiento.strip(),
+                _sellar_prediccion(
+                    contexto,
+                    razonamiento.strip(),
+                    simbolo=simbolo,
+                    nivel=nivel,
+                    hacia=hacia,
+                    probabilidad=probabilidad,
+                ),
+            ),
+        )
+        self._con.commit()
+        return int(cursor.lastrowid or 0)
+
+    def predicciones_vivas(self) -> list[dict[str, Any]]:
+        return [
+            dict(f)
+            for f in self._con.execute(
+                "SELECT * FROM predicciones WHERE resuelta_en IS NULL ORDER BY id"
+            )
+        ]
+
+    def resolver_predicciones(self, velas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Resuelve las que tocaron el nivel o vencieron, contra las velas reales.
+
+        Lo hace el CÓDIGO y no el modelo, por lo mismo que el R múltiplo: es
+        aritmética —¿el precio tocó el nivel?— y no una decisión. Pedírselo al
+        modelo sería dejarle puntuarse a sí mismo.
+
+        ⚠ SE MIRA `high`/`low`, NO `close`, igual que en las órdenes: el precio
+        toca un nivel dentro de la vela aunque cierre lejos.
+
+        ⚠ SOLO CUENTAN LAS VELAS POSTERIORES A LA PREDICCIÓN. `velas()` trae las
+        últimas 200 —unas 50 horas—, así que sin este filtro toda predicción se
+        resolvería contra el pasado, que es acertar sabiendo el resultado. Es el
+        mismo bug que ya cazó el test del vencimiento en `evaluar_ordenes`.
+        """
+        resueltas = []
+        ahora = datetime.now(UTC)
+        for p in self.predicciones_vivas():
+            hecha = datetime.fromisoformat(p["hecha_en"])
+            vence = datetime.fromisoformat(p["vence_en"])
+            toco = False
+            ultimo_precio = None
+            for vela in velas:
+                momento = datetime.fromtimestamp(vela["time"], UTC)
+                if momento < hecha:
+                    continue
+                if momento > vence:
+                    break
+                ultimo_precio = vela["close"]
+                if p["hacia"] == "arriba" and vela["high"] >= p["nivel"]:
+                    toco = True
+                    break
+                if p["hacia"] == "abajo" and vela["low"] <= p["nivel"]:
+                    toco = True
+                    break
+
+            # Una predicción viva que todavía no vence se deja: aún puede ocurrir.
+            if not toco and ahora <= vence:
+                continue
+
+            ocurrio = 1 if toco else 0
+            brier = (p["probabilidad"] - ocurrio) ** 2
+            self._con.execute(
+                """UPDATE predicciones
+                   SET resuelta_en=?, ocurrio=?, brier=?, precio_al_cerrar=?
+                   WHERE id=?""",
+                (ahora.isoformat(), ocurrio, round(brier, 6), ultimo_precio, p["id"]),
+            )
+            resueltas.append(
+                {
+                    "id": p["id"],
+                    "ocurrio": bool(ocurrio),
+                    "probabilidad": p["probabilidad"],
+                    "brier": round(brier, 4),
+                }
+            )
+        self._con.commit()
+        return resueltas
+
+    def brier_por_tramo(self, minimo: int = 50) -> dict[str, Any]:
+        """La RESOLUCIÓN: ¿sus 80% aciertan más que sus 55%?
+
+        Es el criterio de éxito —no el acierto, ni batir al ingenuo—. Un modelo
+        que falla la mitad de las veces sirve igual si su confianza discrimina,
+        porque entonces se opera solo cuando dice 80%.
+
+        ⚠ DEVUELVE LOS TRAMOS VACÍOS POR DEBAJO DE `minimo`, y es deliberado: la
+        fiabilidad del Brier es inestable con muestra pequeña, y todos los
+        modelos medidos muestran sobreconfianza sistemática. Enseñarle su tasa a
+        las 20 es invitarlo a ajustar contra ruido. Mismo principio que "no
+        elijas el mejor eje mirando esta tabla".
+        """
+        filas = list(
+            self._con.execute(
+                "SELECT probabilidad, ocurrio, brier FROM predicciones "
+                "WHERE resuelta_en IS NOT NULL AND brier IS NOT NULL"
+            )
+        )
+        if len(filas) < minimo:
+            return {"resueltas": len(filas), "faltan": minimo - len(filas), "tramos": []}
+
+        tramos: dict[str, list[Any]] = {}
+        for f in filas:
+            # Tramos de 20 puntos: con menos, cada uno se queda sin muestra.
+            base = int(f["probabilidad"] * 100 // 20) * 20
+            tramos.setdefault(f"{base}-{base + 20}%", []).append(f)
+
+        return {
+            "resueltas": len(filas),
+            "brier_medio": round(sum(f["brier"] for f in filas) / len(filas), 4),
+            "tasa_base": round(sum(f["ocurrio"] for f in filas) / len(filas), 3),
+            # Ordenados por tramo y NO por resultado: ordenar por acierto
+            # invitaría a quedarse con el mejor, que es el sobreajuste de siempre.
+            "tramos": [
+                {
+                    "tramo": nombre,
+                    "n": len(fs),
+                    "dijo": round(sum(f["probabilidad"] for f in fs) / len(fs), 3),
+                    "ocurrio": round(sum(f["ocurrio"] for f in fs) / len(fs), 3),
+                }
+                for nombre, fs in sorted(tramos.items())
+            ],
+        }
 
     def cerrar_conexion(self) -> None:
         self._con.close()
