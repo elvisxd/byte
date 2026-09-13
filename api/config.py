@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # conversación, así que conviene que sea breve: el detalle vive en las
     # herramientas.
     perfil_file: str = Field(default="", alias="BYTE_PERFIL")
+    # Abrir páginas y llamar APIs. Opt-in: trae contenido de terceros al prompt
+    # y alcanza cualquier host público, así que es una decisión.
+    web_fetch: bool = Field(default=False, alias="BYTE_WEB_FETCH")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

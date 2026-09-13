@@ -146,4 +146,13 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
         else:
             logger.warning("git_sin_repo", raiz=str(raiz), detail="no es un repositorio")
 
+    # Leer páginas y explorar APIs. Van con la búsqueda web porque es su
+    # continuación natural: buscar dice que algo existe, leer dice qué dice.
+    if settings.web_fetch:
+        from tools.web_fetch import build_web_fetch_tools
+
+        for herramienta in build_web_fetch_tools(settings.max_tool_result_chars):
+            registry.add(herramienta)
+        logger.info("web_fetch_activo", detail="el agente puede abrir páginas y llamar APIs")
+
     return registry
