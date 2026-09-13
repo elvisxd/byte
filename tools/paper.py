@@ -358,7 +358,13 @@ class PredecirArgs(BaseModel):
         description="Qué régimen ves vos: RANGE, TREND o NEUTRAL. Opcional.",
     )
     horas_vigencia: float = Field(
-        default=24.0, description="Cuántas horas tiene el precio para tocar el nivel."
+        default=0.0,
+        description=(
+            "Cuántas horas tiene el precio para tocar el nivel. Dejalo en 0 y se "
+            "calcula desde la temporalidad: ~6h en 15m, 24h en 1h, 96h en 4h. Ponelo "
+            "a mano solo si tu tesis pide otro plazo, y decí por qué en el "
+            "razonamiento."
+        ),
     )
 
 
@@ -393,11 +399,15 @@ def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolRes
         )
 
     logger.info("paper_prediccion", id=pid, nivel=args.nivel, p=args.probabilidad)
+    # El plazo que de verdad se guardó: con `horas_vigencia` en 0 lo derivó el
+    # registro desde la temporalidad, y decir "en 0h" sería mentirle al modelo
+    # sobre la apuesta que acaba de hacer.
+    plazo = args.horas_vigencia or Registro.PLAZO_POR_MARCO.get(args.temporalidad, 24.0)
     return ToolResult(
         content=wrap_untrusted(
             "PREDICCIÓN",
             f"Registrada #{pid}: {args.probabilidad:.0%} de que {SIMBOLO_UNICO} toque "
-            f"{args.nivel} hacia {args.hacia} en {args.horas_vigencia:g}h "
+            f"{args.nivel} hacia {args.hacia} en {plazo:g}h "
             f"(precio ahora {ctx.precio}).\n"
             "La resuelve el código contra las velas, no vos. Tu razonamiento queda sellado.",
             max_chars,
