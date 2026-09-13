@@ -1290,4 +1290,4 @@ def test_al_salir_se_borra_el_marco(capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
     cli._borrar_marco()
     salida = capsys.readouterr().out
-    assert salida.count("\033[2K") == 3, "no borra las tres líneas del marco"
+    assert salida.count("\033[2K") == 4, "no borra las cuatro líneas del marco"

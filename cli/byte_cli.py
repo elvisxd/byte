@@ -711,7 +711,13 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     armado = False  # un Ctrl-C ya recibido: el próximo cierra
     while sesion.seguir:
         try:
-            entrada = input(_marco_del_prompt() + prompt).strip()
+            # El marco va por stdout y no como prompt de `input()`: readline
+            # procesa su argumento carácter por carácter para poder reimprimirlo
+            # al editar, y en el camino parte la regla con un `\r` — quedaba
+            # cortada a la mitad en terminales anchas.
+            sys.stdout.write(_marco_del_prompt())
+            sys.stdout.flush()
+            entrada = input(prompt).strip()
         except EOFError:  # Ctrl-D
             print()
             break
@@ -1020,11 +1026,15 @@ def _marco_del_prompt() -> str:
     # que envuelva — entonces el `\033[F` sube a la línea equivocada y el prompt
     # queda arriba del marco en vez de adentro. Dos columnas lo evitan sin
     # cambiar el carácter, que es el que da el aspecto que se busca.
-    # De borde a borde. Medí en un pty que 80 caracteres `─` entran en 80
-    # columnas sin envolver: aunque Unicode lo marque de ancho "ambiguo", las
-    # terminales lo pintan simple. Un separador a media línea se lee como un
-    # adorno; uno completo parte la pantalla, que es para lo que está.
-    ancho = max(20, shutil.get_terminal_size((80, 24)).columns)
+    # El mismo ancho que el banner, no el de la terminal: en una pantalla ancha
+    # el banner se topa en ANCHO_MAXIMO y unas reglas que siguieran hasta el
+    # borde quedarían desalineadas con él, que es justo lo que se nota.
+    #
+    # Y de borde a borde dentro de ese ancho: medí en un pty que 80 caracteres
+    # `─` entran en 80 columnas sin envolver, aunque Unicode los marque de ancho
+    # "ambiguo". Un separador a media línea se lee como un adorno; uno completo
+    # parte la pantalla, que es para lo que está.
+    ancho = min(shutil.get_terminal_size((ANCHO_MAXIMO, 24)).columns, ANCHO_MAXIMO)
     regla = _color("─" * ancho, GRIS)
     # Tres líneas: regla, una vacía donde va el prompt, y la regla de abajo. El
     # `\033[F` deja el cursor en la **columna 0** de la línea anterior, así que
@@ -1041,7 +1051,10 @@ def _borrar_marco() -> None:
     """
     if not _en_pantalla():
         return
-    sys.stdout.write("\r\033[2K" + "\033[F\033[2K" * 2)
+    # Una de más: `\033[F` no baja del borde superior de la pantalla, así que
+    # sobrar es inocuo, mientras que quedarse corto deja media regla colgada
+    # debajo del "Bye".
+    sys.stdout.write("\r\033[2K" + "\033[F\033[2K" * 3)
     sys.stdout.flush()
 
 
