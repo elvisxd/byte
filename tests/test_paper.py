@@ -187,6 +187,8 @@ def test_las_herramientas_se_arman(tmp_path: Path) -> None:
         "abrir_operacion",
         "cerrar_operacion",
         "estado_paper",
+        "salir_parcial",
+        "mover_stop",
         "publicar_historial",
     }
 
@@ -369,18 +371,19 @@ def test_el_objetivo_va_del_lado_que_corresponde(registro: Registro, contexto: C
         )
 
 
-def test_un_cierre_parcial_falla_en_vez_de_perder_media_operacion(
+def test_cerrar_no_acepta_parcial_como_motivo(
     registro: Registro, contexto: Contexto
 ) -> None:
-    """El esquema lo ofrecía y no lo soportaba, que es lo peor de los dos mundos.
+    """`cerrar` cierra TODO lo que queda; los parciales tienen su propio método.
 
-    `motivo="parcial"` escribía `cerrada_en` igual que un cierre total: la
-    posición desaparecía de `abiertas()`, el resto no se registraba nunca, y el
-    eje contabilizaba el R del primer tramo como resultado completo.
+    Antes `motivo="parcial"` estaba en el esquema y escribía `cerrada_en` igual
+    que un cierre total: la posición desaparecía de `abiertas()`, el resto no se
+    registraba nunca y el eje contabilizaba el R del primer tramo como resultado
+    completo. Ahora el motivo se rechaza y la vía correcta es `salir_parcial`.
     """
     oid = _operacion_simple(registro, contexto)
 
-    with pytest.raises(ValueError, match="parciales"):
+    with pytest.raises(ValueError, match="salir_parcial"):
         registro.cerrar(oid, precio_salida=102.0, motivo="parcial")
 
     assert [o["id"] for o in registro.abiertas()] == [oid]
@@ -413,3 +416,106 @@ def test_un_breakeven_no_cuenta_como_derrota(registro: Registro, contexto: Conte
     registro.cerrar(oid, precio_salida=contexto.precio, motivo="manual")
 
     assert registro.por_eje()[0]["aciertos_pct"] == 100.0
+
+
+def test_el_r_de_una_operacion_con_parciales_pondera_cada_tramo(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Salir de la mitad a +2R y del resto a 0R es +1R, no 0R.
+
+    Guardar solo la última salida borraría la ganancia ya tomada, que es
+    exactamente lo que la gestión por parciales busca conseguir. El sistema
+    viejo hacía eso: `parcial` escribía `cerrada_en` y el resto de la posición
+    no se registraba nunca.
+    """
+    oid = _operacion_simple(registro, contexto)  # entrada 100, stop 99 → 1R = 1
+
+    assert registro.salir_parcial(oid, precio_salida=102.0, fraccion=0.5) == pytest.approx(2.0)
+    assert [o["id"] for o in registro.abiertas()] == [oid], "el resto sigue abierto"
+
+    r = registro.cerrar(oid, precio_salida=100.0, motivo="stop")
+
+    assert r == pytest.approx(1.0)
+
+
+def test_no_se_puede_soltar_mas_posicion_de_la_que_queda(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Las fracciones son de la posición ORIGINAL, así que dos parciales del 60%
+    son imposibles. Sin el guard, el R ponderado sumaría 1.2 veces la posición."""
+    oid = _operacion_simple(registro, contexto)
+    registro.salir_parcial(oid, precio_salida=102.0, fraccion=0.6)
+
+    with pytest.raises(ValueError, match="no queda tanta"):
+        registro.salir_parcial(oid, precio_salida=103.0, fraccion=0.6)
+
+
+def test_una_fraccion_de_cero_o_uno_no_es_un_parcial(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Soltar el 100% es cerrar, y hacerlo por esta vía dejaría la operación
+    abierta con la posición ya vendida — un estado que no existe."""
+    oid = _operacion_simple(registro, contexto)
+
+    for fraccion in (0.0, 1.0, -0.5, 1.5):
+        with pytest.raises(ValueError, match="fracción"):
+            registro.salir_parcial(oid, precio_salida=102.0, fraccion=fraccion)
+
+
+def test_mover_el_stop_no_rompe_el_sello(registro: Registro, contexto: Contexto) -> None:
+    """Mover el stop a la entrada tras un parcial es gestión normal; editar el
+    stop sellado es adulterar el registro. La diferencia tiene que sobrevivir:
+    `mover_stop` escribe en `stop_actual` y no toca lo que se selló."""
+    oid = _operacion_simple(registro, contexto)
+
+    registro.mover_stop(oid, nuevo_stop=100.0, razon="A la entrada tras el parcial.")
+
+    assert registro.verificar_sellos() == []
+    assert registro.abiertas()[0]["stop_actual"] == 100.0
+
+
+def test_el_r_se_mide_contra_el_stop_original_aunque_se_mueva(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Si el R se midiera contra el stop movido, toda gestión se vería como una
+    mejora del resultado y las operaciones dejarían de ser comparables entre
+    sí: el riesgo que se asumió al entrar es el que se asumió."""
+    oid = _operacion_simple(registro, contexto)  # stop 99 → riesgo 1
+    registro.mover_stop(oid, nuevo_stop=99.5, razon="Reduzco riesgo.")
+
+    r = registro.cerrar(oid, precio_salida=102.0, motivo="objetivo")
+
+    assert r == pytest.approx(2.0), "con el stop movido daría 5.0"
+
+
+def test_una_base_vieja_se_migra_sin_perder_el_historial(tmp_path: Path) -> None:
+    """`CREATE TABLE IF NOT EXISTS` no altera una tabla que ya existe, así que
+    sin migración estrenar los parciales obligaría a borrar el registro — lo que
+    este módulo existe para conservar."""
+    ruta = tmp_path / "vieja.db"
+    con = sqlite3.connect(ruta)
+    con.executescript(
+        """CREATE TABLE operaciones (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, eje TEXT NOT NULL, simbolo TEXT NOT NULL,
+             direccion TEXT NOT NULL, abierta_en TEXT NOT NULL, precio_entrada REAL NOT NULL,
+             stop_loss REAL NOT NULL, take_profit REAL, contexto TEXT NOT NULL,
+             razon TEXT NOT NULL, sello TEXT NOT NULL, cerrada_en TEXT, precio_salida REAL,
+             motivo_cierre TEXT, r_multiplo REAL, contexto_salida TEXT, analisis TEXT);"""
+    )
+    con.execute(
+        "INSERT INTO operaciones (eje,simbolo,direccion,abierta_en,precio_entrada,"
+        "stop_loss,contexto,razon,sello) VALUES ('range-sweep','X','long','2026-01-01',"
+        "100,99,'{}','la de antes','sello')"
+    )
+    con.commit()
+    con.close()
+
+    registro = Registro(ruta)
+
+    assert registro.abiertas()[0]["razon"] == "la de antes"
+    assert "stop_actual" in {
+        f["name"]
+        for f in registro._con.execute(  # noqa: SLF001
+            "PRAGMA table_info(operaciones)"
+        )
+    }

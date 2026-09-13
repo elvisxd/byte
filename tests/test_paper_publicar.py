@@ -173,3 +173,25 @@ async def test_un_panel_caido_no_invalida_la_sesion(tmp_path: Path) -> None:
 
     assert r.summary == {"publicado": False}  # type: ignore[attr-defined]
     assert "guardadas igual" in r.content  # type: ignore[attr-defined]
+
+
+def test_los_tramos_y_el_stop_movido_viajan_en_la_foto(registro: Registro) -> None:
+    """El panel enseñaría un resultado sin la gestión que lo produjo.
+
+    Una operación que cerró en +1R tomando la mitad en +2R y moviendo el stop a
+    la entrada no se parece en nada a otra que hizo +1R de una sola salida, y
+    distinguirlas es justamente lo que el registro existe para permitir.
+    """
+    oid = _operacion(registro)
+    registro.salir_parcial(oid, precio_salida=102.0, fraccion=0.5, analisis="Primer objetivo.")
+    registro.mover_stop(oid, nuevo_stop=100.0, razon="A la entrada.")
+    registro.cerrar(oid, precio_salida=100.0, motivo="stop")
+
+    op = instantanea(registro)["cerradas"][0]
+
+    assert op["rMultiplo"] == pytest.approx(1.0)
+    assert op["stopActual"] == 100.0
+    assert [(t["motivo"], t["fraccion"]) for t in op["tramos"]] == [
+        ("parcial", 0.5),
+        ("stop", 0.5),
+    ]

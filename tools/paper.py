@@ -158,8 +158,8 @@ class CerrarArgs(BaseModel):
     operacion_id: int = Field(description="El número que devolvió abrir_operacion")
     motivo: str = Field(
         description=(
-            "stop, objetivo o manual. Los cierres parciales todavía no se pueden "
-            "registrar: cerrá la posición entera o dejala abierta."
+            "stop, objetivo o manual. Cierra TODO lo que quede de la posición; "
+            "para soltar solo una parte usá salir_parcial."
         )
     )
     analisis: str = Field(
@@ -219,6 +219,86 @@ def _cerrar(registro: Registro, args: CerrarArgs) -> ToolResult:
 
 class EstadoArgs(BaseModel):
     pass
+
+
+class ParcialArgs(BaseModel):
+    operacion_id: int = Field(description="El número que devolvió abrir_operacion")
+    fraccion: float = Field(
+        description=(
+            "Qué parte de la posición ORIGINAL se suelta, entre 0 y 1. 0.5 es la mitad. "
+            "Siempre referido al total, no a lo que queda."
+        )
+    )
+    analisis: str = Field(
+        default="", description="Por qué se toma acá el parcial. Va en un campo aparte."
+    )
+
+
+def _parcial(registro: Registro, args: ParcialArgs) -> ToolResult:
+    abiertas = {o["id"]: o for o in registro.abiertas()}
+    operacion = abiertas.get(args.operacion_id)
+    if operacion is None:
+        return ToolResult(
+            content=(
+                f"la operación {args.operacion_id} no está abierta. Abiertas: {sorted(abiertas)}"
+            ),
+            summary={"error": "no existe"},
+            ok=False,
+        )
+    try:
+        datos = velas(operacion["simbolo"], "15m", 60)
+    except MercadoNoDisponible as exc:
+        return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
+
+    precio = datos["velas"][-1]["close"]
+    try:
+        r = registro.salir_parcial(
+            args.operacion_id,
+            precio_salida=precio,
+            fraccion=args.fraccion,
+            contexto_salida=_contexto_de(datos, indicadores(datos["velas"], SIEMPRE)),
+            analisis=args.analisis,
+        )
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se pudo tomar el parcial: {exc}",
+            summary={"error": "no se tomó"},
+            ok=False,
+        )
+    logger.info("paper_parcial", id=args.operacion_id, fraccion=args.fraccion, r=round(r, 3))
+    return ToolResult(
+        content=(
+            f"Soltaste el {args.fraccion:.0%} de la operación {args.operacion_id} a {precio}: "
+            f"{r:+.2f}R en ese tramo. El resto sigue abierto — el R de la operación entera "
+            f"se calcula al cerrarla, ponderando cada tramo por lo que soltó."
+        ),
+        summary={"id": args.operacion_id, "fraccion": args.fraccion, "r_tramo": round(r, 3)},
+    )
+
+
+class MoverStopArgs(BaseModel):
+    operacion_id: int = Field(description="El número que devolvió abrir_operacion")
+    nuevo_stop: float = Field(description="El precio del stop nuevo")
+    razon: str = Field(default="", description="Por qué se mueve")
+
+
+def _mover_stop(registro: Registro, args: MoverStopArgs) -> ToolResult:
+    try:
+        registro.mover_stop(args.operacion_id, nuevo_stop=args.nuevo_stop, razon=args.razon)
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se pudo mover el stop: {exc}",
+            summary={"error": "no se movió"},
+            ok=False,
+        )
+    return ToolResult(
+        content=(
+            f"Stop de la operación {args.operacion_id} movido a {args.nuevo_stop}. "
+            "El R múltiplo se sigue midiendo contra el stop ORIGINAL: es lo que hace "
+            "comparables las operaciones entre sí."
+        ),
+        summary={"id": args.operacion_id, "stop": args.nuevo_stop},
+    )
 
 
 def _estado(registro: Registro) -> ToolResult:
@@ -329,6 +409,12 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
     async def publicar_historial(_args: BaseModel) -> ToolResult:
         return _publicar(registro)
 
+    async def salir_parcial(args: BaseModel) -> ToolResult:
+        return _parcial(registro, args)  # type: ignore[arg-type]
+
+    async def mover_stop(args: BaseModel) -> ToolResult:
+        return _mover_stop(registro, args)  # type: ignore[arg-type]
+
     return [
         Tool(
             name="mirar_mercado",
@@ -368,6 +454,25 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
             ),
             args_model=EstadoArgs,
             run=estado,
+        ),
+        Tool(
+            name="salir_parcial",
+            description=(
+                "Suelta una PARTE de una operación abierta y deja el resto corriendo. "
+                "Para tomar ganancia en un primer objetivo sin cerrar del todo. El R de "
+                "la operación entera pondera cada tramo por lo que soltó."
+            ),
+            args_model=ParcialArgs,
+            run=salir_parcial,
+        ),
+        Tool(
+            name="mover_stop",
+            description=(
+                "Mueve el stop de una operación abierta, por ejemplo a la entrada después "
+                "de tomar un parcial. El R se sigue midiendo contra el stop original."
+            ),
+            args_model=MoverStopArgs,
+            run=mover_stop,
         ),
         Tool(
             name="publicar_historial",

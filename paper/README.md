@@ -41,15 +41,36 @@ medias solo existen ahí.
 
 ## Las herramientas del agente
 
-Cinco, y el orden importa:
+Siete, y el orden importa:
 
 | | qué hace |
 |---|---|
 | `mirar_mercado` | precio, rango de 20 velas, volumen relativo, ATR/ADX/RSI/MACD/EMA |
 | `abrir_operacion` | registra una entrada — **la razón es obligatoria** |
-| `cerrar_operacion` | cierra al precio actual y calcula el R |
+| `salir_parcial` | suelta una parte y deja el resto corriendo |
+| `mover_stop` | mueve el stop, por ejemplo a la entrada tras un parcial |
+| `cerrar_operacion` | cierra lo que quede y calcula el R de la operación entera |
 | `estado_paper` | qué quedó abierto y cómo va cada eje |
 | `publicar_historial` | empuja el historial al panel web, al terminar la sesión |
+
+### Los parciales, y por qué el R se pondera
+
+Salir de la mitad a +2R y del resto a 0R es **+1R**, no 0R. El R de una
+operación es la suma de sus tramos, cada uno por la parte que soltó; guardar
+solo la última salida borraría la ganancia ya tomada, que es justamente lo que
+la gestión por parciales busca conseguir.
+
+`fraccion` es siempre de la posición **original**. Si fuera "de lo que queda",
+salir de la mitad dos veces sería ambiguo; referida al total, la suma no puede
+pasar de 1 y eso se verifica al escribir.
+
+**El stop movido no toca el sellado.** `mover_stop` escribe en `stop_actual` y
+deja `stop_loss` como estaba, por dos razones: el sello cubre `stop_loss` —así
+que editarlo marcaría la operación como adulterada, correcto para una edición
+pero no para una decisión—, y el R se sigue midiendo contra el riesgo que se
+asumió **al entrar**. Recalcularlo contra un stop movido convertiría toda
+gestión en una mejora artificial del resultado y haría incomparables las
+operaciones entre sí.
 
 Que la razón sea un argumento obligatorio del esquema es lo que hace imposible
 registrar una entrada sin justificarla. Si fuera opcional, el modelo la omitiría

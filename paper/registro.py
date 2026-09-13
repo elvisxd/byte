@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS operaciones (
     contexto        TEXT    NOT NULL,   -- JSON: el estado del gráfico al entrar
     razon           TEXT    NOT NULL,   -- lo que el agente escribió AL ENTRAR
     sello           TEXT    NOT NULL,   -- hash de lo de arriba
+    -- ⚠ EL STOP MOVIDO VA APARTE Y NO PISA `stop_loss`. Mover el stop a la
+    -- entrada tras un parcial es gestión normal, pero el R múltiplo tiene que
+    -- seguir midiéndose contra el riesgo que se asumió AL ENTRAR: recalcularlo
+    -- contra un stop movido convertiría toda gestión en una mejora artificial
+    -- del resultado y haría incomparables las operaciones entre sí. Además
+    -- `stop_loss` está sellado, así que tocarlo marcaría la fila como
+    -- adulterada — que es lo correcto para una edición, no para una decisión.
+    stop_actual     REAL,               -- el stop vigente, si se movió
+    nota_stop       TEXT,               -- por qué se movió
     -- Lo de abajo se escribe después, al cerrar.
     cerrada_en      TEXT,
     precio_salida   REAL,
@@ -50,6 +59,31 @@ CREATE TABLE IF NOT EXISTS operaciones (
 );
 CREATE INDEX IF NOT EXISTS idx_eje ON operaciones(eje);
 CREATE INDEX IF NOT EXISTS idx_abiertas ON operaciones(cerrada_en) WHERE cerrada_en IS NULL;
+
+-- Las salidas parciales: cada vez que se suelta un trozo de la posición.
+--
+-- ⚠ UNA TABLA APARTE Y NO COLUMNAS MÁS. Tomar parciales es lo normal —salir a
+-- la mitad en el primer objetivo y mover el stop a la entrada— y el número de
+-- salidas no se sabe de antemano. Con columnas habría que elegir un máximo
+-- arbitrario; con filas, una operación puede tener las que haga falta.
+--
+-- ⚠ `fraccion` ES DE LA POSICIÓN ORIGINAL, no de lo que queda. Si alguien sale
+-- de la mitad y después de "la mitad", lo segundo es ambiguo: ¿la mitad de
+-- todo, o del resto? Referido siempre al total, la suma de las fracciones no
+-- puede pasar de 1 y eso se verifica al escribir. Es la definición que hace
+-- imposible el error, no la que suena más natural al hablar.
+CREATE TABLE IF NOT EXISTS tramos (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacion_id    INTEGER NOT NULL REFERENCES operaciones(id),
+    salida_en       TEXT    NOT NULL,   -- ISO 8601 UTC
+    precio_salida   REAL    NOT NULL,
+    fraccion        REAL    NOT NULL,   -- porción de la posición ORIGINAL (0..1]
+    motivo          TEXT    NOT NULL,   -- parcial | stop | objetivo | manual
+    r_multiplo      REAL    NOT NULL,   -- el R de ESTE tramo, sin ponderar
+    contexto_salida TEXT,
+    analisis        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tramos ON tramos(operacion_id);
 """
 
 
@@ -128,7 +162,22 @@ class Registro:
         self._con = sqlite3.connect(self.ruta)
         self._con.row_factory = sqlite3.Row
         self._con.executescript(ESQUEMA)
+        self._migrar()
         self._con.commit()
+
+    def _migrar(self) -> None:
+        """Las columnas que se añadieron después, sobre una base que ya existe.
+
+        `CREATE TABLE IF NOT EXISTS` no altera una tabla creada antes, así que
+        un registro con operaciones dentro se quedaría sin las columnas nuevas y
+        fallaría al escribirlas. Sin esto, estrenar los parciales obligaría a
+        borrar el historial — que es justo lo que este módulo existe para
+        conservar.
+        """
+        columnas = {f["name"] for f in self._con.execute("PRAGMA table_info(operaciones)")}
+        for nombre, tipo in (("stop_actual", "REAL"), ("nota_stop", "TEXT")):
+            if nombre not in columnas:
+                self._con.execute(f"ALTER TABLE operaciones ADD COLUMN {nombre} {tipo}")  # noqa: S608
 
     def abrir(
         self,
@@ -234,15 +283,143 @@ class Registro:
         # `abiertas()`, el resto no se registraba nunca y el eje contabilizaba el
         # R del primer tramo como si fuera el resultado completo. Medido.
         #
-        # Ofrecerlo en el esquema y no soportarlo es peor que no ofrecerlo: el
-        # modelo lo elegía —tomar parciales es práctica normal— y perdía media
-        # operación en silencio. Cuando haga falta de verdad, se implementa con
-        # una tabla de tramos; mientras tanto, que falle fuerte.
         if motivo not in ("stop", "objetivo", "manual"):
             raise ValueError(
-                f"motivo de cierre desconocido: {motivo!r}. Son stop, objetivo o manual. "
-                "Los cierres parciales todavía no se pueden registrar."
+                f"motivo de cierre desconocido: {motivo!r}. Son stop, objetivo o manual "
+                "(para soltar solo una parte, usá salir_parcial)."
             )
+        fila = self._abierta(operacion_id)
+        vendido = self._fraccion_vendida(operacion_id)
+        restante = 1.0 - vendido
+        r_tramo = self._r_de(fila, precio_salida)
+
+        ahora = datetime.now(UTC).isoformat()
+        contexto_json = (
+            json.dumps(asdict(contexto_salida), ensure_ascii=False) if contexto_salida else None
+        )
+        self._con.execute(
+            """INSERT INTO tramos
+               (operacion_id, salida_en, precio_salida, fraccion, motivo, r_multiplo,
+                contexto_salida, analisis)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                operacion_id,
+                ahora,
+                precio_salida,
+                restante,
+                motivo,
+                r_tramo,
+                contexto_json,
+                analisis.strip(),
+            ),
+        )
+
+        # ⚠ EL R DE LA OPERACIÓN ES LA SUMA PONDERADA DE SUS TRAMOS, no el del
+        # último. Quien sale de la mitad a +2R y del resto a 0R hizo +1R, no 0R:
+        # guardar solo la última salida borraría la ganancia ya tomada, que es
+        # justamente lo que la gestión por parciales busca conseguir.
+        r_total = self._r_ponderado(operacion_id)
+        self._con.execute(
+            """UPDATE operaciones
+               SET cerrada_en=?, precio_salida=?, motivo_cierre=?, r_multiplo=?,
+                   contexto_salida=?, analisis=?
+               WHERE id=?""",
+            (ahora, precio_salida, motivo, r_total, contexto_json, analisis.strip(), operacion_id),
+        )
+        self._con.commit()
+        return r_total
+
+    def salir_parcial(
+        self,
+        operacion_id: int,
+        *,
+        precio_salida: float,
+        fraccion: float,
+        contexto_salida: Contexto | None = None,
+        analisis: str = "",
+    ) -> float:
+        """Suelta una parte de la posición y deja el resto abierto.
+
+        Devuelve el R **de este tramo**, sin ponderar: es lo que hizo esta
+        salida concreta. El de la operación entera se conoce al cerrarla.
+
+        `fraccion` es de la posición ORIGINAL. Ver el comentario del esquema
+        sobre por qué esa definición y no "lo que queda".
+        """
+        if not 0 < fraccion < 1:
+            raise ValueError(
+                f"la fracción de un parcial va entre 0 y 1 sin incluirlos: {fraccion}. "
+                "Para soltar todo lo que queda, usá cerrar."
+            )
+        fila = self._abierta(operacion_id)
+        vendido = self._fraccion_vendida(operacion_id)
+        # Con tolerancia, porque tres tercios en coma flotante no suman 1 exacto
+        # y no tiene sentido rechazar un parcial por 1e-16.
+        if vendido + fraccion > 1.0 + 1e-9:
+            raise ValueError(
+                f"no queda tanta posición: ya se soltó {vendido:.2f} y se pide {fraccion:.2f}"
+            )
+
+        r_tramo = self._r_de(fila, precio_salida)
+        self._con.execute(
+            """INSERT INTO tramos
+               (operacion_id, salida_en, precio_salida, fraccion, motivo, r_multiplo,
+                contexto_salida, analisis)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                operacion_id,
+                datetime.now(UTC).isoformat(),
+                precio_salida,
+                fraccion,
+                "parcial",
+                r_tramo,
+                json.dumps(asdict(contexto_salida), ensure_ascii=False)
+                if contexto_salida
+                else None,
+                analisis.strip(),
+            ),
+        )
+        self._con.commit()
+        return r_tramo
+
+    def mover_stop(self, operacion_id: int, *, nuevo_stop: float, razon: str = "") -> None:
+        """Mueve el stop de una operación abierta.
+
+        ⚠ NO TOCA EL SELLO, y por eso hace falta este método en vez de un UPDATE
+        a mano. El sello cubre `stop_loss` —cambiarlo por fuera marca la
+        operación como adulterada, que es lo correcto—, así que mover el stop
+        legítimamente exige registrarlo como lo que es: una decisión posterior,
+        anotada aparte, sin tocar lo que se selló al entrar.
+
+        ⚠ EL R MÚLTIPLO SIGUE USANDO EL STOP ORIGINAL. Es lo que hace
+        comparables las operaciones entre sí: el riesgo que se asumió al entrar
+        es el que se asumió, y recalcularlo contra un stop movido convertiría
+        toda gestión en una mejora artificial del resultado. Por eso esto va a
+        `stop_actual` y no pisa `stop_loss`.
+        """
+        fila = self._abierta(operacion_id)
+        direccion = fila["direccion"]
+        if direccion == "long" and nuevo_stop >= fila["precio_entrada"] + abs(
+            fila["precio_entrada"] - fila["stop_loss"]
+        ):
+            raise ValueError("ese stop está por encima de lo razonable para un long")
+        self._con.execute(
+            "UPDATE operaciones SET stop_actual = ?, nota_stop = ? WHERE id = ?",
+            (nuevo_stop, razon.strip(), operacion_id),
+        )
+        self._con.commit()
+
+    def tramos(self, operacion_id: int) -> list[dict[str, Any]]:
+        """Las salidas de una operación, en orden."""
+        return [
+            dict(f)
+            for f in self._con.execute(
+                "SELECT * FROM tramos WHERE operacion_id = ? ORDER BY id", (operacion_id,)
+            )
+        ]
+
+    def _abierta(self, operacion_id: int) -> sqlite3.Row:
+        """La fila de una operación que todavía admite salidas."""
         fila = self._con.execute(
             "SELECT * FROM operaciones WHERE id = ?", (operacion_id,)
         ).fetchone()
@@ -250,7 +427,17 @@ class Registro:
             raise ValueError(f"no existe la operación {operacion_id}")
         if fila["cerrada_en"]:
             raise ValueError(f"la operación {operacion_id} ya estaba cerrada")
+        return fila
 
+    def _fraccion_vendida(self, operacion_id: int) -> float:
+        fila = self._con.execute(
+            "SELECT COALESCE(SUM(fraccion), 0.0) AS v FROM tramos WHERE operacion_id = ?",
+            (operacion_id,),
+        ).fetchone()
+        return float(fila["v"])
+
+    def _r_de(self, fila: sqlite3.Row, precio_salida: float) -> float:
+        """El R de una salida a ese precio, contra el riesgo ORIGINAL."""
         entrada, stop = fila["precio_entrada"], fila["stop_loss"]
         riesgo = abs(entrada - stop)
         if riesgo == 0:
@@ -258,27 +445,16 @@ class Registro:
         ganancia = (
             precio_salida - entrada if fila["direccion"] == "long" else entrada - precio_salida
         )
-        r = ganancia / riesgo
+        return ganancia / riesgo
 
-        self._con.execute(
-            """UPDATE operaciones
-               SET cerrada_en=?, precio_salida=?, motivo_cierre=?, r_multiplo=?,
-                   contexto_salida=?, analisis=?
-               WHERE id=?""",
-            (
-                datetime.now(UTC).isoformat(),
-                precio_salida,
-                motivo,
-                r,
-                json.dumps(asdict(contexto_salida), ensure_ascii=False)
-                if contexto_salida
-                else None,
-                analisis.strip(),
-                operacion_id,
-            ),
-        )
-        self._con.commit()
-        return r
+    def _r_ponderado(self, operacion_id: int) -> float:
+        """El R de la operación entera: cada tramo por la parte que soltó."""
+        fila = self._con.execute(
+            "SELECT COALESCE(SUM(r_multiplo * fraccion), 0.0) AS r FROM tramos "
+            "WHERE operacion_id = ?",
+            (operacion_id,),
+        ).fetchone()
+        return float(fila["r"])
 
     def abiertas(self, eje: str = "") -> list[dict[str, Any]]:
         """Las operaciones sin cerrar. Es lo que el agente lee al volver.

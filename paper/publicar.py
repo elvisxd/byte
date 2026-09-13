@@ -53,7 +53,7 @@ def _json(texto: str | None) -> Any:
         return None
 
 
-def _operacion(fila: dict[str, Any]) -> dict[str, Any]:
+def _operacion(fila: dict[str, Any], tramos: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Una fila de SQLite como la espera el panel."""
     return {
         "id": fila["id"],
@@ -73,6 +73,23 @@ def _operacion(fila: dict[str, Any]) -> dict[str, Any]:
         "rMultiplo": fila["r_multiplo"],
         "contextoSalida": _json(fila["contexto_salida"]),
         "analisis": fila["analisis"],
+        # El stop movido y los tramos. Sin esto el panel enseña un resultado sin
+        # la gestión que lo produjo, que es la mitad de lo que hay que evaluar:
+        # una operación que cerró en +1R tomando la mitad en +2R y moviendo el
+        # stop a la entrada no se parece en nada a otra que hizo +1R de una.
+        "stopActual": fila.get("stop_actual"),
+        "notaStop": fila.get("nota_stop"),
+        "tramos": [
+            {
+                "salidaEn": t["salida_en"],
+                "precioSalida": t["precio_salida"],
+                "fraccion": t["fraccion"],
+                "motivo": t["motivo"],
+                "rMultiplo": t["r_multiplo"],
+                "analisis": t["analisis"],
+            }
+            for t in (tramos or [])
+        ],
     }
 
 
@@ -86,7 +103,7 @@ def instantanea(registro: Registro, tope: int = TOPE) -> dict[str, Any]:
     """
     con = registro._con  # noqa: SLF001 — mismo paquete; el módulo es su vecino
     cerradas = [
-        _operacion(dict(f))
+        _operacion(dict(f), registro.tramos(int(f["id"])))
         for f in con.execute(
             "SELECT * FROM operaciones WHERE cerrada_en IS NOT NULL ORDER BY id DESC LIMIT ?",
             (tope,),
@@ -98,7 +115,7 @@ def instantanea(registro: Registro, tope: int = TOPE) -> dict[str, Any]:
         # invita a elegir el mejor eje mirándola, que es el sobreajuste que
         # CRITERIO_ABORTO.md prohíbe.
         "porEje": registro.por_eje(),
-        "abiertas": [_operacion(f) for f in registro.abiertas()],
+        "abiertas": [_operacion(f, registro.tramos(int(f["id"]))) for f in registro.abiertas()],
         # Ascendente: leer un historial es leerlo en orden, aunque se recorten
         # las más viejas.
         "cerradas": list(reversed(cerradas)),
