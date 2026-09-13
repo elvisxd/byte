@@ -93,6 +93,37 @@ def _operacion(fila: dict[str, Any], tramos: list[dict[str, Any]] | None = None)
     }
 
 
+def _prediccion(fila: dict[str, Any]) -> dict[str, Any]:
+    """Una predicción como la espera el panel.
+
+    ⚠ VIAJAN LOS DOS REGÍMENES, el que midió el código y el que dijo el modelo.
+    Enseñar solo uno perdería la única pregunta que esta tabla puede responder y
+    las operaciones no: si acierta más cuando su lectura del gráfico coincide
+    con la medición o cuando discrepa. En la primera sesión con predicciones las
+    dos discreparon —código TREND, modelo RANGE— y eso es justamente el dato.
+    """
+    return {
+        "id": fila["id"],
+        "simbolo": fila["simbolo"],
+        "hechaEn": fila["hecha_en"],
+        "venceEn": fila["vence_en"],
+        "nivel": fila["nivel"],
+        "hacia": fila["hacia"],
+        "probabilidad": fila["probabilidad"],
+        "regimenMedido": fila["regimen_medido"],
+        "regimenDicho": fila["regimen_dicho"],
+        "razonamiento": fila["razonamiento"],
+        "sello": fila["sello"],
+        "contexto": _json(fila["contexto"]),
+        "resueltaEn": fila["resuelta_en"],
+        # None mientras está viva, 0/1 al resolverse: el panel distingue
+        # "esperando" de "no ocurrió", que no son lo mismo.
+        "ocurrio": None if fila["ocurrio"] is None else bool(fila["ocurrio"]),
+        "brier": fila["brier"],
+        "precioAlCerrar": fila["precio_al_cerrar"],
+    }
+
+
 def instantanea(registro: Registro, tope: int = TOPE) -> dict[str, Any]:
     """Lo que el panel necesita para dibujar el historial entero.
 
@@ -120,6 +151,18 @@ def instantanea(registro: Registro, tope: int = TOPE) -> dict[str, Any]:
         # las más viejas.
         "cerradas": list(reversed(cerradas)),
         "sellosRotos": registro.verificar_sellos(),
+        # Las predicciones viajan enteras: son pocas y cada una es una línea.
+        # Sin esto se quedaban en el SQLite del Codespace, que se apaga —y el
+        # registro sobrevive a pararlo pero no a borrarlo—, así que el trabajo
+        # de medir la calibración dependía de que nadie tocara esa máquina.
+        "predicciones": [
+            _prediccion(dict(f))
+            for f in con.execute("SELECT * FROM predicciones ORDER BY id DESC LIMIT ?", (tope,))
+        ][::-1],
+        # El resumen por tramos, que `brier_por_tramo` deja vacío por debajo de
+        # 50 resueltas. Viaja igual: el panel enseña "faltan N" en vez de una
+        # calibración que todavía no significa nada.
+        "brier": registro.brier_por_tramo(),
     }
 
 
