@@ -51,7 +51,33 @@ Siete, y el orden importa:
 | `mover_stop` | mueve el stop, por ejemplo a la entrada tras un parcial |
 | `cerrar_operacion` | cierra lo que quede y calcula el R de la operación entera |
 | `estado_paper` | qué quedó abierto y cómo va cada eje |
+| `dejar_orden` | deja una orden límite que entra sola mientras no operás |
+| `cancelar_orden` | retira una orden que ya no tiene sentido |
 | `publicar_historial` | empuja el historial al panel web, al terminar la sesión |
+
+### Las órdenes límite, y por qué hacen falta
+
+Las sesiones duran ~40 minutos y el mercado corre 24/7: entre una y la siguiente
+pasan unas 23 horas sin nadie mirando. Sin órdenes, el agente solo puede entrar
+en el instante exacto en que miró — que es el peor momento posible para un eje
+como `range-sweep`, cuya tesis es *"entro cuando el precio vuelva al borde del
+rango"*, no *"entro donde esté ahora"*.
+
+Al empezar cada sesión, `paper/sesion.py` evalúa las órdenes contra las velas
+del período sin vigilancia **antes** de que el modelo decida nada: una orden que
+se disparó anoche ya es una operación abierta.
+
+- **Se mira `high`/`low`, no `close`.** Una orden se ejecuta cuando el precio
+  *toca* el nivel, aunque la vela cierre lejos.
+- **Solo cuentan las velas posteriores a la orden.** `velas()` trae las últimas
+  200 —unas 50 horas—, así que sin este filtro cualquier orden se habría
+  disparado contra el pasado: operar sabiendo el resultado.
+- **La razón se sella al dejar la orden**, no al dispararse, y la operación la
+  hereda. Al dejarla todavía no se sabe si el precio va a llegar; si se sellara
+  al disparar, entre medias caben horas de mercado que podrían reescribir la
+  tesis.
+- **Caducan.** Una orden de hace una semana responde a un gráfico que ya no
+  existe.
 
 ### Los parciales, y por qué el R se pondera
 

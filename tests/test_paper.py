@@ -189,6 +189,8 @@ def test_las_herramientas_se_arman(tmp_path: Path) -> None:
         "estado_paper",
         "salir_parcial",
         "mover_stop",
+        "dejar_orden",
+        "cancelar_orden",
         "publicar_historial",
     }
 

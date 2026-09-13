@@ -32,6 +32,10 @@ logger = get_logger("tools.paper")
 # haber decidido de antemano que el ADX importaba.
 SIEMPRE = ["atr", "adx", "rsi", "macd", "ema"]
 
+# El par del experimento. Ver la cabecera de paper/sesion.py: con un solo par la
+# diferencia entre operaciones es la hipótesis y no el activo.
+SIMBOLO_UNICO = "BTCUSDT"
+
 
 class MirarArgs(BaseModel):
     simbolo: str = Field(default="BTCUSDT", description="Par, por ejemplo BTCUSDT o ETHUSDT")
@@ -276,6 +280,81 @@ def _parcial(registro: Registro, args: ParcialArgs) -> ToolResult:
     )
 
 
+class OrdenArgs(BaseModel):
+    eje: str = Field(description="Qué hipótesis la genera")
+    direccion: str = Field(description="long o short")
+    precio_limite: float = Field(
+        description=(
+            "A qué precio entrar. Para un LONG va por DEBAJO del precio actual "
+            "—esperás a que baje— y para un SHORT por encima."
+        )
+    )
+    stop_loss: float = Field(description="Stop, del lado correcto del precio límite")
+    take_profit: float | None = Field(default=None, description="Objetivo, opcional")
+    razon: str = Field(
+        description=(
+            "Qué ves que justifica entrar a ESE precio y no al de ahora. Queda sellada "
+            "al dejar la orden, no al dispararse."
+        )
+    )
+    horas_vigencia: float = Field(
+        default=24.0,
+        description="Cuántas horas sigue viva. Pasadas, se marca vencida y no entra.",
+    )
+
+
+def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolResult:
+    try:
+        datos = velas(SIMBOLO_UNICO, "15m", 200)
+    except MercadoNoDisponible as exc:
+        return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
+    ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    try:
+        oid = registro.dejar_orden(
+            eje=args.eje,
+            simbolo=SIMBOLO_UNICO,
+            direccion=args.direccion,
+            contexto=ctx,
+            razon=args.razon,
+            precio_limite=args.precio_limite,
+            stop_loss=args.stop_loss,
+            take_profit=args.take_profit,
+            horas_vigencia=args.horas_vigencia,
+        )
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se pudo dejar la orden: {exc}",
+            summary={"error": "invalida"},
+            ok=False,
+        )
+    distancia = abs(ctx.precio - args.precio_limite) / ctx.precio * 100
+    return ToolResult(
+        content=(
+            f"Orden #{oid} dejada: {args.direccion} {SIMBOLO_UNICO} a {args.precio_limite} "
+            f"(el precio está en {ctx.precio}, {distancia:.2f}% de distancia), stop "
+            f"{args.stop_loss}. Vive {args.horas_vigencia}h. Si el precio la toca mientras "
+            f"no estás, entra sola y la vas a ver abierta la próxima vez."
+        ),
+        summary={"id": oid, "limite": args.precio_limite, "eje": args.eje},
+    )
+
+
+class CancelarOrdenArgs(BaseModel):
+    orden_id: int = Field(description="El número que devolvió dejar_orden")
+    nota: str = Field(default="", description="Por qué ya no tiene sentido")
+
+
+def _cancelar_orden(registro: Registro, args: CancelarOrdenArgs) -> ToolResult:
+    try:
+        registro.cancelar_orden(args.orden_id, nota=args.nota)
+    except ValueError as exc:
+        return ToolResult(content=str(exc), summary={"error": "no se canceló"}, ok=False)
+    return ToolResult(
+        content=f"Orden #{args.orden_id} cancelada.",
+        summary={"id": args.orden_id},
+    )
+
+
 class MoverStopArgs(BaseModel):
     operacion_id: int = Field(description="El número que devolvió abrir_operacion")
     nuevo_stop: float = Field(description="El precio del stop nuevo")
@@ -334,6 +413,18 @@ def _estado(registro: Registro) -> ToolResult:
             "ninguno se ajusta hasta el final (paper/CRITERIO_ABORTO.md).",
         ]
 
+    # Las órdenes que esperan. Sin esto el agente no sabría que dejó un plan
+    # puesto y podría dejar otro encima sobre el mismo nivel.
+    ordenes = registro.ordenes_vivas()
+    if ordenes:
+        partes += ["", "Órdenes límite esperando:"]
+        for o in ordenes:
+            partes.append(
+                f"  #{o['id']} {o['direccion']} {o['simbolo']} a {o['precio_limite']} "
+                f"(stop {o['stop_loss']}) · eje '{o['eje']}' · vence {o['vence_en'][:16]} "
+                f"· «{o['razon'][:70]}»"
+            )
+
     rotos = registro.verificar_sellos()
     if rotos:
         partes += [
@@ -344,7 +435,7 @@ def _estado(registro: Registro) -> ToolResult:
 
     return ToolResult(
         content="\n".join(partes),
-        summary={"abiertas": len(abiertas), "ejes": len(ejes)},
+        summary={"abiertas": len(abiertas), "ejes": len(ejes), "ordenes": len(ordenes)},
     )
 
 
@@ -415,6 +506,12 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
     async def mover_stop(args: BaseModel) -> ToolResult:
         return _mover_stop(registro, args)  # type: ignore[arg-type]
 
+    async def dejar_orden(args: BaseModel) -> ToolResult:
+        return _dejar_orden(registro, args, max_chars)  # type: ignore[arg-type]
+
+    async def cancelar_orden(args: BaseModel) -> ToolResult:
+        return _cancelar_orden(registro, args)  # type: ignore[arg-type]
+
     return [
         Tool(
             name="mirar_mercado",
@@ -473,6 +570,23 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
             ),
             args_model=MoverStopArgs,
             run=mover_stop,
+        ),
+        Tool(
+            name="dejar_orden",
+            description=(
+                "Deja una orden límite que entra sola si el precio la toca mientras no "
+                "estás operando. Entre sesión y sesión pasan horas: esto es lo que "
+                "permite esperar a que el precio VUELVA al nivel que te interesa en vez "
+                "de entrar donde esté ahora. La razón se sella al dejarla."
+            ),
+            args_model=OrdenArgs,
+            run=dejar_orden,
+        ),
+        Tool(
+            name="cancelar_orden",
+            description="Retira una orden límite que ya no tiene sentido.",
+            args_model=CancelarOrdenArgs,
+            run=cancelar_orden,
         ),
         Tool(
             name="publicar_historial",

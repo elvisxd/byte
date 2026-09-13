@@ -41,6 +41,8 @@ from typing import Any
 from agent.graph import build_graph
 from agent.llm import build_llm
 from api.config import Settings
+from paper.mercado import MercadoNoDisponible
+from paper.mercado import velas as velas_del_mercado
 from paper.publicar import publicar
 from paper.registro import Registro
 from paper.trace import TraceDeSesion
@@ -106,6 +108,26 @@ async def una_sesion(
         num_ctx=ajustes.ollama_num_ctx,
     )
 
+    # ⚠ LO PRIMERO: QUÉ PASÓ MIENTRAS NO ESTÁBAMOS. Las órdenes límite existen
+    # justamente para cubrir las ~23 horas entre sesiones, así que evaluarlas
+    # tiene que ocurrir ANTES de que el modelo decida nada: una orden que se
+    # disparó anoche es una operación abierta, y el agente tiene que saberlo
+    # antes de plantearse entrar otra vez.
+    #
+    # Se hace con código y no pidiéndoselo al modelo por la misma razón que el R
+    # múltiplo: es aritmética sobre las velas —¿el precio tocó el nivel?— y no
+    # una decisión.
+    disparadas = []
+    try:
+        historico = velas_del_mercado(SIMBOLO, "15m", 200)
+        disparadas = registro.evaluar_ordenes(historico["velas"])
+        for d in disparadas:
+            print(f"[sesión] orden #{d['id']}: {d['resultado']}", flush=True)
+    except MercadoNoDisponible as exc:
+        # Sin datos no se puede saber si las órdenes entraron. Se avisa y se
+        # sigue: el modelo verá las órdenes todavía vivas y decidirá.
+        print(f"[sesión] no se pudieron evaluar las órdenes: {exc}", flush=True)
+
     limite = time.monotonic() + minutos * 60
     vueltas, errores, seguidos = 0, [], 0
     abiertas_antes = len(registro.abiertas())
@@ -164,6 +186,7 @@ async def una_sesion(
     trace.publicar(viva=False)
 
     resumen = {
+        "ordenes_resueltas": disparadas,
         "vueltas": vueltas,
         "abiertas_antes": abiertas_antes,
         "abiertas_ahora": len(registro.abiertas()),

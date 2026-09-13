@@ -19,8 +19,8 @@ es ruido. El modelo elige **cuándo y por qué**; el código calcula **qué pas�
 import hashlib
 import json
 import sqlite3
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,46 @@ CREATE TABLE IF NOT EXISTS tramos (
     analisis        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tramos ON tramos(operacion_id);
+
+-- Las órdenes límite: un plan puesto para que se evalúe cuando el agente
+-- vuelva.
+--
+-- ⚠ POR QUÉ EXISTEN. Las sesiones son de 40 minutos y el mercado corre 24/7:
+-- entre una sesión y la siguiente pasan 23 horas en las que el precio hace lo
+-- que quiere y nadie está mirando. Sin esto, el agente solo puede entrar a
+-- mercado en el instante exacto en que lo miró — que es el peor momento posible
+-- para un eje como `range-sweep`, cuya tesis es "entro cuando el precio VUELVA
+-- al borde del rango", no "entro donde esté ahora".
+--
+-- ⚠ LA RAZÓN SE SELLA AL DEJAR LA ORDEN, no al dispararse. Es exactamente el
+-- mismo argumento que la de una entrada: lo que hay que poder auditar es qué se
+-- pensaba ANTES de saber el resultado, y al dejar la orden todavía no se sabe
+-- si el precio va a llegar. Si se sellara al disparar, entre medias caben horas
+-- de mercado que podrían reescribir la tesis.
+--
+-- ⚠ Y CADUCAN. Una orden de hace una semana responde a un gráfico que ya no
+-- existe: dispararla sería operar una tesis muerta. `vence_en` es obligatorio y
+-- lo pone quien la deja.
+CREATE TABLE IF NOT EXISTS ordenes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    eje             TEXT    NOT NULL,
+    simbolo         TEXT    NOT NULL,
+    direccion       TEXT    NOT NULL,   -- long | short
+    creada_en       TEXT    NOT NULL,
+    vence_en        TEXT    NOT NULL,   -- ISO 8601 UTC: después de esto no se dispara
+    precio_limite   REAL    NOT NULL,   -- a qué precio se quiere entrar
+    stop_loss       REAL    NOT NULL,
+    take_profit     REAL,
+    contexto        TEXT    NOT NULL,   -- el gráfico AL DEJAR LA ORDEN
+    razon           TEXT    NOT NULL,   -- por qué ahí, escrito AL DEJARLA
+    sello           TEXT    NOT NULL,
+    -- Lo de abajo se escribe cuando se resuelve.
+    resuelta_en     TEXT,
+    resultado       TEXT,               -- disparada | vencida | cancelada
+    operacion_id    INTEGER REFERENCES operaciones(id),  -- si se disparó
+    nota            TEXT                -- por qué se canceló, si se canceló
+);
+CREATE INDEX IF NOT EXISTS idx_ordenes ON ordenes(resuelta_en) WHERE resuelta_en IS NULL;
 """
 
 
@@ -419,6 +459,217 @@ class Registro:
         self._con.execute(
             "UPDATE operaciones SET stop_actual = ?, nota_stop = ? WHERE id = ?",
             (nuevo_stop, razon.strip(), operacion_id),
+        )
+        self._con.commit()
+
+    def dejar_orden(
+        self,
+        *,
+        eje: str,
+        simbolo: str,
+        direccion: str,
+        contexto: Contexto,
+        razon: str,
+        precio_limite: float,
+        stop_loss: float,
+        take_profit: float | None = None,
+        horas_vigencia: float = 24.0,
+    ) -> int:
+        """Deja una orden límite para que se evalúe en la próxima sesión.
+
+        Las mismas validaciones que `abrir`, pero contra el PRECIO LÍMITE y no
+        contra el precio actual: la orden dice "si el precio llega acá, entro
+        con este stop", así que el stop tiene que estar del lado correcto de
+        donde se va a entrar, no de donde está ahora.
+        """
+        if direccion not in ("long", "short"):
+            raise ValueError(f"dirección desconocida: {direccion!r}")
+        if not razon.strip():
+            raise ValueError("una orden sin razón escrita no se registra")
+        if direccion == "long" and stop_loss >= precio_limite:
+            raise ValueError("en un long el stop va por debajo del precio límite")
+        if direccion == "short" and stop_loss <= precio_limite:
+            raise ValueError("en un short el stop va por encima del precio límite")
+        if abs(precio_limite - stop_loss) < precio_limite * 0.0005:
+            raise ValueError("el stop está pegado al límite: el R múltiplo se dispararía")
+        if take_profit is not None:
+            if direccion == "long" and take_profit <= precio_limite:
+                raise ValueError("en un long el objetivo va por encima del límite")
+            if direccion == "short" and take_profit >= precio_limite:
+                raise ValueError("en un short el objetivo va por debajo del límite")
+        # ⚠ UNA ORDEN DEL LADO EQUIVOCADO DEL PRECIO NO ES UNA ORDEN LÍMITE.
+        # Un long con el límite POR ENCIMA del precio actual se dispararía
+        # inmediatamente —es una entrada a mercado disfrazada— y su "razón"
+        # diría "espero a que baje" sobre algo que nunca bajó.
+        if direccion == "long" and precio_limite >= contexto.precio:
+            raise ValueError(
+                f"un long límite se pone POR DEBAJO del precio actual "
+                f"({precio_limite} >= {contexto.precio}): eso es entrar a mercado"
+            )
+        if direccion == "short" and precio_limite <= contexto.precio:
+            raise ValueError(
+                f"un short límite se pone POR ENCIMA del precio actual "
+                f"({precio_limite} <= {contexto.precio}): eso es entrar a mercado"
+            )
+        if horas_vigencia <= 0:
+            raise ValueError("una orden que vence antes de existir no se registra")
+
+        ahora = datetime.now(UTC)
+        cursor = self._con.execute(
+            """INSERT INTO ordenes
+               (eje, simbolo, direccion, creada_en, vence_en, precio_limite, stop_loss,
+                take_profit, contexto, razon, sello)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                eje,
+                simbolo,
+                direccion,
+                ahora.isoformat(),
+                (ahora + timedelta(hours=horas_vigencia)).isoformat(),
+                precio_limite,
+                stop_loss,
+                take_profit,
+                json.dumps(asdict(contexto), ensure_ascii=False),
+                razon.strip(),
+                _sellar(
+                    contexto,
+                    razon.strip(),
+                    eje,
+                    simbolo=simbolo,
+                    direccion=direccion,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                ),
+            ),
+        )
+        self._con.commit()
+        return int(cursor.lastrowid or 0)
+
+    def ordenes_vivas(self) -> list[dict[str, Any]]:
+        """Las órdenes que todavía esperan. Es lo que el agente lee al volver."""
+        return [
+            dict(f)
+            for f in self._con.execute(
+                "SELECT * FROM ordenes WHERE resuelta_en IS NULL ORDER BY id"
+            )
+        ]
+
+    def evaluar_ordenes(
+        self, velas: list[dict[str, Any]], *, contexto_ahora: Contexto | None = None
+    ) -> list[dict[str, Any]]:
+        """Mira qué pasó con las órdenes mientras el agente estaba apagado.
+
+        `velas` son las del período sin vigilancia, con `time`, `high` y `low`.
+        Devuelve qué se resolvió y cómo.
+
+        ⚠ SE MIRA `high`/`low`, NO `close`. Una orden límite se ejecuta cuando el
+        precio TOCA el nivel, aunque la vela cierre lejos: mirar solo el cierre
+        perdería las entradas que se dieron dentro de la vela, que en 15 minutos
+        son muchas. Es la diferencia entre simular órdenes y simular cierres.
+        """
+        resueltas = []
+        for orden in self.ordenes_vivas():
+            vence = datetime.fromisoformat(orden["vence_en"])
+            creada = datetime.fromisoformat(orden["creada_en"])
+            disparo = None
+            for vela in velas:
+                momento = datetime.fromtimestamp(vela["time"], UTC)
+                # ⚠ LAS VELAS ANTERIORES A LA ORDEN NO CUENTAN, y omitirlo era un
+                # bug de verdad: `velas()` trae las últimas 200 —o sea las ~50
+                # horas previas— así que una orden puesta hace diez minutos se
+                # evaluaba contra medio día de precios que ocurrieron ANTES de
+                # que existiera. Cualquier orden se habría "disparado" con el
+                # pasado, que es la forma más pura de operar sabiendo el
+                # resultado. Lo detectó el test del vencimiento.
+                if momento < creada:
+                    continue
+                if momento > vence:
+                    break
+                # El toque: un long entra si el precio BAJÓ hasta el límite.
+                if orden["direccion"] == "long" and vela["low"] <= orden["precio_limite"]:
+                    disparo = momento
+                    break
+                if orden["direccion"] == "short" and vela["high"] >= orden["precio_limite"]:
+                    disparo = momento
+                    break
+
+            if disparo is not None:
+                resueltas.append(self._disparar(orden, disparo, contexto_ahora))
+            elif datetime.now(UTC) > vence:
+                self._con.execute(
+                    "UPDATE ordenes SET resuelta_en=?, resultado='vencida' WHERE id=?",
+                    (datetime.now(UTC).isoformat(), orden["id"]),
+                )
+                resueltas.append({"id": orden["id"], "resultado": "vencida", "eje": orden["eje"]})
+        self._con.commit()
+        return resueltas
+
+    def _disparar(
+        self, orden: dict[str, Any], cuando: datetime, contexto_ahora: Contexto | None
+    ) -> dict[str, Any]:
+        """Convierte una orden tocada en una operación abierta.
+
+        ⚠ LA OPERACIÓN HEREDA LA RAZÓN Y EL CONTEXTO DE LA ORDEN, no los de
+        ahora. Lo que justificó la entrada se escribió al dejar la orden; el
+        gráfico de hoy es otra cosa y guardarlo como "el contexto de entrada"
+        convertiría el registro en una reconstrucción a posteriori — justo lo
+        que el sello existe para impedir.
+        """
+        contexto = Contexto(**json.loads(orden["contexto"]))
+        # El precio de entrada es el LÍMITE, no el de la vela: es a lo que se
+        # habría ejecutado la orden.
+        entrada = replace(contexto, precio=orden["precio_limite"], timestamp=cuando.isoformat())
+        cursor = self._con.execute(
+            """INSERT INTO operaciones
+               (eje, simbolo, direccion, abierta_en, precio_entrada, stop_loss,
+                take_profit, contexto, razon, sello)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                orden["eje"],
+                orden["simbolo"],
+                orden["direccion"],
+                cuando.isoformat(),
+                orden["precio_limite"],
+                orden["stop_loss"],
+                orden["take_profit"],
+                json.dumps(asdict(entrada), ensure_ascii=False),
+                orden["razon"],
+                _sellar(
+                    entrada,
+                    orden["razon"],
+                    orden["eje"],
+                    simbolo=orden["simbolo"],
+                    direccion=orden["direccion"],
+                    stop_loss=orden["stop_loss"],
+                    take_profit=orden["take_profit"],
+                ),
+            ),
+        )
+        oid = int(cursor.lastrowid or 0)
+        self._con.execute(
+            "UPDATE ordenes SET resuelta_en=?, resultado='disparada', operacion_id=? WHERE id=?",
+            (cuando.isoformat(), oid, orden["id"]),
+        )
+        return {
+            "id": orden["id"],
+            "resultado": "disparada",
+            "eje": orden["eje"],
+            "operacion_id": oid,
+            "precio": orden["precio_limite"],
+        }
+
+    def cancelar_orden(self, orden_id: int, *, nota: str = "") -> None:
+        """Retira una orden que ya no tiene sentido."""
+        fila = self._con.execute(
+            "SELECT resuelta_en FROM ordenes WHERE id = ?", (orden_id,)
+        ).fetchone()
+        if fila is None:
+            raise ValueError(f"no existe la orden {orden_id}")
+        if fila["resuelta_en"]:
+            raise ValueError(f"la orden {orden_id} ya estaba resuelta")
+        self._con.execute(
+            "UPDATE ordenes SET resuelta_en=?, resultado='cancelada', nota=? WHERE id=?",
+            (datetime.now(UTC).isoformat(), nota.strip(), orden_id),
         )
         self._con.commit()
 
