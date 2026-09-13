@@ -699,6 +699,7 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
     sesión entera por querer cortar un run sería peor. Dos seguidos cierran,
     como en Node o en el REPL de Python; Ctrl-D cierra de una.
     """
+    _limpiar_pantalla()
     _bienvenida(byte, url, interactivo=True)
     print()
 
@@ -1001,6 +1002,29 @@ def _preguntar_en_vivo(
         "segundos": time.monotonic() - arrancó,
         "herramientas": trabajo,
     }
+
+
+def _limpiar_pantalla() -> None:
+    """Deja la terminal en blanco al abrir el chat.
+
+    Sin esto, el banner aparece debajo de lo que hubiera —la salida de un `ls`,
+    un traceback, el `docker compose up`— y la conversación arranca mezclada con
+    ruido ajeno. Limpiar la separa: lo que hay en pantalla es la charla, y nada
+    más.
+
+    **No se usa la pantalla alternativa** (`\033[?1049h`), que es lo que hacen
+    vim o htop. Esa la restaura la terminal al salir y se llevaría la
+    conversación entera: uno sale de Byte y quiere poder subir a releer lo que
+    respondió, o copiar un bloque de código. Acá se limpia lo de antes y lo
+    nuevo queda en el scroll como cualquier comando.
+
+    `\033[3J` borra además el búfer de scroll: sin eso queda lo viejo un scroll
+    más arriba, que es peor que no limpiar —parece que se perdió algo.
+    """
+    if not _en_pantalla():
+        return
+    sys.stdout.write("\033[2J\033[3J\033[H")
+    sys.stdout.flush()
 
 
 def _marco_del_prompt() -> str:

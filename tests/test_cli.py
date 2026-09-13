@@ -1291,3 +1291,38 @@ def test_al_salir_se_borra_el_marco(capsys, monkeypatch) -> None:
     cli._borrar_marco()
     salida = capsys.readouterr().out
     assert salida.count("\033[2K") == 4, "no borra las cuatro líneas del marco"
+
+
+def test_al_abrir_el_chat_se_limpia_la_pantalla(capsys, monkeypatch) -> None:
+    """Sin esto el banner aparece debajo de lo que hubiera —un `ls`, un
+    traceback, el `docker compose up`— y la conversación arranca mezclada con
+    ruido ajeno."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    cli._limpiar_pantalla()
+    salida = capsys.readouterr().out
+    assert "\033[2J" in salida, "no limpia la pantalla"
+    assert "\033[3J" in salida, "no limpia el búfer de scroll"
+    assert "\033[H" in salida, "no lleva el cursor arriba"
+
+
+def test_no_se_usa_la_pantalla_alternativa(capsys, monkeypatch) -> None:
+    """La pantalla alternativa (`\033[?1049h`) la restaura la terminal al salir
+    y se llevaría la conversación entera: uno sale de Byte y quiere poder subir
+    a releer lo que respondió, o copiar un bloque de código."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+    cli._limpiar_pantalla()
+    assert "1049" not in capsys.readouterr().out
+
+
+def test_redirigido_no_se_limpia_nada(capsys, monkeypatch) -> None:
+    """`byte > salida.txt` no tiene pantalla que limpiar, y los escapes
+    ensuciarían el archivo."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
+    cli._limpiar_pantalla()
+    assert capsys.readouterr().out == ""
