@@ -38,3 +38,40 @@ ese mismo archivo.
 `abiertas()` es lo que el agente lee al volver. El proceso muere entre una
 sesión y la siguiente —en un Codespace, cada vez— y las órdenes que quedaron a
 medias solo existen ahí.
+
+## Las herramientas del agente
+
+Cuatro, y el orden importa:
+
+| | qué hace |
+|---|---|
+| `mirar_mercado` | precio, rango de 20 velas, volumen relativo, ATR/ADX/RSI/MACD/EMA |
+| `abrir_operacion` | registra una entrada — **la razón es obligatoria** |
+| `cerrar_operacion` | cierra al precio actual y calcula el R |
+| `estado_paper` | qué quedó abierto y cómo va cada eje |
+
+Que la razón sea un argumento obligatorio del esquema es lo que hace imposible
+registrar una entrada sin justificarla. Si fuera opcional, el modelo la omitiría
+en cuanto tuviera prisa.
+
+`estado_paper` es lo que el agente lee al empezar: entre una sesión y la
+siguiente el proceso muere —en un Codespace, cada vez— y el registro es lo único
+que recuerda qué había a medias. Los ejes se listan **en orden alfabético**, no
+por resultado: ordenarlos por R invita a elegir el mejor mirando la tabla, que
+es el sobreajuste que el criterio de aborto prohíbe.
+
+## Configuración
+
+    BYTE_PAPER_DB=/ruta/a/paper/operaciones.db
+    BYTE_PAPER_SCRIPTS=/ruta/al/repo-de-trading/scripts/paper
+
+Las dos hacen falta: sin la segunda las herramientas fallarían en cada llamada,
+así que no se registran.
+
+## Probado de punta a punta
+
+Con granite4.1:8b y datos reales de MEXC: miró BTCUSDT en 15m, decidió una
+entrada long con su razón —«el precio tocó el fondo del rango (76509.9), ADX
+indica tendencia débil, RSI bajo»—, la registró sellada, y en una **conversación
+nueva** —sin memoria del chat anterior— recuperó la operación leyendo el
+registro.

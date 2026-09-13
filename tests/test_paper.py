@@ -173,3 +173,65 @@ def test_el_sello_no_puede_estar_vacio(registro: Registro, contexto: Contexto) -
     )
     fila = registro._con.execute("SELECT sello FROM operaciones").fetchone()
     assert len(fila["sello"]) == 32, "el sello tiene que ser un hash, no una cadena vacía"
+
+
+# --- Las herramientas del agente ---
+
+
+def test_las_cuatro_herramientas_se_arman(tmp_path: Path) -> None:
+    from tools.paper import build_paper_tools
+
+    nombres = {h.name for h in build_paper_tools(str(tmp_path / "ops.db"), 4000)}
+    assert nombres == {"mirar_mercado", "abrir_operacion", "cerrar_operacion", "estado_paper"}
+
+
+def test_abrir_exige_la_razon_en_el_esquema(tmp_path: Path) -> None:
+    """Que la razón sea un argumento obligatorio es lo que hace imposible
+    registrar una entrada sin justificarla. Si fuera opcional, el modelo la
+    omitiría en cuanto tuviera prisa."""
+    from tools.paper import build_paper_tools
+
+    abrir = {h.name: h for h in build_paper_tools(str(tmp_path / "ops.db"), 4000)}[
+        "abrir_operacion"
+    ]
+    esquema = abrir.schema()["parameters"]
+    assert "razon" in esquema["required"], "la razón tiene que ser obligatoria"
+
+
+def test_el_estado_advierte_de_los_sellos_rotos(tmp_path: Path, contexto: Contexto) -> None:
+    """Si una razón se editó, las operaciones de esa tanda no sirven y hay que
+    decirlo donde el agente lo va a leer, no en un log que nadie mira."""
+    import sqlite3
+
+    from tools.paper import _estado
+
+    ruta = tmp_path / "ops.db"
+    registro = Registro(ruta)
+    oid = registro.abrir(
+        eje="x", simbolo="X", direccion="long", contexto=contexto, razon="y", stop_loss=99.0
+    )
+    registro.cerrar_conexion()
+    con = sqlite3.connect(ruta)
+    con.execute("UPDATE operaciones SET razon='otra cosa' WHERE id=?", (oid,))
+    con.commit()
+    con.close()
+
+    assert "SELLOS ROTOS" in _estado(Registro(ruta)).content
+
+
+def test_el_estado_no_ordena_los_ejes_por_resultado(tmp_path: Path, contexto: Contexto) -> None:
+    """Ordenarlos invita a elegir el mejor mirando la tabla, que es el
+    sobreajuste que el criterio de aborto prohíbe."""
+    from tools.paper import _estado
+
+    registro = Registro(tmp_path / "ops.db")
+    for eje, salida in (("zeta", 104.0), ("alfa", 98.0)):
+        oid = registro.abrir(
+            eje=eje, simbolo="X", direccion="long", contexto=contexto, razon="y", stop_loss=99.0
+        )
+        registro.cerrar(oid, precio_salida=salida, motivo="x")
+
+    contenido = _estado(registro).content
+    # Alfabético: alfa (perdedor) antes que zeta (ganador).
+    assert contenido.index("alfa") < contenido.index("zeta")
+    assert "No elijas el mejor eje mirando esta tabla" in contenido

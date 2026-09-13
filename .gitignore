@@ -34,3 +34,7 @@ capturas/
 
 # El CV lleva teléfono y correo: queda fuera del repo hasta que se decida
 # publicarlo. `perfil/cv.md` se versiona aparte o se mantiene local.
+
+# El registro de operaciones en papel: son datos, no código, y cada máquina
+# tiene los suyos.
+paper/*.db

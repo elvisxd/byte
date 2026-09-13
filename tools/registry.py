@@ -5,6 +5,7 @@ hay búsqueda web, sin `SANDBOX_URL` no hay ejecución de código, y el agente
 arranca igual con las que haya.
 """
 
+import os
 from typing import TYPE_CHECKING
 
 from api.config import Settings
@@ -163,5 +164,14 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
         herramienta = build_skill_tool(cargar(settings.skills_dir))
         if herramienta is not None:
             registry.add(herramienta)
+
+    # Paper trading. Necesita las dos cosas: dónde guardar y de dónde sacar los
+    # indicadores — sin la segunda las herramientas fallarían en cada llamada.
+    if settings.paper_db and os.environ.get("BYTE_PAPER_SCRIPTS"):
+        from tools.paper import build_paper_tools
+
+        for herramienta in build_paper_tools(settings.paper_db, settings.max_tool_result_chars):
+            registry.add(herramienta)
+        logger.info("paper_activo", db=settings.paper_db, detail="el agente puede operar en papel")
 
     return registry

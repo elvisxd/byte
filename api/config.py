@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     # Carpeta con instrucciones por tarea (`<carpeta>/<skill>/SKILL.md`), en el
     # formato que usan otras herramientas de agente.
     skills_dir: str = Field(default="", alias="BYTE_SKILLS")
+    # Paper trading: dónde vive el registro de operaciones. Necesita también
+    # BYTE_PAPER_SCRIPTS, que apunta a los indicadores del repo de trading.
+    paper_db: str = Field(default="", alias="BYTE_PAPER_DB")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")
