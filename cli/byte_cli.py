@@ -530,6 +530,7 @@ AYUDA_CHAT = [
     ("/run <file.py>", "run a Python file in the sandbox"),
     ("/safe", "toggle asking before running code"),
     ("/model [name]", "list models, or switch to one"),
+    ("/recap", "toggle the one-line summary after each answer"),
     ("/status", "Byte and its services"),
     ("/id", "this conversation's id"),
     ("/help", "this help"),
@@ -551,6 +552,7 @@ ALIAS_CHAT = {
     "/seguro": "/safe",
     "/estado": "/status",
     "/modelo": "/model",
+    "/resumen": "/recap",
     "/m": "/model",
 }
 
@@ -619,6 +621,11 @@ class Sesion:
         self.seguir = True
         # Modelo elegido con `/model`. Vacío = el default de la instancia.
         self.modelo = ""
+        # El resumen de una línea al final de cada respuesta. **Apagado por
+        # defecto**: cuesta una llamada más al modelo —con uno local son 5-10 s
+        # extra por turno— y no todas las respuestas lo necesitan. Se enciende
+        # con `/recap` para una sesión larga, donde sí ayuda.
+        self.recap = False
 
 
 def _comando_del_chat(byte: Byte, entrada: str, sesion: Sesion) -> None:
@@ -665,6 +672,13 @@ def _comando_del_chat(byte: Byte, entrada: str, sesion: Sesion) -> None:
             sesion.safe = not sesion.safe
             estado = "on — it will ask before running code" if sesion.safe else "off"
             print(_color(f"✓ safe mode {estado}", VERDE if sesion.safe else GRIS))
+
+        elif orden == "/recap":
+            sesion.recap = not sesion.recap
+            if sesion.recap:
+                print(_color("✓ recap on — a one-line summary after each answer", VERDE))
+            else:
+                print(_color("✓ recap off — no extra call to the model", GRIS))
 
         elif orden == "/model":
             _cambiar_de_modelo(byte, resto, sesion)
@@ -768,6 +782,8 @@ def _chat(byte: Byte, url: str, safe: bool, conversacion: str | None) -> int:
             _mostrar_pausa(datos)
         else:
             _mostrar_respuesta(datos)
+            if sesion.recap:
+                _mostrar_recap(byte, sesion, entrada, datos)
         print()
 
     # Al salir, el marco quedó dibujado alrededor del prompt vacío: se borra
@@ -916,6 +932,45 @@ def _linea_de_trabajo(verbo: str, detalle: str, resultado: str, ok: bool) -> Non
     if resultado:
         linea += _color(f" · {resultado}", GRIS)
     print(linea)
+
+
+def _pintar_markdown(texto: str) -> str:
+    """Pinta el markdown que ya viene en la respuesta, en vez de mostrar su
+    sintaxis.
+
+    El modelo escribe `**negrita**` y `` `código` `` sin que nadie se lo pida, y
+    hasta ahora salían los asteriscos y las comillas invertidas en crudo. Verlo
+    pintado no es decoración: en una respuesta larga, lo resaltado es lo que
+    permite encontrar el nombre de una función o el término que importa sin
+    leerla entera.
+
+    **Solo lo de una línea.** Los bloques de código con ``` los maneja
+    `_parrafos`, que los mantiene juntos; acá se tocan negritas, código inline y
+    títulos. Nada de listas ni tablas: reescribirlas sería reimplementar un
+    renderizador de markdown, y lo que se busca es que resalte lo que ya está.
+    """
+    # El código inline primero: dentro de `` `algo` `` puede haber asteriscos
+    # que no son negrita —`**kwargs` es Python legítimo— y pintarlos después
+    # los rompería.
+    partes = re.split(r"(`[^`\n]+`)", texto)
+    for i, parte in enumerate(partes):
+        if i % 2:
+            partes[i] = _color(parte.strip("`"), AMBAR)
+            continue
+        # Negrita: **así**. El patrón exige que no empiece ni termine en espacio
+        # para no comerse un `** kwargs` suelto.
+        parte = re.sub(
+            r"\*\*(\S(?:[^*]*\S)?)\*\*", lambda m: _color(m.group(1), NEGRITA + CREMA), parte
+        )
+        # Títulos de markdown (## Algo): el # no aporta nada leído en pantalla.
+        parte = re.sub(
+            r"^(#{1,6})\s+(.+)$",
+            lambda m: _color(m.group(2), NEGRITA + AMBAR),
+            parte,
+            flags=re.M,
+        )
+        partes[i] = parte
+    return "".join(partes)
 
 
 def _parrafos(texto: str) -> Iterator[str]:
@@ -1167,6 +1222,52 @@ def _envolver(texto: str, ancho: int) -> list[str]:
     return textwrap.wrap(texto, max(20, ancho)) or [texto[:ancho]]
 
 
+def _mostrar_recap(byte: Byte, sesion: "Sesion", pregunta: str, datos: dict[str, Any]) -> None:
+    """Dos líneas en gris que cierran el turno: qué se preguntó y qué se hizo.
+
+    En una respuesta larga —y las de un modelo local lo son— para cuando llegás
+    al final ya no tenés presente qué habías preguntado. El recap lo devuelve
+    sin tener que subir.
+
+    **Nada de esto puede romper el turno.** La respuesta ya se mostró y el
+    usuario la tiene; si el resumen falla o tarda, se omite en silencio. Por eso
+    va con su propio timeout corto y captura todo.
+    """
+    respuesta = (datos.get("message") or {}).get("content", "")
+    if not respuesta.strip() or not _en_pantalla():
+        return
+
+    herramientas = ", ".join(datos.get("herramientas") or []) or "sin herramientas"
+    instruccion = (
+        "Resumí este intercambio en UNA sola oración corta, en el idioma de la pregunta. "
+        "Decí qué se pidió y qué se hizo, nada más. Sin preámbulo, sin markdown, "
+        "sin repetir la respuesta.\n\n"
+        f"Pregunta: {pregunta[:400]}\n"
+        f"Herramientas usadas: {herramientas}\n"
+        f"Respuesta: {respuesta[:1200]}"
+    )
+    try:
+        # Conversación aparte: el recap no tiene por qué quedar en el historial
+        # del agente, donde competiría con lo que el usuario realmente dijo.
+        with Estado("Summarizing"):
+            suelta = byte.pedir("POST", "/conversations", json={})["id"]
+            salida = byte.pedir(
+                "POST",
+                f"/conversations/{suelta}/messages",
+                params={"wait": "true"},
+                json={"content": instruccion, "model": sesion.modelo},
+            )
+    except Exception:  # noqa: BLE001 - un resumen no vale romper el turno
+        return
+
+    texto = ((salida.get("message") or {}).get("content") or "").strip()
+    if not texto:
+        return
+    print()
+    for linea in _envolver(texto, max(40, shutil.get_terminal_size((80, 24)).columns - 4)):
+        print(_color(f"  {linea}", GRIS))
+
+
 def _mostrar_pausa(datos: dict[str, Any]) -> None:
     """Modo seguro: el run espera una decisión humana. Se muestra el código y se
     resuelve con `byte approve` / `byte reject`."""
@@ -1196,7 +1297,9 @@ def _mostrar_respuesta(datos: dict[str, Any]) -> None:
         for i, parrafo in enumerate(_parrafos(contenido)):
             if i:
                 print()
-            print(parrafo)
+            # Un bloque de código se muestra tal cual: sus asteriscos y comillas
+            # son parte del código, no marcas de formato.
+            print(parrafo if parrafo.lstrip().startswith("```") else _pintar_markdown(parrafo))
     else:
         print(contenido)
         return

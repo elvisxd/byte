@@ -1377,3 +1377,62 @@ def test_las_herramientas_de_archivos_tienen_verbo() -> None:
 
     for nombre in ("list_files", "read_file", "grep", "ver_cv", "regenerar_cv"):
         assert nombre in POR_HERRAMIENTA, f"{nombre} no tiene verbo"
+
+
+# --- Markdown y recap ---
+
+
+def test_la_negrita_del_modelo_se_pinta(monkeypatch) -> None:
+    """El modelo escribe `**así**` sin que nadie se lo pida, y salían los
+    asteriscos en crudo. Lo resaltado es lo que permite encontrar el término que
+    importa sin leer toda la respuesta."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    pintado = cli._pintar_markdown("Un **decorador** envuelve")
+    assert "**" not in pintado
+    assert cli.NEGRITA in pintado
+
+
+def test_el_codigo_inline_protege_sus_asteriscos(monkeypatch) -> None:
+    """`**kwargs` es Python legítimo, no negrita: pintar la negrita primero lo
+    rompería."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    pintado = cli._pintar_markdown("usá `**kwargs` para eso")
+    assert "**kwargs" in pintado, "se comió los asteriscos del código"
+
+
+def test_los_titulos_pierden_el_numeral(monkeypatch) -> None:
+    """El `##` no aporta nada leído en una terminal."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    pintado = cli._pintar_markdown("## Resumen\ntexto")
+    assert "##" not in pintado
+    assert "Resumen" in pintado
+
+
+def test_el_recap_esta_apagado_por_defecto() -> None:
+    """Cuesta una llamada más al modelo —con uno local, 5-10 s por turno— y no
+    todas las respuestas lo necesitan."""
+    import cli.byte_cli as cli
+
+    assert cli.Sesion("c1", safe=False).recap is False
+
+
+def test_si_el_recap_falla_no_se_pierde_la_respuesta(capsys, monkeypatch) -> None:
+    """La respuesta ya se mostró y el usuario la tiene: un resumen que falla no
+    puede llevarse el turno."""
+    import cli.byte_cli as cli
+
+    monkeypatch.setattr(cli, "_en_pantalla", lambda: True)
+
+    class ByteRoto:
+        def pedir(self, *_a, **_k):
+            raise RuntimeError("la API se cayó")
+
+    sesion = cli.Sesion("c1", safe=False)
+    cli._mostrar_recap(ByteRoto(), sesion, "hola", {"message": {"content": "una respuesta"}})
+    assert "cayó" not in capsys.readouterr().out
