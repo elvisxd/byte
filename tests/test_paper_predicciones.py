@@ -324,3 +324,74 @@ def test_la_temporalidad_se_guarda_y_entra_en_el_sello(registro: Registro) -> No
         hacia=fila["hacia"], probabilidad=fila["probabilidad"], temporalidad="15m",
     )
     assert con_otra != fila["sello"], "cambiar la temporalidad tiene que romper el sello"
+
+
+def test_el_plazo_sale_de_la_temporalidad(registro: Registro, contexto: Contexto) -> None:
+    """24h fijas trataban igual a un scalp de 15m y a una tesis de 4h.
+
+    El primero se quedaba esperando 23 horas después de que su premisa hubiera
+    caducado —el gráfico de 15m de hace un día es otro gráfico— y el segundo se
+    cortaba antes de que su movimiento tuviera tiempo de ocurrir. Los dos casos
+    ensucian el Brier con ruido que no tiene que ver con la lectura del modelo.
+    """
+    ctx = Contexto(
+        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        extra={"indicadores": {"atr": 87.0}},
+    )
+    esperado = {"15m": 6.0, "1h": 24.0, "4h": 96.0, "": 24.0}
+    niveles = {"15m": 76000.0, "1h": 75000.0, "4h": 74000.0, "": 73000.0}
+    for marco, horas in esperado.items():
+        pid = registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx, nivel=niveles[marco], hacia="abajo",
+            probabilidad=0.5, razonamiento=f"m{marco}", temporalidad=marco,
+        )
+        fila = next(p for p in registro.predicciones_vivas() if p["id"] == pid)
+        vivo = datetime.fromisoformat(fila["vence_en"]) - datetime.fromisoformat(
+            fila["hecha_en"]
+        )
+        assert vivo.total_seconds() / 3600 == pytest.approx(horas, abs=0.01), marco
+
+
+def test_un_plazo_explicito_pisa_al_derivado(registro: Registro) -> None:
+    """Una tesis puede pedir otro plazo; lo que no puede es no tener ninguno."""
+    ctx = Contexto(
+        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        extra={"indicadores": {"atr": 87.0}},
+    )
+    pid = registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=76000.0, hacia="abajo",
+        probabilidad=0.4, razonamiento="tesis larga", temporalidad="15m",
+        horas_vigencia=48.0,
+    )
+    fila = next(p for p in registro.predicciones_vivas() if p["id"] == pid)
+    vivo = datetime.fromisoformat(fila["vence_en"]) - datetime.fromisoformat(fila["hecha_en"])
+    assert vivo.total_seconds() / 3600 == pytest.approx(48.0, abs=0.01)
+
+
+def test_el_desglose_por_marco_no_sustituye_al_global(registro: Registro) -> None:
+    """La resolución se mide sobre TODAS las predicciones, no marco por marco.
+
+    Repartir 50 en tres marcos deja ~17 por celda, y con esa muestra el mejor
+    por azar parece bueno. El desglose sirve para ver si un marco arrastra a los
+    otros, no para elegir en cuál predecir — eso sería el sobreajuste que
+    `por_eje` evita con el mismo cuidado.
+    """
+    ahora = datetime.now(UTC)
+    ctx = Contexto(
+        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        extra={"indicadores": {"atr": 10.0}},
+    )
+    for i in range(50):
+        registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx, nivel=77300.0 + 100 * (i + 1), hacia="arriba",
+            probabilidad=0.5, razonamiento=f"x{i}", temporalidad=["15m", "1h", "4h"][i % 3],
+        )
+    registro.resolver_predicciones([_vela(ahora + timedelta(minutes=5), high=999999, low=1)])
+
+    resumen = registro.brier_por_tramo()
+    assert resumen["resueltas"] == 50
+    marcos = [m["temporalidad"] for m in resumen["porMarco"]]
+    assert marcos == sorted(marcos), "alfabético, nunca por resultado"
+    assert set(marcos) == {"15m", "1h", "4h"}
+    # El global sigue calculándose sobre las 50, no sobre el mejor marco.
+    assert sum(m["n"] for m in resumen["porMarco"]) == resumen["resueltas"]

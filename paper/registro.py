@@ -926,19 +926,30 @@ class Registro:
         hacia: str,
         probabilidad: float,
         razonamiento: str,
-        horas_vigencia: float = 24.0,
+        horas_vigencia: float = 0.0,
         regimen_dicho: str = "",
         temporalidad: str = "",
     ) -> int:
-        """Registra una apuesta probabilística, sellada como una razón de entrada."""
+        """Registra una apuesta probabilística, sellada como una razón de entrada.
+
+        `horas_vigencia` en 0 significa "el plazo que le toca a su marco" —ver
+        `PLAZO_POR_MARCO`—. Un número explícito lo pisa, para las tesis que
+        piden otro plazo.
+        """
         if hacia not in ("arriba", "abajo"):
             raise ValueError(f"dirección desconocida: {hacia!r}")
         if not 0.0 <= probabilidad <= 1.0:
             raise ValueError(f"la probabilidad va de 0 a 1, no {probabilidad}")
         if not razonamiento.strip():
             raise ValueError("una predicción sin razonamiento escrito no se registra")
-        if horas_vigencia <= 0:
+        if horas_vigencia < 0:
             raise ValueError("una predicción que vence antes de existir no se registra")
+        if horas_vigencia == 0:
+            # Sin marco conocido, 24h: es el plazo de 1h, el término medio de los
+            # tres. Quedarse sin plazo no es una opción —una predicción que no
+            # vence nunca no se resuelve— y elegir el más corto castigaría a
+            # quien no dijo el marco.
+            horas_vigencia = self.PLAZO_POR_MARCO.get(temporalidad.strip(), 24.0)
         # ⚠ EL NIVEL TIENE QUE ESTAR DEL LADO QUE DICE. Un "arriba" por debajo
         # del precio actual ya ocurrió antes de registrarse: sería un acierto
         # garantizado que infla la muestra sin decir nada del modelo.
@@ -1103,6 +1114,17 @@ class Registro:
         self._con.commit()
         return resueltas
 
+    # ⚠ CADA TEMPORALIDAD NECESITA SU PROPIO PLAZO. 24h fijas para todo trataba
+    # igual a un scalp de 15m y a una tesis de 4h: el primero se queda esperando
+    # 23 horas después de que su premisa haya caducado —el gráfico de 15m de
+    # hace un día es otro gráfico— y el segundo se corta antes de que su
+    # movimiento tenga tiempo de ocurrir. Los dos casos ensucian el Brier con
+    # ruido que no tiene que ver con la lectura del modelo.
+    #
+    # 24 velas de su marco, que es el orden de magnitud en que una tesis de esa
+    # escala se confirma o muere.
+    PLAZO_POR_MARCO = {"15m": 6.0, "1h": 24.0, "4h": 96.0}
+
     def brier_por_tramo(self, minimo: int = 50) -> dict[str, Any]:
         """La RESOLUCIÓN: ¿sus 80% aciertan más que sus 55%?
 
@@ -1118,7 +1140,7 @@ class Registro:
         """
         filas = list(
             self._con.execute(
-                "SELECT probabilidad, ocurrio, brier FROM predicciones "
+                "SELECT probabilidad, ocurrio, brier, temporalidad FROM predicciones "
                 "WHERE resuelta_en IS NOT NULL AND brier IS NOT NULL"
             )
         )
@@ -1131,6 +1153,23 @@ class Registro:
             base = int(f["probabilidad"] * 100 // 20) * 20
             tramos.setdefault(f"{base}-{base + 20}%", []).append(f)
 
+        # ⚠ EL DESGLOSE POR MARCO VA APARTE Y NO SUSTITUYE AL GLOBAL. La
+        # resolución —el criterio de éxito— se mide sobre TODAS: repartir 50
+        # predicciones en tres marcos deja ~17 por celda, y con esa muestra el
+        # mejor por azar parece bueno. Esto es para mirar si un marco arrastra a
+        # los otros, no para elegir en cuál predecir: eso sería el mismo
+        # sobreajuste que `por_eje` evita.
+        por_marco: dict[str, list[Any]] = {}
+        for f in filas:
+            por_marco.setdefault(f["temporalidad"] or "sin marco", []).append(f)
+
+        def _resumen(fs: list[Any]) -> dict[str, Any]:
+            return {
+                "n": len(fs),
+                "dijo": round(sum(f["probabilidad"] for f in fs) / len(fs), 3),
+                "ocurrio": round(sum(f["ocurrio"] for f in fs) / len(fs), 3),
+            }
+
         return {
             "resueltas": len(filas),
             "brier_medio": round(sum(f["brier"] for f in filas) / len(filas), 4),
@@ -1138,13 +1177,16 @@ class Registro:
             # Ordenados por tramo y NO por resultado: ordenar por acierto
             # invitaría a quedarse con el mejor, que es el sobreajuste de siempre.
             "tramos": [
+                {"tramo": nombre, **_resumen(fs)} for nombre, fs in sorted(tramos.items())
+            ],
+            # Por marco, también alfabético y por el mismo motivo.
+            "porMarco": [
                 {
-                    "tramo": nombre,
-                    "n": len(fs),
-                    "dijo": round(sum(f["probabilidad"] for f in fs) / len(fs), 3),
-                    "ocurrio": round(sum(f["ocurrio"] for f in fs) / len(fs), 3),
+                    "temporalidad": marco,
+                    "brier_medio": round(sum(f["brier"] for f in fs) / len(fs), 4),
+                    **_resumen(fs),
                 }
-                for nombre, fs in sorted(tramos.items())
+                for marco, fs in sorted(por_marco.items())
             ],
         }
 
