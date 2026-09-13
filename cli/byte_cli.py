@@ -383,6 +383,10 @@ MASCOTA = ["▐▛███▜▌", "▝▜█████▛▘", "  ▘▘ ▝
 
 ANCHO_MAXIMO = 104
 ANCHO_MINIMO_DOS_COLUMNAS = 90  # por debajo de esto la derecha queda ilegible
+# Lo que hay que dejar libre debajo del banner: sus dos bordes, una línea de
+# aire, y las tres del marco del prompt. Con 8 queda sitio para escribir y ver
+# la primera respuesta sin que el banner haya que scrollearlo.
+LINEAS_RESERVADAS = 8
 
 # `GET /tools` devuelve solo nombre y origen; para qué sirve cada una es
 # decisión de presentación y vive acá, no en la API.
@@ -390,6 +394,15 @@ QUE_HACE = {
     "doc_search": "searches the documents you added",
     "web_search": "looks things up on the web",
     "code_exec": "runs Python in a sandbox",
+    "list_files": "lists the files in your project",
+    "read_file": "reads a file, with line numbers",
+    "grep": "finds text across your project",
+    "ver_cv": "reads your CV",
+    "agregar_certificacion": "adds a certification to your CV",
+    "agregar_experiencia": "adds a job to your CV",
+    "agregar_proyecto": "adds a project to your CV",
+    "reemplazar_en_cv": "edits text in your CV",
+    "regenerar_cv": "rebuilds the CV PDFs",
 }
 
 
@@ -422,14 +435,25 @@ def _centrar(texto: str, ancho: int) -> str:
     return _rellenar(" " * izquierda + texto, ancho)
 
 
-def _panel_identidad(byte: Byte, url: str, ancho: int) -> list[str]:
-    """Columna izquierda: quién es y contra qué está corriendo."""
-    filas = [""]
-    filas += [_centrar(_color(p, AMBAR if i == 2 else AZUL), ancho) for i, p in enumerate(MASCOTA)]
-    filas.append("")
+def _panel_identidad(byte: Byte, url: str, ancho: int, compacto: bool = False) -> list[str]:
+    """Columna izquierda: quién es y contra qué está corriendo.
+
+    `compacto` saca la mascota y el aire para una terminal baja. Lo que se
+    conserva es lo único que hace falta saber al abrir: qué modelo hay detrás y
+    contra qué URL se está hablando. El dibujo es lindo, pero no a costa de que
+    el prompt no entre en pantalla.
+    """
+    filas = []
+    if not compacto:
+        filas.append("")
+        filas += [
+            _centrar(_color(p, AMBAR if i == 2 else AZUL), ancho) for i, p in enumerate(MASCOTA)
+        ]
+        filas.append("")
     filas.append(_centrar(_color("Byte", NEGRITA) + _color(" — your AI agent", GRIS), ancho))
-    filas.append(_centrar(_color("running local", GRIS), ancho))
-    filas.append("")
+    if not compacto:
+        filas.append(_centrar(_color("running local", GRIS), ancho))
+        filas.append("")
     try:
         salud = byte.pedir("GET", "/health/details")
         ok = salud["status"] == "ok"
@@ -445,8 +469,14 @@ def _panel_identidad(byte: Byte, url: str, ancho: int) -> list[str]:
     return filas
 
 
-def _panel_pistas(byte: Byte, interactivo: bool, ancho: int) -> list[str]:
-    """Columna derecha: qué podés hacer y con qué cuenta."""
+def _panel_pistas(byte: Byte, interactivo: bool, ancho: int, alto: int = 0) -> list[str]:
+    """Columna derecha: qué podés hacer y con qué cuenta.
+
+    `alto` acota cuántas filas caben. Las herramientas son once y cada una ocupa
+    una línea: en una terminal baja el banner se comía la pantalla entera y no
+    quedaba dónde escribir. Cuando no entran todas se listan las que quepan y se
+    dice cuántas faltan, que es más honesto que cortar en seco.
+    """
     filas = [_color("Tips for getting started", NEGRITA)]
     if interactivo:
         filas.append(_color("Just type — it answers and remembers the conversation", GRIS))
@@ -478,11 +508,24 @@ def _panel_pistas(byte: Byte, interactivo: bool, ancho: int) -> list[str]:
     filas.append(_color("─" * ancho, GRIS))
     filas.append(_color("What it can use", NEGRITA))
     try:
-        for t in byte.pedir("GET", "/tools")["tools"]:
-            nombre = t["name"]
-            filas.append(_color(f"{nombre:<12}", CREMA) + _color(QUE_HACE.get(nombre, ""), GRIS))
+        herramientas = byte.pedir("GET", "/tools")["tools"]
     except Exception:  # noqa: BLE001
         filas.append(_color("unavailable while the API is down", GRIS))
+        return filas
+
+    # Cuántas entran: lo que quede del alto menos la fila del "y N más".
+    caben = len(herramientas)
+    if alto:
+        libres = alto - len(filas)
+        if libres < caben:
+            caben = max(0, libres - 1)
+
+    for t in herramientas[:caben]:
+        nombre = t["name"]
+        filas.append(_color(f"{nombre:<12}", CREMA) + _color(QUE_HACE.get(nombre, ""), GRIS))
+    faltan = len(herramientas) - caben
+    if faltan > 0:
+        filas.append(_color(f"…and {faltan} more — /help", GRIS))
     return filas
 
 
@@ -493,8 +536,15 @@ def _bienvenida(byte: Byte, url: str, interactivo: bool = False) -> int:
     quién sos y contra qué corrés, a la derecha qué podés hacer. En una terminal
     angosta se cae a una sola columna, que es lo único que entra.
     """
-    ancho = min(shutil.get_terminal_size((ANCHO_MAXIMO, 24)).columns, ANCHO_MAXIMO)
+    tamaño = shutil.get_terminal_size((ANCHO_MAXIMO, 24))
+    ancho = min(tamaño.columns, ANCHO_MAXIMO)
     dos_columnas = ancho >= ANCHO_MINIMO_DOS_COLUMNAS
+
+    # Cuántas filas puede ocupar el contenido del banner. Se reservan líneas
+    # para los dos bordes, el aire de abajo y el marco del prompt: sin eso, en
+    # una terminal baja el banner se come la pantalla entera y el prompt aparece
+    # pegado al borde inferior, o directamente no se ve.
+    alto = max(4, tamaño.lines - LINEAS_RESERVADAS)
 
     # Interior = ancho - 2 bordes. Con dos columnas hay un separador y un
     # espacio de aire a cada lado de cada celda: 1 + izq + 1 + │ + 1 + der + 1.
@@ -502,8 +552,11 @@ def _bienvenida(byte: Byte, url: str, interactivo: bool = False) -> int:
     ancho_izq = 27 if dos_columnas else interior - 2
     ancho_der = interior - ancho_izq - 5 if dos_columnas else 0
 
-    izquierda = _panel_identidad(byte, url, ancho_izq)
-    derecha = _panel_pistas(byte, interactivo, ancho_der) if dos_columnas else []
+    # Por debajo de este alto la mascota y el aire dejan de caber: primero se
+    # sacrifican ellos, que son adorno, antes que la lista de herramientas.
+    compacto = alto < 12
+    izquierda = _panel_identidad(byte, url, ancho_izq, compacto)
+    derecha = _panel_pistas(byte, interactivo, ancho_der, alto) if dos_columnas else []
 
     borde = lambda c: _color(c, AZUL)  # noqa: E731
     print(borde("╭" + "─" * interior + "╮"))

@@ -1436,3 +1436,59 @@ def test_si_el_recap_falla_no_se_pierde_la_respuesta(capsys, monkeypatch) -> Non
     sesion = cli.Sesion("c1", safe=False)
     cli._mostrar_recap(ByteRoto(), sesion, "hola", {"message": {"content": "una respuesta"}})
     assert "cayó" not in capsys.readouterr().out
+
+
+# --- El banner se adapta a la terminal ---
+
+
+class ByteConHerramientas:
+    """Un cliente que devuelve once herramientas, como el Byte de hoy."""
+
+    def __init__(self, cuantas: int = 11) -> None:
+        self._cuantas = cuantas
+        self.email = ""
+
+    def pedir(self, _metodo: str, ruta: str, **_k: object) -> dict:
+        if ruta == "/tools":
+            return {"tools": [{"name": f"tool_{i}"} for i in range(self._cuantas)]}
+        return {"status": "ok", "model": "granite4.1:8b"}
+
+
+def test_con_poco_alto_se_listan_las_que_caben() -> None:
+    """Once herramientas son once líneas: en una terminal baja el banner se
+    comía la pantalla y no quedaba dónde escribir."""
+    import cli.byte_cli as cli
+
+    filas = cli._panel_pistas(ByteConHerramientas(), interactivo=True, ancho=60, alto=9)
+    assert len(filas) <= 9, f"se pasó del alto: {len(filas)} filas"
+    assert any("more" in f for f in filas), "no dice cuántas faltan"
+
+
+def test_con_alto_de_sobra_se_listan_todas() -> None:
+    """Recortar cuando no hace falta escondería herramientas por nada."""
+    import cli.byte_cli as cli
+
+    filas = cli._panel_pistas(ByteConHerramientas(), interactivo=True, ancho=60, alto=40)
+    assert not any("more" in f for f in filas)
+    assert sum("tool_" in f for f in filas) == 11
+
+
+def test_en_una_terminal_baja_se_saca_la_mascota() -> None:
+    """El dibujo es lindo, pero no a costa de que el prompt no entre en
+    pantalla. Lo que se conserva es el modelo y la URL."""
+    import cli.byte_cli as cli
+
+    compacto = cli._panel_identidad(ByteConHerramientas(), "http://x", 30, compacto=True)
+    normal = cli._panel_identidad(ByteConHerramientas(), "http://x", 30, compacto=False)
+    assert len(compacto) < len(normal)
+    assert any("granite" in f for f in compacto), "se perdió el modelo"
+    assert any("http://x" in f for f in compacto), "se perdió la URL"
+
+
+def test_todas_las_herramientas_tienen_descripcion() -> None:
+    """Una herramienta sin descripción sale como un nombre suelto en el banner,
+    que no le dice nada a quien abre Byte por primera vez."""
+    from cli.byte_cli import QUE_HACE
+
+    for nombre in ("list_files", "read_file", "grep", "ver_cv", "regenerar_cv"):
+        assert QUE_HACE.get(nombre), f"{nombre} no tiene descripción"
