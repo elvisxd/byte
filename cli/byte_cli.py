@@ -815,6 +815,18 @@ POR_HERRAMIENTA = {
     "doc_search": "Searching your documents",
     "web_search": "Searching the web",
     "code_exec": "Running code",
+    # Navegar el proyecto: el verbo dice qué está haciendo y el detalle, con qué
+    # archivo. "Reading" a secas no distingue mirar un archivo de recorrer todo.
+    "list_files": "Listing files",
+    "read_file": "Reading",
+    "grep": "Searching for",
+    # El CV.
+    "ver_cv": "Reading your CV",
+    "agregar_certificacion": "Adding a certification",
+    "agregar_experiencia": "Adding experience",
+    "agregar_proyecto": "Adding a project",
+    "reemplazar_en_cv": "Editing your CV",
+    "regenerar_cv": "Regenerating the PDFs",
 }
 
 
@@ -830,8 +842,11 @@ def _detalle_de(argumentos: str) -> str:
         return ""
     if not isinstance(datos, dict):
         return ""
-    for clave in ("query", "consulta", "q"):
-        if isinstance(datos.get(clave), str):
+    # El archivo primero: cuando el agente recorre un proyecto, lo que se quiere
+    # ver es **qué** está abriendo, y sin esto la línea decía "Reading" a secas
+    # tres veces seguidas sin distinguir una de otra.
+    for clave in ("path", "pattern", "query", "consulta", "q", "nombre"):
+        if isinstance(datos.get(clave), str) and datos[clave].strip():
             return _recortar(datos[clave], 48)
     if isinstance(datos.get("code"), str):
         primera = datos["code"].strip().splitlines()[0] if datos["code"].strip() else ""
@@ -869,6 +884,22 @@ def _resumen_de(nombre: str, datos: dict[str, Any]) -> str:
     if "results" in datos:
         cuantos = datos["results"]
         return "nothing found" if not cuantos else f"{cuantos} result{'s' if cuantos != 1 else ''}"
+
+    # Las herramientas de archivos mandan su propio conteo: decir cuántas líneas
+    # tenía el archivo o cuántas coincidencias hubo es lo que permite saber si
+    # la herramienta encontró algo sin leer toda la respuesta. "done" no dice
+    # nada que el ✓ no diga ya.
+    if datos.get("lineas") is not None:
+        mostradas, total = datos.get("mostradas"), datos["lineas"]
+        if mostradas is not None and mostradas < total:
+            return f"{mostradas} of {total} lines"
+        return f"{total} line{'s' if total != 1 else ''}"
+    if datos.get("coincidencias") is not None:
+        n = datos["coincidencias"]
+        return "no matches" if not n else f"{n} match{'es' if n != 1 else ''}"
+    if datos.get("archivos") is not None:
+        n = datos["archivos"]
+        return f"{n} file{'s' if n != 1 else ''}"
     return "done"
 
 

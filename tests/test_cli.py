@@ -1326,3 +1326,54 @@ def test_redirigido_no_se_limpia_nada(capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_en_pantalla", lambda: False)
     cli._limpiar_pantalla()
     assert capsys.readouterr().out == ""
+
+
+# --- Las líneas de trabajo con archivos ---
+
+
+def test_el_archivo_aparece_al_lado_del_verbo() -> None:
+    """Sin esto la línea decía "Reading" a secas tres veces seguidas: cuando el
+    agente recorre un proyecto, lo que se quiere ver es **qué** está abriendo."""
+    from cli.byte_cli import _detalle_de
+
+    assert _detalle_de('{"path": "agent/runner.py"}') == "agent/runner.py"
+    assert _detalle_de('{"pattern": "def build"}') == "def build"
+
+
+def test_un_path_vacio_no_ensucia_la_linea() -> None:
+    """`list_files` sin argumento lista la raíz: no hay archivo que nombrar."""
+    from cli.byte_cli import _detalle_de
+
+    assert _detalle_de('{"path": "", "depth": 2}') == ""
+
+
+def test_el_resumen_dice_cuanto_encontro() -> None:
+    """ "done" no dice nada que el ✓ no diga ya. Saber si el grep encontró algo,
+    o si el archivo se leyó entero, es lo que permite seguir sin abrir la
+    respuesta completa."""
+    from cli.byte_cli import _resumen_de
+
+    assert _resumen_de("read_file", {"ok": True, "lineas": 172, "mostradas": 172}) == "172 lines"
+    assert _resumen_de("grep", {"ok": True, "coincidencias": 7}) == "7 matches"
+    assert _resumen_de("grep", {"ok": True, "coincidencias": 0}) == "no matches"
+    assert _resumen_de("list_files", {"ok": True, "archivos": 23}) == "23 files"
+
+
+def test_un_archivo_recortado_lo_dice() -> None:
+    """Leer 400 de 900 líneas y decir "900 lines" haría creer que el modelo vio
+    el archivo entero."""
+    from cli.byte_cli import _resumen_de
+
+    assert (
+        _resumen_de("read_file", {"ok": True, "lineas": 900, "mostradas": 400})
+        == "400 of 900 lines"
+    )
+
+
+def test_las_herramientas_de_archivos_tienen_verbo() -> None:
+    """Sin verbo propio la línea dice "Using read_file", que es el nombre
+    interno de la herramienta y no lo que está pasando."""
+    from cli.byte_cli import POR_HERRAMIENTA
+
+    for nombre in ("list_files", "read_file", "grep", "ver_cv", "regenerar_cv"):
+        assert nombre in POR_HERRAMIENTA, f"{nombre} no tiene verbo"
