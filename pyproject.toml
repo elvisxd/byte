@@ -64,7 +64,10 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC"]
 [tool.ruff.lint.per-file-ignores]
 # assert es el modo normal de pytest; S105/S106 marcan las credenciales de
 # juguete de los fixtures, que justamente no son secretos.
-"tests/*" = ["S101", "S105", "S106"]
+# S603/S607 (subprocess con ruta parcial): los tests de git llaman a `git` del
+# PATH con argumentos literales del archivo, que es justamente lo que se quiere
+# ejercitar — simularlo probaría el simulador.
+"tests/*" = ["S101", "S105", "S106", "S603", "S607"]
 # S608 (SQL por interpolación): en este módulo las consultas interpolan solo
 # constantes del propio archivo — listas de columnas y cláusulas fijas. Todo
 # valor que venga de afuera va parametrizado con %s, nunca interpolado.

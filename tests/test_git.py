@@ -19,13 +19,7 @@ def repo(tmp_path: Path) -> Path:
     """Un repositorio de verdad, chico, para no simular git."""
 
     def git(*args: str) -> None:
-        # S603/S607: es un test, los argumentos son literales de este archivo y
-        # `git` del PATH es exactamente lo que se quiere ejercitar.
-        subprocess.run(
-            ["git", "-C", str(tmp_path), *args],  # noqa: S603, S607
-            check=True,
-            capture_output=True,
-        )
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
 
     git("init", "-q")
     git("config", "user.email", "test@ejemplo.com")
@@ -64,10 +58,7 @@ def test_commitear_deja_el_commit(repo: Path) -> None:
     resultado = _commit(repo, CommitArgs(mensaje="Cambiar x"))
     assert resultado.ok is True
     log = subprocess.run(
-        ["git", "-C", str(repo), "log", "--oneline"],  # noqa: S603, S607
-        capture_output=True,
-        text=True,
-        check=True,
+        ["git", "-C", str(repo), "log", "--oneline"], capture_output=True, text=True, check=True
     ).stdout
     assert "Cambiar x" in log
 
