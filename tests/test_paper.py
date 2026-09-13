@@ -371,9 +371,7 @@ def test_el_objetivo_va_del_lado_que_corresponde(registro: Registro, contexto: C
         )
 
 
-def test_cerrar_no_acepta_parcial_como_motivo(
-    registro: Registro, contexto: Contexto
-) -> None:
+def test_cerrar_no_acepta_parcial_como_motivo(registro: Registro, contexto: Contexto) -> None:
     """`cerrar` cierra TODO lo que queda; los parciales tienen su propio método.
 
     Antes `motivo="parcial"` estaba en el esquema y escribía `cerrada_en` igual
@@ -519,3 +517,58 @@ def test_una_base_vieja_se_migra_sin_perder_el_historial(tmp_path: Path) -> None
             "PRAGMA table_info(operaciones)"
         )
     }
+
+
+def test_el_motivo_de_cierre_se_corrige_contra_los_precios(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Medido en la primera sesión real: el modelo cerró con motivo "stop"
+    diciendo «el precio alcanzó el stop de 76.800» cuando la salida fue
+    76.954,57 — 154 puntos POR ENCIMA del stop.
+
+    El R salió bien porque lo calcula el código, pero el motivo entraba tal como
+    lo escribía el modelo, y es el campo que después segmenta el análisis: "¿los
+    stops saltan antes de tiempo?" se responde con esto, y con motivos
+    inventados no se responde nada.
+    """
+    oid = registro.abrir(
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=contexto,  # precio 100
+        razon="Barrido del piso.",
+        stop_loss=99.0,
+        take_profit=104.0,
+    )
+
+    registro.cerrar(oid, precio_salida=99.9, motivo="stop")  # no llegó al stop
+
+    fila = dict(
+        registro._con.execute(  # noqa: SLF001
+            "SELECT motivo_cierre FROM operaciones WHERE id = ?", (oid,)
+        ).fetchone()
+    )
+    assert fila["motivo_cierre"] == "manual"
+
+
+def test_un_stop_de_verdad_se_registra_como_stop(registro: Registro, contexto: Contexto) -> None:
+    """La corrección no puede convertir todo en manual: un cierre que sí tocó el
+    nivel tiene que conservar su nombre, o la segmentación se vacía igual."""
+    oid = registro.abrir(
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=contexto,
+        razon="Barrido del piso.",
+        stop_loss=99.0,
+        take_profit=104.0,
+    )
+
+    registro.cerrar(oid, precio_salida=98.9, motivo="stop")
+
+    fila = dict(
+        registro._con.execute(  # noqa: SLF001
+            "SELECT motivo_cierre FROM operaciones WHERE id = ?", (oid,)
+        ).fetchone()
+    )
+    assert fila["motivo_cierre"] == "stop"

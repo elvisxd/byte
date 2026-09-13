@@ -289,6 +289,19 @@ class Registro:
                 "(para soltar solo una parte, usá salir_parcial)."
             )
         fila = self._abierta(operacion_id)
+
+        # ⚠ EL MOTIVO SE CORRIGE CONTRA LOS PRECIOS, no se cree. Medido en la
+        # primera sesión real: el modelo cerró con motivo "stop" diciendo «el
+        # precio alcanzó el stop de 76,800» cuando la salida fue 76,954.57 —154
+        # puntos POR ENCIMA del stop—. El R salió bien porque lo calcula este
+        # módulo, pero el motivo entra tal como lo escribe el modelo y es lo que
+        # después segmenta el análisis: "¿los stops saltan antes de tiempo?" se
+        # responde con este campo, y con motivos inventados no se responde nada.
+        #
+        # Es la misma división de siempre: el modelo elige CUÁNDO salir, los
+        # números dicen QUÉ pasó. Un cierre que el modelo llama "stop" pero
+        # ocurre lejos del stop es un cierre manual, se llame como se llame.
+        motivo = self._motivo_real(fila, precio_salida, motivo)
         vendido = self._fraccion_vendida(operacion_id)
         restante = 1.0 - vendido
         r_tramo = self._r_de(fila, precio_salida)
@@ -435,6 +448,34 @@ class Registro:
             (operacion_id,),
         ).fetchone()
         return float(fila["v"])
+
+    def _motivo_real(self, fila: sqlite3.Row, precio_salida: float, dicho: str) -> str:
+        """El motivo que los precios respaldan.
+
+        Un "stop" solo lo es si el precio llegó al stop —el vigente, que puede
+        haberse movido— y un "objetivo" solo si llegó al objetivo. Lo que no
+        cuadra es un cierre manual: no es un error del modelo, es una decisión
+        discrecional, y llamarla por su nombre es lo que hace utilizable la
+        segmentación por motivo.
+        """
+        if dicho == "manual":
+            return dicho
+        stop = fila["stop_actual"] if fila["stop_actual"] is not None else fila["stop_loss"]
+        objetivo = fila["take_profit"]
+        # Una tolerancia de medio por mil: el precio de salida es el cierre de
+        # la última vela, no el tick exacto que tocó el nivel.
+        margen = fila["precio_entrada"] * 0.0005
+        if fila["direccion"] == "long":
+            toco_stop = precio_salida <= stop + margen
+            toco_objetivo = objetivo is not None and precio_salida >= objetivo - margen
+        else:
+            toco_stop = precio_salida >= stop - margen
+            toco_objetivo = objetivo is not None and precio_salida <= objetivo + margen
+        if dicho == "stop" and toco_stop:
+            return "stop"
+        if dicho == "objetivo" and toco_objetivo:
+            return "objetivo"
+        return "manual"
 
     def _r_de(self, fila: sqlite3.Row, precio_salida: float) -> float:
         """El R de una salida a ese precio, contra el riesgo ORIGINAL."""
