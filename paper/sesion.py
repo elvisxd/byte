@@ -43,6 +43,7 @@ from agent.llm import build_llm
 from api.config import Settings
 from paper.publicar import publicar
 from paper.registro import Registro
+from paper.trace import TraceDeSesion
 from tools.base import ToolRegistry
 from tools.paper import build_paper_tools
 
@@ -109,10 +110,24 @@ async def una_sesion(
     vueltas, errores, seguidos = 0, [], 0
     abiertas_antes = len(registro.abiertas())
 
+    # El razonamiento, para poder mirarlo desde fuera mientras corre. Va aparte
+    # del historial porque son cosas distintas: el historial dice QUÉ decidió y
+    # se conserva; el trace dice CÓMO y caduca. Ver paper/trace.py.
+    trace = TraceDeSesion(
+        sesion_id=f"{int(time.time())}",
+        modelo=ajustes.ollama_model,
+        simbolo=SIMBOLO,
+    )
+
     while time.monotonic() < limite:
         vueltas += 1
         restante = (limite - time.monotonic()) / 60
         print(f"[sesión] vuelta {vueltas} · quedan {restante:.0f} min", flush=True)
+        trace.vuelta = vueltas
+        # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
+        # cuatro minutos, quien mira tiene que ver que empezó, no una página
+        # quieta que no distingue "pensando" de "colgado".
+        trace.publicar(viva=True)
         try:
             # El estado va COMPLETO: `iterations` y los acumuladores no tienen
             # default en el grafo, y sin ellos el primer nodo revienta con un
@@ -124,7 +139,7 @@ async def una_sesion(
                     "sources": [],
                     "tools_used": [],
                 },
-                {"configurable": {"thread_id": f"papel-{vueltas}"}},
+                {"configurable": {"thread_id": f"papel-{vueltas}", "emitter": trace}},
             )
         except Exception as exc:  # noqa: BLE001 — una vuelta mala no mata la sesión
             # Un fallo de red o un timeout del modelo no debe perder lo que ya
@@ -143,6 +158,10 @@ async def una_sesion(
             await asyncio.sleep(min(10 * seguidos, 30))
         else:
             seguidos = 0
+
+    # `viva=False` marca el trace como terminado: la página deja de refrescar y
+    # dice que la sesión acabó, en vez de esperar pasos que no van a llegar.
+    trace.publicar(viva=False)
 
     resumen = {
         "vueltas": vueltas,
