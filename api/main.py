@@ -87,6 +87,42 @@ def _leer_perfil(ruta: str) -> str:
     return (cuerpo if sep else texto).strip()
 
 
+# Los archivos donde un proyecto deja sus convenciones, en orden de preferencia.
+# `CLAUDE.md` y `AGENTS.md` son la convención que se armó entre herramientas de
+# agente; el README es el respaldo de siempre.
+INSTRUCCIONES_DEL_PROYECTO = ("CLAUDE.md", "AGENTS.md", ".cursorrules")
+# Cuánto se toma de esos archivos. Entra en el prompt de cada conversación, así
+# que un README de 300 líneas lo llenaría solo.
+MAX_INSTRUCCIONES = 3000
+
+
+def _leer_instrucciones(raiz: str) -> str:
+    """Las convenciones del proyecto, si el repo las deja escritas.
+
+    Un agente que va a escribir en un repo debería leer primero cómo se escribe
+    ahí: qué formato de commits usa, qué no tocar, cómo se corren los tests. Es
+    lo que un colaborador nuevo lee antes de mandar su primer cambio.
+    """
+    if not raiz:
+        return ""
+    carpeta = Path(raiz).expanduser()
+    for nombre in INSTRUCCIONES_DEL_PROYECTO:
+        archivo = carpeta / nombre
+        if not archivo.is_file():
+            continue
+        try:
+            texto = archivo.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not texto:
+            continue
+        logger.info("instrucciones_del_proyecto", archivo=nombre, chars=len(texto))
+        if len(texto) > MAX_INSTRUCCIONES:
+            texto = texto[:MAX_INSTRUCCIONES] + "\n[...recortado]"
+        return f"Convenciones de este proyecto (de {nombre}):\n{texto}"
+    return ""
+
+
 def _avisar_si_hay_varios_workers(env: str) -> None:
     """Byte asume un solo proceso, y conviene que se note al arrancar.
 
@@ -302,7 +338,14 @@ def create_app(
                 max_iterations=resolved_settings.max_iterations,
                 resume_ttl_s=resolved_settings.resume_token_ttl_s,
                 trazas=trazas,
-                perfil=_leer_perfil(resolved_settings.perfil_file),
+                perfil="\n\n".join(
+                    x
+                    for x in (
+                        _leer_perfil(resolved_settings.perfil_file),
+                        _leer_instrucciones(resolved_settings.project_root),
+                    )
+                    if x
+                ),
             )
 
             # Un grafo por modelo alternativo, para poder cambiar en caliente.

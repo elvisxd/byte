@@ -1,0 +1,371 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - link "Elvis Pino" [ref=e4] [cursor=pointer]:
+        - /url: "#"
+      - navigation [ref=e5]:
+        - link "Acerca de" [ref=e6] [cursor=pointer]:
+          - /url: "#about"
+        - link "Experiencia" [ref=e7] [cursor=pointer]:
+          - /url: "#experience"
+        - link "Proyectos" [ref=e8] [cursor=pointer]:
+          - /url: "#projects"
+        - link "Estudios y Certificados" [ref=e9] [cursor=pointer]:
+          - /url: "#Studies"
+      - generic [ref=e10]:
+        - button "Select language" [ref=e12] [cursor=pointer]:
+          - generic [ref=e13]: ES
+        - button "Cambiar a modo oscuro" [ref=e16] [cursor=pointer]
+  - generic [ref=e19]:
+    - main [ref=e20]:
+      - generic [ref=e22]:
+        - paragraph [ref=e23]: Ingeniero Full-Stack Senior · IA Aplicada
+        - heading "Elvis R. Pino" [level=1] [ref=e24]
+        - paragraph [ref=e25]: Construyo sistemas donde la IA es un componente de producción, no una demo.
+        - paragraph [ref=e26]: 10 años de ingeniería full-stack en TypeScript, React/Next.js, .NET y NestJS. Integro modelos de lenguaje vía REST, diseño prompts con restricciones validadas empíricamente y despliego modelos predictivos con validación out-of-sample.
+        - paragraph [ref=e27]: El modelo explica. El código determinista decide.
+        - generic [ref=e28]:
+          - link "Ver trabajo seleccionado" [ref=e29] [cursor=pointer]:
+            - /url: "#projects"
+          - link "Contactar" [ref=e33] [cursor=pointer]:
+            - /url: mailto:elvisreyxd@gmail.com
+          - link "Descargar CV" [ref=e37] [cursor=pointer]:
+            - /url: /Elvis-Pino-CV.pdf
+        - paragraph [ref=e41]: Orlando, Florida · Abierto a reubicación y remoto
+        - generic [ref=e42]:
+          - generic [ref=e43]:
+            - definition [ref=e44]: "10"
+            - term [ref=e45]: años de experiencia
+          - generic [ref=e46]:
+            - definition [ref=e47]: 283k
+            - term [ref=e48]: líneas de TypeScript
+          - generic [ref=e49]:
+            - definition [ref=e50]: "5"
+            - term [ref=e51]: motores de señal
+          - generic [ref=e52]:
+            - definition [ref=e53]: +1.29%
+            - term [ref=e54]: edge, out-of-sample
+        - link "Desplázate para explorar" [ref=e55] [cursor=pointer]:
+          - /url: "#about"
+      - generic [ref=e58]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - paragraph [ref=e63]: Perfil
+            - heading "Acerca de mí" [level=2] [ref=e64]
+          - generic [ref=e65]:
+            - generic [ref=e66]:
+              - img "Elvis Pino" [ref=e67]
+              - generic [ref=e68]:
+                - link "GitHub" [ref=e69] [cursor=pointer]:
+                  - /url: https://github.com/elvisxd
+                - link "LinkedIn" [ref=e72] [cursor=pointer]:
+                  - /url: https://www.linkedin.com/in/elvis-pino-dev/
+                - link "Email" [ref=e75] [cursor=pointer]:
+                  - /url: mailto:elvisreyxd@gmail.com
+              - link "Descargar CV" [ref=e79] [cursor=pointer]:
+                - /url: /cv/Elvis-Pino-CV.pdf
+            - generic [ref=e83]:
+              - generic [ref=e84]:
+                - paragraph [ref=e85]: Soy ingeniero full-stack con 10 años de experiencia y fundador de Nesty C.A., una consultora técnica enfocada en automatización, desarrollo web y móvil, e integración de APIs. Trabajo con TypeScript, React/Next.js, .NET/C# y NestJS, y he entregado más de nueve aplicaciones a producción, incluida una publicada en la App Store de Apple.
+                - paragraph [ref=e86]: "Mi foco actual es la IA aplicada: integrar modelos de lenguaje en sistemas que corren en producción, diseñar prompts con restricciones validadas contra datos reales, y construir modelos predictivos que se sostengan out-of-sample. Me importa la parte que la mayoría de las demos se salta: medir si aquello funciona de verdad, y estar dispuesto a eliminar lo que no."
+                - paragraph [ref=e87]: "Antes de esto pasé años automatizando procesos de negocio con UiPath RPA. El hilo conductor no ha cambiado: hacer que el software se encargue del trabajo repetitivo de forma fiable. Las herramientas pasaron de motores de reglas a modelos de lenguaje."
+              - heading "Habilidades Técnicas" [level=3] [ref=e88]
+              - generic [ref=e89]:
+                - generic [ref=e90]:
+                  - term [ref=e91]: IA y Datos
+                  - definition [ref=e92]: LLM Integration, Claude, Google Gemini API, Prompt Engineering, Predictive Modeling, AI-Assisted Development, UiPath RPA
+                - generic [ref=e93]:
+                  - term [ref=e94]: Frontend
+                  - definition [ref=e95]: JavaScript, React, React Native, TypeScript, HTML, CSS, Tailwind CSS, Vue, Next.js, Redux
+                - generic [ref=e96]:
+                  - term [ref=e97]: Backend
+                  - definition [ref=e98]: Node.js, NestJS, Express.js, GraphQL, Python, FastAPI, PHP, C#, Java
+                - generic [ref=e99]:
+                  - term [ref=e100]: Datos
+                  - definition [ref=e101]: SQL, MongoDB, PostgreSQL, MySQL, Supabase, SQL Server, Azure SQL, Entity Framework
+                - generic [ref=e102]:
+                  - term [ref=e103]: Cloud y DevOps
+                  - definition [ref=e104]: AWS, Azure, Azure DevOps, Docker, Railway, Vercel
+                - generic [ref=e105]:
+                  - term [ref=e106]: Herramientas
+                  - definition [ref=e107]: Git, Jest, Webpack, Turbopack, Swagger
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - paragraph [ref=e112]: Trayectoria
+            - heading "Experiencia" [level=2] [ref=e113]
+          - generic [ref=e114]:
+            - article [ref=e115]:
+              - generic [ref=e116]:
+                - generic [ref=e117]: Junio 2023 — Actualidad
+                - generic [ref=e118]: Remote
+                - generic [ref=e119]: Actual
+              - generic [ref=e120]:
+                - heading "Fundador & Desarrollador Full-Stack" [level=3] [ref=e121]
+                - paragraph [ref=e122]: Nesty C.A
+                - list [ref=e123]:
+                  - listitem [ref=e124]: Fundé y lidero una empresa tecnológica especializada en servicios de automatización, desarrollo web, aplicaciones móviles y desarrollo de APIs.
+                  - listitem [ref=e125]: Diseño y desarrollo soluciones digitales integrales incluyendo aplicaciones web responsivas, aplicaciones móviles y APIs robustas.
+                  - listitem [ref=e126]: Implemento soluciones de automatización usando modelos de IA y arquitectura de microservicios para optimizar procesos de negocio.
+                  - listitem [ref=e127]: Gestiono relaciones con clientes, requisitos de proyectos y entrego soluciones completas desde el concepto hasta el despliegue.
+                  - listitem [ref=e128]: Arquitecto sistemas escalables usando frameworks modernos y aseguro estándares de código de alta calidad y mantenible.
+                - paragraph [ref=e129]: NestJS · React Native · Next.js · Microservices · AI Models · Tailwind CSS · .NET C# · TypeScript
+            - article [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]: 2022 — Actualidad
+                - generic [ref=e133]: Cocoa, FL
+                - generic [ref=e134]: Actual
+              - generic [ref=e135]:
+                - heading "Desarrollador de Aplicaciones Internas" [level=3] [ref=e136]
+                - paragraph [ref=e137]: Walmart Inc.
+                - list [ref=e138]:
+                  - listitem [ref=e139]: Desarrollo y mantengo aplicaciones web internas utilizadas por el personal de tienda para operaciones diarias.
+                  - listitem [ref=e140]: Optimizo procesos internos mediante soluciones web a medida, reduciendo pasos manuales en tareas recurrentes.
+                  - listitem [ref=e141]: Doy soporte técnico y mejora continua a las herramientas en uso, priorizando estabilidad y facilidad de uso.
+                - paragraph [ref=e142]: PHP · MySQL · JavaScript
+            - article [ref=e143]:
+              - generic [ref=e144]:
+                - generic [ref=e145]: Sept 2022 — Actualidad
+                - generic [ref=e146]: Remote
+                - generic [ref=e147]: Actual
+              - generic [ref=e148]:
+                - heading "Desarrollador Full-Stack" [level=3] [ref=e149]
+                - paragraph [ref=e150]: Freelance
+                - list [ref=e151]:
+                  - listitem [ref=e152]: Desarrollo y despliego aplicaciones web modernas usando React, Next.js, TypeScript y Tailwind CSS.
+                  - listitem [ref=e153]: Implemento diseños responsivos y aseguro compatibilidad entre navegadores para sitios web de clientes.
+                  - listitem [ref=e154]: Creo APIs RESTful e integro servicios de terceros para mejorar la funcionalidad de las aplicaciones.
+                  - listitem [ref=e155]: Optimizo el rendimiento de sitios web e implemento mejores prácticas de SEO para mejorar la visibilidad del cliente.
+                  - listitem [ref=e156]: Colaboro directamente con clientes para recopilar requisitos y entregar soluciones que satisfagan sus necesidades de negocio.
+                  - listitem [ref=e157]: Mantengo y actualizo sitios web existentes, implementando nuevas características y corrigiendo errores según sea necesario.
+                - paragraph [ref=e158]: React · Next.js · TypeScript · Tailwind CSS · Node.js · Supabase · Vercel · Git
+            - article [ref=e159]:
+              - generic [ref=e160]:
+                - generic [ref=e161]: Mayo 2019 — Ago 2020
+                - generic [ref=e162]: Remote
+              - generic [ref=e163]:
+                - heading "Freelancer, Desarrollo Web" [level=3] [ref=e164]
+                - paragraph [ref=e165]: Own Company
+                - list [ref=e166]:
+                  - listitem [ref=e167]: Asistí en el desarrollo y mantenimiento del sitio web de la empresa.
+                  - listitem [ref=e168]: Aprendí y apliqué tecnologías modernas de desarrollo web y mejores prácticas.
+                  - listitem [ref=e169]: Participé en reuniones diarias de stand-up y sesiones de planificación de sprints.
+                  - listitem [ref=e170]: Gané experiencia en gestión de proyectos y comunicación con clientes.
+                - paragraph [ref=e171]: React · Node.js · JavaScript · HTML · CSS
+            - article [ref=e172]:
+              - generic [ref=e173]:
+                - generic [ref=e174]: Junio 2017 — 2019
+                - generic [ref=e175]: Remote
+              - generic [ref=e176]:
+                - heading "Ingeniero de Software" [level=3] [ref=e177]
+                - paragraph [ref=e178]: IT Driver
+                - list [ref=e179]:
+                  - listitem [ref=e180]: Desarrollé y mantuve aplicaciones web usando PHP, CSS y MySQL.
+                  - listitem [ref=e181]: Colaboré con equipos multifuncionales para diseñar e implementar nuevas características.
+                  - listitem [ref=e182]: Participé en revisiones de código y programación en pareja para asegurar la calidad del código.
+                  - listitem [ref=e183]: Implementé pruebas automatizadas y flujos de trabajo de integración/despliegue continuo.
+                - paragraph [ref=e184]: PHP · MySQL · CSS · JavaScript · Git
+        - generic [ref=e187]:
+          - generic [ref=e188]:
+            - paragraph [ref=e189]: Trabajo
+            - heading "Trabajo seleccionado" [level=2] [ref=e190]
+          - generic [ref=e191]:
+            - article [ref=e192]:
+              - img "Byte — Agente de IA Self-Hosted" [ref=e194]
+              - generic [ref=e195]:
+                - generic [ref=e196]:
+                  - heading "Byte — Agente de IA Self-Hosted" [level=3] [ref=e197]
+                  - generic [ref=e198]: Sistema privado
+                - paragraph [ref=e202]: Un agente local con RAG, sandbox WASM para código y evals. Se detiene a pedir aprobación humana cuando contenido no confiable y ejecución de código coinciden en una conversación.
+                - paragraph [ref=e203]: Python · FastAPI · LangGraph · Ollama · PostgreSQL · pgvector · Pyodide / WASM · SSE / AG-UI · Docker
+                - generic [ref=e204]: Puedo explicar la arquitectura si te interesa
+            - article [ref=e206]:
+              - img "Trading Spot — Avisos de Zonas de Acumulación" [ref=e208]
+              - generic [ref=e209]:
+                - generic [ref=e210]:
+                  - heading "Trading Spot — Avisos de Zonas de Acumulación" [level=3] [ref=e211]
+                  - generic [ref=e212]: Sistema privado
+                - paragraph [ref=e216]: 283k líneas de TypeScript, y la decisión de retirar casi todo. Lo que queda en producción es lo que sobrevivió a permutación, tercios y out-of-sample congelado.
+                - paragraph [ref=e217]: TypeScript · React 19 · Vite · Express · Redis · Google Gemini API · Telegram Bot API · Docker · Railway
+                - generic [ref=e218]: Puedo explicar la arquitectura si te interesa
+            - article [ref=e220]:
+              - img "Sistema de Investigación de Apuestas Deportivas" [ref=e222]
+              - generic [ref=e223]:
+                - generic [ref=e224]:
+                  - heading "Sistema de Investigación de Apuestas Deportivas" [level=3] [ref=e225]
+                  - generic [ref=e226]: Sistema privado
+                - paragraph [ref=e230]: Ocho deportes y ~10k líneas de motor estadístico. Su mejor función es negarse a enseñar señales que no han sobrevivido al out-of-sample.
+                - paragraph [ref=e231]: TypeScript · React 19 · Vite · Express · Redis · Docker · Railway
+                - generic [ref=e232]: Puedo explicar la arquitectura si te interesa
+            - article [ref=e234]:
+              - img "App Móvil - Backend NestJS" [ref=e236]
+              - generic [ref=e237]:
+                - heading "App Móvil - Backend NestJS" [level=3] [ref=e239]
+                - paragraph [ref=e240]: Una app móvil full-stack con React Native, backend NestJS y autenticación Firebase.
+                - paragraph [ref=e241]: React Native · Expo · NestJS · Supabase · Firebase · TypeScript · Axios · Android Studio
+                - link "Ver en vivo" [ref=e243] [cursor=pointer]:
+                  - /url: https://apps.apple.com/kz/app/go190-store/id6748661767
+          - heading "Más proyectos" [level=3] [ref=e247]
+          - list [ref=e248]:
+            - listitem [ref=e249]:
+              - generic [ref=e250]: Afiliados de Amazon → Pinterest
+              - generic [ref=e251]: TypeScript · React 19 · Vite · Express · PostgreSQL · Railway
+            - listitem [ref=e252]:
+              - generic [ref=e253]: API REST NestJS
+              - generic [ref=e254]: NestJS · TypeScript · PostgreSQL · Railway · Swagger
+              - link "Demo" [ref=e256] [cursor=pointer]:
+                - /url: https://restapi-production-ac90.up.railway.app/
+            - listitem [ref=e257]:
+              - generic [ref=e258]: Tienda E-Commerce Moderna
+              - generic [ref=e259]: Next.js · React · TypeScript · Supabase · Vercel Blob · Tailwind CSS
+              - link "Demo" [ref=e261] [cursor=pointer]:
+                - /url: https://my-ecommerce-app-delta.vercel.app/
+            - listitem [ref=e262]:
+              - generic [ref=e263]: FinancePro - Versión Beta
+              - generic [ref=e264]: Next.js · React · PostgreSQL · Tailwind CSS · Vercel
+              - link "Demo" [ref=e266] [cursor=pointer]:
+                - /url: https://financepro-iota.vercel.app/
+            - listitem [ref=e267]:
+              - generic [ref=e268]: Calot
+              - generic [ref=e269]: PHP · CSS · MySQL
+              - link "Demo" [ref=e271] [cursor=pointer]:
+                - /url: https://www.calot.com.ar/
+            - listitem [ref=e272]:
+              - generic [ref=e273]: Interfaz de Chat
+              - generic [ref=e274]: Next.js · React · Tailwind CSS · Vercel
+              - link "Demo" [ref=e276] [cursor=pointer]:
+                - /url: https://gemini-chat-app-three.vercel.app/
+            - listitem [ref=e277]:
+              - generic [ref=e278]: Generador de QR
+              - generic [ref=e279]: React · Tailwind CSS · Vercel
+              - generic [ref=e280]:
+                - link "Demo" [ref=e281] [cursor=pointer]:
+                  - /url: https://qr-generator-pp31.vercel.app/
+                - link "Código" [ref=e282] [cursor=pointer]:
+                  - /url: https://github.com/elvisxd/qr-generator
+            - listitem [ref=e283]:
+              - generic [ref=e284]: App del Clima
+              - generic [ref=e285]: React · Tailwind CSS · Vercel
+              - generic [ref=e286]:
+                - link "Demo" [ref=e287] [cursor=pointer]:
+                  - /url: https://weather-app-one-sepia-34.vercel.app/
+                - link "Código" [ref=e288] [cursor=pointer]:
+                  - /url: https://github.com/elvisxd/weather-app
+        - generic [ref=e291]:
+          - generic [ref=e292]:
+            - paragraph [ref=e293]: Formación
+            - heading "Formación y certificaciones" [level=2] [ref=e294]
+          - heading "Titulaciones" [level=3] [ref=e295]
+          - generic [ref=e296]:
+            - generic [ref=e297]:
+              - generic [ref=e298]: 2008 — 2012
+              - generic [ref=e299]:
+                - paragraph [ref=e300]: Licenciatura en Ciencias de la Computación
+                - paragraph [ref=e301]: Maria Auxiliadora II — Venezuela
+            - generic [ref=e302]:
+              - generic [ref=e303]: 2012 — 2017
+              - generic [ref=e304]:
+                - paragraph [ref=e305]: Ingeniería de Sistemas
+                - paragraph [ref=e306]: Unimar — Venezuela
+          - heading "Certificaciones" [level=3] [ref=e307]
+          - list [ref=e308]:
+            - listitem [ref=e309]:
+              - generic [ref=e310]: 2026 — 2026
+              - generic [ref=e311]:
+                - paragraph [ref=e312]: "Python TOTAL con IA: de CERO a Programador Full"
+                - paragraph [ref=e313]: Udemy · UC-3e0cbef9-ea9b-43d5-ae2a-f83952cfa377
+              - link "Verificar" [ref=e314] [cursor=pointer]:
+                - /url: https://www.udemy.com/certificate/UC-3e0cbef9-ea9b-43d5-ae2a-f83952cfa377/
+            - listitem [ref=e318]:
+              - generic [ref=e319]: 2026 — 2026
+              - generic [ref=e320]:
+                - paragraph [ref=e321]: "Claude Academy: Claude 101"
+                - paragraph [ref=e322]: Anthropic · b5e83a09912f25a9458370c28ccb4b8c
+              - link "Verificar" [ref=e323] [cursor=pointer]:
+                - /url: https://academy.claude.com/verify/b5e83a09912f25a9458370c28ccb4b8c
+            - listitem [ref=e327]:
+              - generic [ref=e328]: 2026 — 2026
+              - generic [ref=e329]:
+                - paragraph [ref=e330]: "Vibe Coding: De forma responsable"
+                - paragraph [ref=e331]: DevTalles · ntcx9jd3qr
+              - link "Verificar" [ref=e332] [cursor=pointer]:
+                - /url: https://cursos.devtalles.com/certificates/ntcx9jd3qr
+            - listitem [ref=e336]:
+              - generic [ref=e337]: 2025 — 2025
+              - generic [ref=e338]:
+                - paragraph [ref=e339]: "Backend .NET: .NET Core, SQL Server y Seguridad JWT"
+                - paragraph [ref=e340]: DevTalles · bhe9ladrfd
+              - link "Verificar" [ref=e341] [cursor=pointer]:
+                - /url: https://cursos.devtalles.com/certificates/bhe9ladrfd
+            - listitem [ref=e345]:
+              - generic [ref=e346]: 2025 — 2025
+              - generic [ref=e347]:
+                - paragraph [ref=e348]: "NestJS: Desarrollo Backend con PostgreSQL y WebSockets"
+                - paragraph [ref=e349]: DevTalles · 2cyepaaiut
+              - link "Verificar" [ref=e350] [cursor=pointer]:
+                - /url: https://cursos.devtalles.com/certificates/2cyepaaiut
+            - listitem [ref=e354]:
+              - generic [ref=e355]: 2025 — 2025
+              - generic [ref=e356]:
+                - paragraph [ref=e357]: "React Native Expo: Aplicaciones Nativas para iOS y Android"
+                - paragraph [ref=e358]: DevTalles · cgwvjogaxy
+              - link "Verificar" [ref=e359] [cursor=pointer]:
+                - /url: https://cursos.devtalles.com/certificates/cgwvjogaxy
+            - listitem [ref=e363]:
+              - generic [ref=e364]: 2023 — Actualidad
+              - generic [ref=e365]:
+                - paragraph [ref=e366]: Especialización en Diseño Front-End
+                - paragraph [ref=e367]: Coursera (Meta)
+              - link "Verificar" [ref=e368] [cursor=pointer]:
+                - /url: https://www.coursera.org/professional-certificates/meta-front-end-developer?
+            - listitem [ref=e372]:
+              - generic [ref=e373]: 2022 — 2022
+              - generic [ref=e374]:
+                - paragraph [ref=e375]: Certificado Avanzado de React de Meta
+                - paragraph [ref=e376]: Coursera · 9UXAD93Z6TDJ
+              - link "Verificar" [ref=e377] [cursor=pointer]:
+                - /url: https://www.coursera.org/account/accomplishments/verify/9UXAD93Z6TDJ
+            - listitem [ref=e381]:
+              - generic [ref=e382]: 2022 — 2022
+              - generic [ref=e383]:
+                - paragraph [ref=e384]: Certificado de Fundamentos de React de Meta
+                - paragraph [ref=e385]: Coursera · W852TWECIXYB
+              - link "Verificar" [ref=e386] [cursor=pointer]:
+                - /url: https://www.coursera.org/account/accomplishments/verify/W852TWECIXYB
+            - listitem [ref=e390]:
+              - generic [ref=e391]: 2022 — 2022
+              - generic [ref=e392]:
+                - paragraph [ref=e393]: Introducción al Desarrollo Back-End
+                - paragraph [ref=e394]: Coursera (Meta) · FYCE14Q2I9Y3
+              - link "Verificar" [ref=e395] [cursor=pointer]:
+                - /url: https://www.coursera.org/account/accomplishments/verify/FYCE14Q2I9Y3
+            - listitem [ref=e399]:
+              - generic [ref=e400]: 2021 — 2022
+              - generic [ref=e401]:
+                - paragraph [ref=e402]: Algoritmos y Estructuras de Datos en JavaScript
+                - paragraph [ref=e403]: freeCodeCamp
+              - link "Verificar" [ref=e404] [cursor=pointer]:
+                - /url: https://www.freecodecamp.org/certification/fcc12345/javascript-algorithms-and-data-structures
+            - listitem [ref=e408]:
+              - generic [ref=e409]: 2021 — 2021
+              - generic [ref=e410]:
+                - paragraph [ref=e411]: Diseño Web Responsivo
+                - paragraph [ref=e412]: freeCodeCamp
+              - link "Verificar" [ref=e413] [cursor=pointer]:
+                - /url: https://www.freecodecamp.org/certification/fcc12345/responsive-web-design
+    - contentinfo [ref=e417]:
+      - generic [ref=e418]:
+        - paragraph [ref=e419]: Abierto a roles senior full-stack e IA aplicada.
+        - paragraph [ref=e420]: En Orlando, Florida — abierto a reubicación y trabajo remoto. La vía más rápida para contactarme es el email.
+        - generic [ref=e421]:
+          - link "elvisreyxd@gmail.com" [ref=e422] [cursor=pointer]:
+            - /url: mailto:elvisreyxd@gmail.com
+          - link "+1 (407) 437-9559" [ref=e426] [cursor=pointer]:
+            - /url: tel:+14074379559
+          - link "LinkedIn" [ref=e429] [cursor=pointer]:
+            - /url: https://www.linkedin.com/in/elvis-pino-dev/
+          - link "github.com/elvisxd" [ref=e432] [cursor=pointer]:
+            - /url: https://github.com/elvisxd
+        - generic [ref=e435]:
+          - paragraph [ref=e436]: © 2026 Elvis Pino
+          - paragraph [ref=e437]: Next.js · TypeScript · Tailwind
+  - alert [ref=e438]

@@ -114,3 +114,23 @@ Cada uno de estos vectores **funcionaba** contra un Pyodide sin endurecer:
 
 ## Para la entrevista
 Poder explicar *por qué* Ollama va en red privada, *por qué* la sesión web es por cookie y no por header, y *cómo* se mitiga la inyección indirecta en un agente con modelo local, vale más que cualquier feature.
+
+### Leer la web sin dejar rastro de más (Fase 6)
+
+`leer_web` sale con la IP de quien corre Byte: no hay proxy ni anonimato, y
+decirlo importa porque el sitio ve la dirección real. Lo que sí se hace:
+
+- **`robots.txt` se respeta.** Un sitio que pide no ser recorrido está diciendo
+  algo. Si el archivo no existe se asume que sí — la ausencia de reglas no es
+  una prohibición.
+- **1,5 s entre pedidos al mismo dominio.** El agente puede encadenar cinco
+  lecturas en segundos, y eso desde una IP doméstica se ve como un scraper:
+  primero llegan los 429 y después el bloqueo. La espera es por sitio, así que
+  leer de dos fuentes distintas no se penaliza.
+- **No se alcanza la red interna.** Loopback, redes privadas y `169.254.x` —los
+  metadatos de la nube— están bloqueados, y el dominio se resuelve a IP antes de
+  pedir: un nombre público puede apuntar a `127.0.0.1`.
+
+Anonimato de verdad pediría Tor o un proxy pago, y rotar IPs tampoco alcanza
+—los sitios miden comportamiento por sesión, no petición por petición—. Queda
+fuera de alcance a propósito.

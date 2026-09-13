@@ -19,6 +19,7 @@ llegar ahí, lo hace.
 import ipaddress
 import json
 import socket
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -38,8 +39,65 @@ MAX_BYTES = 2_000_000
 BASURA = ("script", "style", "noscript", "nav", "footer", "header", "aside", "form")
 
 
+# Cuánto esperar entre dos pedidos al mismo dominio. No es por cortesía
+# abstracta: el agente puede encadenar cinco lecturas en segundos, y eso desde
+# una IP doméstica se parece a un scraper y termina en un bloqueo.
+ESPERA_POR_DOMINIO_S = 1.5
+
+# Cuándo se vuelve a leer el robots.txt de un dominio.
+ROBOTS_VIGENCIA_S = 1800
+
+_ultimo_pedido: dict[str, float] = {}
+_robots: dict[str, tuple[float, Any]] = {}
+
+
 class UrlNoPermitida(ValueError):
     """La URL apunta a algo que el agente no debería alcanzar."""
+
+
+async def _esperar_turno(host: str) -> None:
+    """Espacia los pedidos a un mismo dominio.
+
+    El agente puede pedir cinco páginas del mismo sitio en dos segundos, y eso
+    desde una IP doméstica se ve como un scraper: primero llegan los 429 y
+    después el bloqueo. Un segundo y medio entre pedidos al mismo host alcanza
+    para no parecerlo, y no se nota cuando se lee una sola página.
+    """
+    import asyncio
+
+    ahora = time.monotonic()
+    ultimo = _ultimo_pedido.get(host, 0.0)
+    faltan = ESPERA_POR_DOMINIO_S - (ahora - ultimo)
+    if faltan > 0:
+        await asyncio.sleep(faltan)
+    _ultimo_pedido[host] = time.monotonic()
+
+
+async def _robots_permite(url: str) -> bool:
+    """Si el `robots.txt` del sitio deja leer esa ruta.
+
+    Un sitio que pide no ser recorrido está diciendo algo, y respetarlo es la
+    diferencia entre un agente que lee y uno que raspa. Si el archivo no existe
+    o no se puede leer, se asume que sí: la ausencia de reglas no es una
+    prohibición.
+    """
+    from urllib.robotparser import RobotFileParser
+
+    partes = urlparse(url)
+    base = f"{partes.scheme}://{partes.netloc}"
+    guardado = _robots.get(base)
+    if guardado and time.monotonic() - guardado[0] < ROBOTS_VIGENCIA_S:
+        parser = guardado[1]
+    else:
+        parser = RobotFileParser()
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as cliente:
+                respuesta = await cliente.get(f"{base}/robots.txt")
+            parser.parse(respuesta.text.splitlines() if respuesta.status_code < 400 else [])
+        except httpx.HTTPError:
+            parser.parse([])
+        _robots[base] = (time.monotonic(), parser)
+    return parser.can_fetch("Byte", url)
 
 
 def _verificar(url: str) -> str:
@@ -99,6 +157,14 @@ async def _leer_web(args: LeerWebArgs, max_chars: int) -> ToolResult:
         url = _verificar(args.url)
     except UrlNoPermitida as exc:
         return ToolResult(content=str(exc), summary={"error": str(exc)}, ok=False)
+
+    if not await _robots_permite(url):
+        return ToolResult(
+            content="el robots.txt de ese sitio pide no leer esa ruta",
+            summary={"error": "robots"},
+            ok=False,
+        )
+    await _esperar_turno(urlparse(url).hostname or "")
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=True) as cliente:
@@ -221,8 +287,10 @@ def build_web_fetch_tools(max_chars: int) -> list[Tool]:
             name="leer_web",
             description=(
                 "Abre una página web y devuelve su texto. Usala después de web_search para "
-                "leer de verdad un resultado, o cuando el usuario te dé una URL. Es lo que "
-                "convierte una búsqueda en investigación."
+                "leer de verdad un resultado, o cuando el usuario te dé una URL. "
+                "Para investigar bien, abrí DOS O TRES resultados distintos y compará: una "
+                "sola fuente puede estar desactualizada o equivocada, y con dos que "
+                "coincidan la respuesta vale mucho más. Citá de cuál sacaste cada cosa."
             ),
             args_model=LeerWebArgs,
             run=leer,

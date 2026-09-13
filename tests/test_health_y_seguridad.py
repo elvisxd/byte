@@ -226,3 +226,30 @@ def test_un_perfil_que_no_existe_no_rompe_el_arranque(tmp_path) -> None:
 
     assert _leer_perfil(str(tmp_path / "no-existe.md")) == ""
     assert _leer_perfil("") == ""
+
+
+def test_se_leen_las_convenciones_del_proyecto(tmp_path) -> None:
+    """Un agente que va a escribir en un repo debería leer primero cómo se
+    escribe ahí, igual que un colaborador nuevo antes de su primer cambio."""
+    from api.main import _leer_instrucciones
+
+    (tmp_path / "CLAUDE.md").write_text("Commits en español.", encoding="utf-8")
+    texto = _leer_instrucciones(str(tmp_path))
+    assert "Commits en español" in texto
+    assert "CLAUDE.md" in texto, "no dice de dónde salió"
+
+
+def test_sin_convenciones_no_se_inventa_nada(tmp_path) -> None:
+    from api.main import _leer_instrucciones
+
+    assert _leer_instrucciones(str(tmp_path)) == ""
+    assert _leer_instrucciones("") == ""
+
+
+def test_unas_convenciones_enormes_se_recortan(tmp_path) -> None:
+    """Entra en el prompt de cada conversación: un archivo de 300 líneas lo
+    llenaría solo y desplazaría la pregunta del usuario."""
+    from api.main import MAX_INSTRUCCIONES, _leer_instrucciones
+
+    (tmp_path / "AGENTS.md").write_text("x" * 50_000, encoding="utf-8")
+    assert len(_leer_instrucciones(str(tmp_path))) < MAX_INSTRUCCIONES + 200
