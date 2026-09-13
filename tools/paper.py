@@ -346,6 +346,13 @@ class PredecirArgs(BaseModel):
     razonamiento: str = Field(
         description="Qué ves que justifica ESA probabilidad. Queda sellado al predecir."
     )
+    temporalidad: str = Field(
+        default="15m",
+        description=(
+            "En qué gráfico lo estás viendo: 15m, 1h o 4h. Tiene que ser el mismo que "
+            "miraste, porque el contexto se sella con él."
+        ),
+    )
     regimen: str = Field(
         default="",
         description="Qué régimen ves vos: RANGE, TREND o NEUTRAL. Opcional.",
@@ -356,8 +363,12 @@ class PredecirArgs(BaseModel):
 
 
 def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolResult:
+    # ⚠ LAS VELAS SON LAS DE SU TEMPORALIDAD, no siempre 15m. El contexto se
+    # sella con la predicción, así que pedir 15m mientras el modelo razona sobre
+    # un gráfico de 4h guardaría un ATR y un rango que no son los que miró — y la
+    # distancia mínima entre niveles se calcula justo con ese ATR.
     try:
-        datos = velas(SIMBOLO_UNICO, "15m", 200)
+        datos = velas(SIMBOLO_UNICO, args.temporalidad, 200)
     except MercadoNoDisponible as exc:
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
 
@@ -372,6 +383,7 @@ def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolRes
             razonamiento=args.razonamiento,
             horas_vigencia=args.horas_vigencia,
             regimen_dicho=args.regimen,
+            temporalidad=args.temporalidad,
         )
     except ValueError as exc:
         return ToolResult(
