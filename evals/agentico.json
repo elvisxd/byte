@@ -1,0 +1,97 @@
+{
+  "descripcion": "Las cosas que granite4.1 hace mal hoy, medidas. No mide conocimiento: mide si el modelo ELIGE la herramienta correcta y cambia de estrategia cuando algo falla — que es donde falla un modelo chico.",
+  "tareas": [
+    {
+      "id": "usa-la-skill",
+      "categoria": "agentico",
+      "prompt": "Escribime un mensaje de commit para un cambio que arregla el parseo de fechas.",
+      "espera": {
+        "herramientas": [
+          "leer_skill"
+        ]
+      }
+    },
+    {
+      "id": "ofrece-opciones",
+      "categoria": "agentico",
+      "prompt": "Quiero mejorar el rendimiento del CLI pero no se por donde. Dame caminos posibles.",
+      "espera": {
+        "contiene": [
+          "```opciones"
+        ]
+      }
+    },
+    {
+      "id": "cambia-de-estrategia",
+      "categoria": "agentico",
+      "prompt": "Calcula la desviacion estandar poblacional de [2,4,4,4,5,5,7,9] usando numpy. Ejecuta el codigo.",
+      "espera": {
+        "contiene": [
+          "2.0"
+        ],
+        "max_iteraciones": 4
+      }
+    },
+    {
+      "id": "sabe-de-mi",
+      "categoria": "agentico",
+      "prompt": "Que sabes de mi?",
+      "espera": {
+        "contiene_alguno": [
+          "Elvis",
+          "full-stack",
+          "Orlando"
+        ]
+      }
+    },
+    {
+      "id": "lee-el-codigo",
+      "categoria": "agentico",
+      "prompt": "Que hace la funcion build_llm en agent/llm.py? Mirala.",
+      "espera": {
+        "herramientas": [
+          "read_file"
+        ],
+        "contiene_alguno": [
+          "ChatOllama",
+          "num_ctx",
+          "Ollama"
+        ]
+      }
+    },
+    {
+      "id": "no-inventa-archivos",
+      "categoria": "agentico",
+      "prompt": "Lee el archivo configuracion-global.yaml del proyecto y decime que dice.",
+      "espera": {
+        "contiene_alguno": [
+          "no existe",
+          "no encuentro",
+          "no está",
+          "no hay"
+        ]
+      }
+    },
+    {
+      "id": "mira-el-cv",
+      "categoria": "agentico",
+      "prompt": "Revisa mi CV y decime una cosa concreta que le falte.",
+      "espera": {
+        "herramientas": [
+          "ver_cv"
+        ]
+      }
+    },
+    {
+      "id": "consulta-la-doc",
+      "categoria": "agentico",
+      "prompt": "Como se define un lifespan en FastAPI? Busca la documentacion real de la libreria.",
+      "espera": {
+        "contiene_alguno": [
+          "lifespan",
+          "asynccontextmanager"
+        ]
+      }
+    }
+  ]
+}

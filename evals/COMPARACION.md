@@ -100,3 +100,37 @@ uv run python -m evals.correr --url http://127.0.0.1:8130 --api-key "$BYTE_API_K
 Los números se mueven entre corridas: una o dos tareas de diferencia no
 significan nada. La de qwen2.5-coder (diez) y la ventaja de granite en
 matemática (dos, con las respuestas verificadas a mano) sí.
+
+## Un modelo más grande no arregló lo agéntico
+
+La hipótesis era que los fallos de comportamiento —no leer una skill, no ofrecer
+opciones, insistir con una herramienta que falla— venían del tamaño del modelo.
+Se midió con `agentico.json`, ocho tareas que son justamente lo que falla.
+
+| tarea | granite4.1:8b | qwen3:14b |
+|---|---|---|
+| usa la skill de commits | ✗ | ✗ |
+| ofrece opciones cuando hay caminos | ✗ | ✗ |
+| cambia de estrategia al fallar | ✓ | ✗ |
+| sabe quién es el usuario | ✓ | ✗ |
+| mira el CV cuando se lo piden | ✓ | ✓ |
+| consulta la documentación real | ✓ | ✓ |
+| lee el archivo que se le nombra | ✗ | ✗ |
+| no inventa un archivo que no existe | ✓ | ✓ |
+| **total** | **5/8** | **3/8** |
+| tiempo medio | 46 s | 44 s |
+
+**qwen3:14b es peor, no mejor** — y 9.3 GB contra 5.3. Dos fallos suyos son
+llamativos: dijo que `agent/llm.py` no existe (existe, y leyó mal su propia
+herramienta), y ante "¿qué sabés de mí?" ignoró el perfil que tenía en el
+prompt. Ese último lo acierta con un prompt corto en una prueba aislada, así que
+no es que no pueda: se pierde cuando el prompt crece.
+
+**Tampoco eran las herramientas.** Se sospechó que 48 herramientas (~7.300
+tokens de definiciones) saturaban la elección. Con 13 —sacando MCP, CV, GitHub y
+git— granite da los mismos aciertos y los mismos fallos. La cantidad no era la
+causa.
+
+Lo que queda: estos comportamientos —decidir cuándo abrir una skill, reconocer
+que una pregunta admite caminos— son de otra escala de modelo, no de 8B ni de
+14B. Ninguna configuración local los va a dar hoy.
