@@ -298,6 +298,9 @@ def build_file_tools(raiz: Path, max_chars: int) -> list[Tool]:
     async def buscar(args: BaseModel) -> ToolResult:
         return _buscar(raiz, args)  # type: ignore[arg-type]
 
+    async def escribir(args: BaseModel) -> ToolResult:
+        return _escribir(raiz, args)  # type: ignore[arg-type]
+
     return [
         Tool(
             name="list_files",
@@ -318,6 +321,16 @@ def build_file_tools(raiz: Path, max_chars: int) -> list[Tool]:
             run=leer,
         ),
         Tool(
+            name="write_file",
+            description=(
+                "Reemplaza un fragmento exacto de un archivo del proyecto. Leelo antes con "
+                "read_file: el texto viejo tiene que coincidir carácter por carácter y "
+                "aparecer una sola vez. Deja un .bak del original."
+            ),
+            args_model=EscribirArgs,
+            run=escribir,
+        ),
+        Tool(
             name="grep",
             description=(
                 "Busca un texto o expresión regular en los archivos del proyecto y "
@@ -327,3 +340,93 @@ def build_file_tools(raiz: Path, max_chars: int) -> list[Tool]:
             run=buscar,
         ),
     ]
+
+
+# --- write_file: escribir en el proyecto ---
+
+
+class EscribirArgs(BaseModel):
+    path: str = Field(description="Archivo a modificar, relativo a la raíz del proyecto")
+    old_str: str = Field(
+        description=(
+            "El texto exacto a reemplazar, como aparece en el archivo. Tiene que ser "
+            "único: incluí líneas de alrededor si hace falta para distinguirlo."
+        )
+    )
+    new_str: str = Field(description="El texto nuevo. Vacío para borrar el viejo.")
+
+
+def _escribir(raiz: Path, args: EscribirArgs) -> ToolResult:
+    """Reemplaza un fragmento de un archivo, dejando respaldo.
+
+    **Reemplazo y no reescritura entera.** Pedirle al modelo el archivo completo
+    lo obliga a repetir todo lo que no cambia, y ahí es donde se pierden líneas
+    sin que nadie lo note. Un fragmento exacto falla ruidosamente si no coincide,
+    que es lo que uno quiere cuando algo escribe en su código.
+
+    **El fragmento tiene que aparecer una sola vez.** Dos veces y no se sabe cuál
+    se quiso cambiar; cero veces y el modelo se lo imaginó — pasa, y sin este
+    chequeo escribiría en el lugar equivocado.
+
+    El confinamiento es el mismo de leer: `resolve()` y comparación contra la
+    raíz, así que no se puede escribir fuera del proyecto ni siguiendo un
+    symlink.
+    """
+    try:
+        archivo = resolver(raiz, args.path)
+    except FueraDeLaRaiz as exc:
+        return ToolResult(content=str(exc), summary={"error": str(exc)}, ok=False)
+    if not archivo.is_file():
+        return ToolResult(
+            content=f"'{args.path}' no existe. Para crear algo nuevo, decilo en la respuesta.",
+            summary={"error": "no existe"},
+            ok=False,
+        )
+    if _es_binario(archivo):
+        return ToolResult(
+            content=f"'{args.path}' es binario", summary={"error": "binario"}, ok=False
+        )
+    if archivo.stat().st_size > MAX_BYTES:
+        return ToolResult(
+            content=f"'{args.path}' es demasiado grande para editar",
+            summary={"error": "grande"},
+            ok=False,
+        )
+
+    texto = archivo.read_text(encoding="utf-8")
+    veces = texto.count(args.old_str)
+    if veces == 0:
+        return ToolResult(
+            content=(
+                f"no encuentro ese texto en '{args.path}'. Leelo con read_file y copiá el "
+                "fragmento exacto, con su indentación."
+            ),
+            summary={"error": "no está"},
+            ok=False,
+        )
+    if veces > 1:
+        return ToolResult(
+            content=(
+                f"ese texto aparece {veces} veces en '{args.path}': incluí líneas de "
+                "alrededor para que sea único."
+            ),
+            summary={"error": "ambiguo", "veces": veces},
+            ok=False,
+        )
+
+    # El respaldo antes de escribir: es lo que permite volver si el cambio fue
+    # peor que el problema. `.bak` y no un directorio aparte para que esté al
+    # lado y se vea.
+    archivo.with_suffix(archivo.suffix + ".bak").write_text(texto, encoding="utf-8")
+    archivo.write_text(texto.replace(args.old_str, args.new_str), encoding="utf-8")
+
+    quitadas = len(args.old_str.splitlines())
+    puestas = len(args.new_str.splitlines())
+    logger.info("archivo_editado", path=args.path, quitadas=quitadas, puestas=puestas)
+    return ToolResult(
+        content=(
+            f"Listo: '{args.path}' — {quitadas} línea(s) por {puestas}. "
+            f"El original quedó en '{archivo.name}.bak'."
+        ),
+        summary={"path": args.path, "quitadas": quitadas, "puestas": puestas},
+    )

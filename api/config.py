@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # copia que más importa que esté al día y la que más fácil queda vieja,
     # porque nadie copia un PDF a mano cada vez que cambia un número.
     drive_cv_dir: str = Field(default="", alias="BYTE_DRIVE_CV_DIR")
+    # Herramientas de GitHub por `gh`. Opt-in: usan la sesión ya autenticada de
+    # la máquina, y esa sesión puede tocar todos tus repos — que el agente pueda
+    # usarla tiene que ser una decisión, no algo que venga de fábrica.
+    github_tools: bool = Field(default=False, alias="BYTE_GITHUB_TOOLS")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

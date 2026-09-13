@@ -37,7 +37,35 @@ CHARS_PER_TOKEN = 4
 HISTORY_CONTEXT_RATIO = 0.6
 
 # Herramientas que pueden pedir confirmación humana antes de correr.
+# Las que tienen efecto fuera del chat: ejecutar código, escribir en un archivo
+# del proyecto, o cambiar algo visible en GitHub. Con el modo seguro puesto, el
+# run se detiene y espera una decisión humana antes de cualquiera de ellas.
+#
+# Leer no está acá —ni `read_file` ni `listar_repos`—: equivocarse leyendo
+# cuesta un turno, equivocarse escribiendo cuesta el archivo. Y `regenerar_cv`
+# tampoco, porque solo rehace PDF a partir de HTML que ya se aprobaron.
 HERRAMIENTAS_SENSIBLES = frozenset({"code_exec"})
+
+# Las que **modifican algo fuera del chat**: un archivo del proyecto, un repo
+# público, el CV que se manda a una empresa. Estas piden aprobación **siempre**,
+# no solo con el modo seguro puesto.
+#
+# La diferencia con las sensibles: ejecutar código en un sandbox aislado se
+# deshace solo —el intérprete muere y no queda nada—, pero un archivo escrito
+# queda escrito y una descripción de repo la ve cualquiera que te busque. El
+# modo seguro está apagado por defecto, así que dejar esto a su criterio
+# significaría que Byte edita tu código sin preguntar.
+HERRAMIENTAS_QUE_ESCRIBEN = frozenset(
+    {
+        "write_file",
+        "describir_repo",
+        "poner_topics",
+        "agregar_certificacion",
+        "agregar_experiencia",
+        "agregar_proyecto",
+        "reemplazar_en_cv",
+    }
+)
 
 # Herramientas que traen contenido de terceros al prompt. `doc_search` cuenta:
 # un PDF o un README que alguien subió es tan ajeno como una página web
@@ -55,6 +83,10 @@ def requiere_aprobacion(pedidas: list[str], ya_usadas: list[str], safe_mode: boo
     contenido de terceros más ejecución de código es la combinación que permite
     que una inyección indirecta termine corriendo algo.
     """
+    # Escribir se confirma siempre, aunque el modo seguro esté apagado: lo que
+    # queda escrito no se deshace solo.
+    if HERRAMIENTAS_QUE_ESCRIBEN & set(pedidas):
+        return "modifica_algo"
     if not HERRAMIENTAS_SENSIBLES & set(pedidas):
         return None
     if safe_mode:

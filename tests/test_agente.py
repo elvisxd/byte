@@ -148,3 +148,30 @@ async def test_sin_herramientas_el_modelo_no_recibe_binding() -> None:
     final, _ = await correr(llm, ToolRegistry(), "hola")
     assert llm.bound_tools == []
     assert final["messages"][-1].content == "Solo charla."
+
+
+def test_escribir_pide_aprobacion_aunque_el_modo_seguro_este_apagado() -> None:
+    """El modo seguro está **apagado por defecto**: dejar la escritura a su
+    criterio significaría que Byte edita tu código o cambia la descripción de un
+    repo público sin preguntar.
+
+    Ejecutar código en el sandbox se deshace solo —el intérprete muere y no
+    queda nada—; un archivo escrito queda escrito.
+    """
+    from agent.graph import requiere_aprobacion
+
+    for herramienta in ("write_file", "describir_repo", "poner_topics", "reemplazar_en_cv"):
+        assert requiere_aprobacion([herramienta], [], safe_mode=False), (
+            f"{herramienta} modifica algo y no pidió aprobación"
+        )
+
+
+def test_leer_no_pide_aprobacion() -> None:
+    """Equivocarse leyendo cuesta un turno; pedir permiso para cada lectura
+    haría el agente inusable."""
+    from agent.graph import requiere_aprobacion
+
+    for herramienta in ("read_file", "list_files", "grep", "listar_repos", "ver_cv"):
+        assert requiere_aprobacion([herramienta], [], safe_mode=False) is None, (
+            f"{herramienta} solo lee y pidió aprobación"
+        )

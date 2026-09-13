@@ -119,4 +119,16 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
                 "cv_dir_no_existe", carpeta=str(carpeta), detail="el agente arranca sin el CV"
             )
 
+    # GitHub por `gh`, si está instalado y con sesión. No hace falta configurar
+    # nada: la sesión ya vive en el llavero del sistema.
+    if settings.github_tools:
+        from tools.github import GhNoDisponible, build_github_tools
+
+        try:
+            for herramienta in build_github_tools():
+                registry.add(herramienta)
+            logger.info("github_activo", detail="el agente puede leer y describir tus repos")
+        except GhNoDisponible as exc:
+            logger.warning("github_sin_sesion", detail=str(exc))
+
     return registry

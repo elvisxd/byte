@@ -178,7 +178,7 @@ def test_el_contenido_va_envuelto_como_no_confiable(proyecto: Path) -> None:
 
 def test_las_tres_herramientas_se_arman_con_su_esquema(tmp_path: Path) -> None:
     herramientas = {h.name: h for h in build_file_tools(tmp_path, 4000)}
-    assert set(herramientas) == {"list_files", "read_file", "grep"}
+    assert set(herramientas) == {"list_files", "read_file", "grep", "write_file"}
     for herramienta in herramientas.values():
         esquema = herramienta.schema()
         assert esquema["description"], f"{herramienta.name} sin descripción para el modelo"
@@ -191,3 +191,57 @@ async def test_la_herramienta_corre_de_verdad(proyecto: Path) -> None:
     resultado = await leer.run(LeerArgs(path="README.md"))
     assert resultado.ok is True
     assert "Un proyecto de prueba" in resultado.content
+
+
+# --- write_file: escribir en el proyecto ---
+
+
+def test_se_reemplaza_un_fragmento_y_queda_respaldo(proyecto: Path) -> None:
+    """El respaldo es lo que permite volver si el cambio fue peor que el
+    problema."""
+    from tools.archivos import EscribirArgs, _escribir
+
+    resultado = _escribir(
+        proyecto, EscribirArgs(path="src/app.py", old_str="a + b", new_str="a + b + 0")
+    )
+    assert resultado.ok is True
+    assert "a + b + 0" in (proyecto / "src" / "app.py").read_text(encoding="utf-8")
+    assert (proyecto / "src" / "app.py.bak").is_file()
+
+
+def test_un_fragmento_que_no_existe_no_escribe_nada(proyecto: Path) -> None:
+    """El modelo inventa fragmentos: sin este chequeo escribiría en el lugar
+    equivocado, o duplicaría el archivo."""
+    from tools.archivos import EscribirArgs, _escribir
+
+    antes = (proyecto / "src" / "app.py").read_text(encoding="utf-8")
+    resultado = _escribir(
+        proyecto, EscribirArgs(path="src/app.py", old_str="def inexistente()", new_str="x")
+    )
+    assert resultado.ok is False
+    assert (proyecto / "src" / "app.py").read_text(encoding="utf-8") == antes
+
+
+def test_un_fragmento_ambiguo_no_escribe_nada(proyecto: Path) -> None:
+    """Si aparece dos veces no se sabe cuál se quiso cambiar, y reemplazar los
+    dos rompería el que no se quería tocar."""
+    from tools.archivos import EscribirArgs, _escribir
+
+    resultado = _escribir(proyecto, EscribirArgs(path="src/app.py", old_str="a, b", new_str="x"))
+    assert resultado.ok is False
+    assert "veces" in resultado.content
+
+
+def test_no_se_escribe_fuera_de_la_raiz(proyecto: Path) -> None:
+    """El mismo confinamiento que para leer: escribir afuera sería peor."""
+    from tools.archivos import EscribirArgs, _escribir
+
+    for ruta in ("../fuera.txt", "/etc/hosts", "~/.zshrc"):
+        assert _escribir(proyecto, EscribirArgs(path=ruta, old_str="a", new_str="b")).ok is False
+
+
+def test_un_binario_no_se_edita(proyecto: Path) -> None:
+    from tools.archivos import EscribirArgs, _escribir
+
+    (proyecto / "bin.dat").write_bytes(b"PK\x03\x04\x00basura")
+    assert _escribir(proyecto, EscribirArgs(path="bin.dat", old_str="a", new_str="b")).ok is False
