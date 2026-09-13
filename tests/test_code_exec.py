@@ -165,3 +165,28 @@ def test_la_herramienta_se_registra_con_el_sandbox_configurado(
     assert cliente.get("/api/v1/tools", headers=AUTH).json() == {
         "tools": [{"name": "code_exec", "source": "builtin"}]
     }
+
+
+def test_un_modulo_que_falta_aclara_que_no_se_puede_instalar() -> None:
+    """Pyodide dice "el módulo está incluido en la distribución pero no
+    instalado", que suena a que se puede instalar. En este sandbox no se puede
+    —no hay micropip ni red, a propósito— y sin la aclaración el modelo gasta
+    todas sus vueltas intentando un `pip install` que nunca va a funcionar.
+
+    Medido contra granite4.1: cinco intentos hasta agotar el límite de
+    iteraciones, contra dos y una respuesta correcta con el aviso puesto.
+    """
+    from tools.code_exec import _formatear
+
+    salida = _formatear({"stderr": "ModuleNotFoundError: No module named 'numpy'", "exit_code": 1})
+    assert "no se puede instalar" in salida
+    assert "stdlib" in salida or "estándar" in salida
+
+
+def test_un_error_normal_no_lleva_el_aviso() -> None:
+    """El aviso sirve para un módulo que falta; en un ZeroDivisionError sería
+    ruido que empuja al modelo hacia una pista equivocada."""
+    from tools.code_exec import _formatear
+
+    salida = _formatear({"stderr": "ZeroDivisionError: division by zero", "exit_code": 1})
+    assert "no se puede instalar" not in salida

@@ -71,6 +71,25 @@ async def sandbox_status(sandbox_url: str, timeout_s: float = 2.0) -> str:
         return "caido"
 
 
+def _aviso_de_modulo(stderr: str) -> str:
+    """Aclara los `ModuleNotFoundError`, que de otro modo hacen insistir al modelo.
+
+    Pyodide dice "el módulo está incluido en la distribución pero no instalado",
+    que suena a que se puede instalar. En este sandbox no se puede: no hay
+    `micropip` ni red, a propósito. Sin esta aclaración el modelo gasta todas sus
+    vueltas intentando un `pip install` que nunca va a funcionar — medido: cinco
+    intentos seguidos con numpy hasta agotar el límite de iteraciones.
+    """
+    if "ModuleNotFoundError" not in stderr:
+        return ""
+    return (
+        "Este sandbox trae solo la biblioteca estándar de Python: no hay pip ni "
+        "micropip ni red, así que ese módulo no se puede instalar. Resolvelo con "
+        "la stdlib (`statistics`, `math`, `json`, `itertools`…) o explicá por qué "
+        "no se puede."
+    )
+
+
 def _formatear(resultado: dict[str, Any]) -> str:
     """Arma la salida que ve el modelo, con las partes separadas."""
     partes = []
@@ -78,6 +97,8 @@ def _formatear(resultado: dict[str, Any]) -> str:
         partes.append(f"stdout:\n{resultado['stdout'].rstrip()}")
     if resultado.get("stderr"):
         partes.append(f"stderr:\n{resultado['stderr'].rstrip()}")
+        partes.append(_aviso_de_modulo(resultado["stderr"]))
+    partes = [p for p in partes if p]
     if not partes:
         partes.append("(sin salida: acordate de usar print())")
     partes.append(f"exit_code: {resultado.get('exit_code')}")
