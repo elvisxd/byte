@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # Abrir páginas y llamar APIs. Opt-in: trae contenido de terceros al prompt
     # y alcanza cualquier host público, así que es una decisión.
     web_fetch: bool = Field(default=False, alias="BYTE_WEB_FETCH")
+    # Carpeta con instrucciones por tarea (`<carpeta>/<skill>/SKILL.md`), en el
+    # formato que usan otras herramientas de agente.
+    skills_dir: str = Field(default="", alias="BYTE_SKILLS")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")
@@ -104,6 +107,14 @@ class Settings(BaseSettings):
     # lee el modelo (tool poisoning, docs/seguridad-byte.md).
     mcp_servers: str = Field(default="", alias="BYTE_MCP_SERVERS")
     mcp_timeout_s: float = Field(default=30.0, alias="BYTE_MCP_TIMEOUT_S")
+    # Servidores MCP que Byte levanta al arrancar y apaga al salir, como
+    # `nombre=puerto=comando` separados por `;`. Evita tener que dejar una
+    # terminal abierta con el servidor corriendo.
+    #
+    # El comando lo escribe el usuario en su `.env`, fuera de la conversación:
+    # el modelo no lo elige ni lo modifica, solo usa las herramientas que el
+    # servidor ya levantado expone.
+    mcp_locales: str = Field(default="", alias="BYTE_MCP_LOCALES")
     # Tokens Bearer por servidor, como `nombre=token`. En su propia variable y
     # no pegados a la URL: son secretos, y mezclarlos con la lista los dejaría a
     # la vista en cualquier log o captura de la configuración. n8n los pide.

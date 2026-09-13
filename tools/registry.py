@@ -155,4 +155,13 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
             registry.add(herramienta)
         logger.info("web_fetch_activo", detail="el agente puede abrir páginas y llamar APIs")
 
+    # Las skills: el índice va al prompt, el contenido se lee con la herramienta.
+    if settings.skills_dir:
+        from agent.skills import cargar
+        from tools.skills import build_skill_tool
+
+        herramienta = build_skill_tool(cargar(settings.skills_dir))
+        if herramienta is not None:
+            registry.add(herramienta)
+
     return registry

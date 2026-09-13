@@ -123,6 +123,20 @@ def _leer_instrucciones(raiz: str) -> str:
     return ""
 
 
+def _indice_de_skills(carpeta: str) -> str:
+    """Qué instrucciones hay disponibles, para que el agente sepa que existen.
+
+    Solo el índice: el contenido lo abre con `leer_skill` cuando la tarea lo
+    pide. Meterlas todas llenaría el prompt con instrucciones sobre cosas que no
+    se están haciendo.
+    """
+    if not carpeta:
+        return ""
+    from agent.skills import cargar, indice
+
+    return indice(cargar(carpeta))
+
+
 def _avisar_si_hay_varios_workers(env: str) -> None:
     """Byte asume un solo proceso, y conviene que se note al arrancar.
 
@@ -204,9 +218,23 @@ async def _sumar_herramientas_mcp(
     ese nombre (docs/seguridad-byte.md, tool poisoning).
     """
     from mcp_client.client import conectar_servidores
+    from mcp_client.local import apagar, levantar, parsear
+
+    # Los servidores que Byte levanta él mismo. Se arrancan antes de conectar,
+    # y sus URLs se suman a las declaradas: para el resto del código son
+    # servidores HTTP como cualquier otro.
+    urls_locales = []
+    for local in parsear(settings.mcp_locales):
+        proceso = await levantar(local)
+        if proceso is None:
+            continue
+        stack.push_async_callback(apagar, proceso)
+        urls_locales.append(f"{local.nombre}={local.url}")
+
+    declarados = ",".join(x for x in (settings.mcp_servers, *urls_locales) if x)
 
     herramientas, servidores = await conectar_servidores(
-        settings.mcp_servers,
+        declarados,
         settings.max_tool_result_chars,
         settings.mcp_timeout_s,
         settings.mcp_tokens,
@@ -312,7 +340,10 @@ def create_app(
             # Las herramientas MCP se suman al registro ya armado: conectar es
             # asíncrono (handshake por servidor) y build_registry no lo es. Las
             # conexiones viven lo que vive la app, y el stack las cierra.
-            if registry is None and resolved_settings.mcp_servers:
+            # Cualquiera de las dos alcanza: se puede declarar solo servidores
+            # remotos, solo locales que Byte levanta, o los dos.
+            hay_mcp = resolved_settings.mcp_servers or resolved_settings.mcp_locales
+            if registry is None and hay_mcp:
                 await _sumar_herramientas_mcp(resolved_settings, tool_registry, stack)
             modelo = llm or build_llm(resolved_settings)
             graph = build_graph(
@@ -343,6 +374,7 @@ def create_app(
                     for x in (
                         _leer_perfil(resolved_settings.perfil_file),
                         _leer_instrucciones(resolved_settings.project_root),
+                        _indice_de_skills(resolved_settings.skills_dir),
                     )
                     if x
                 ),
