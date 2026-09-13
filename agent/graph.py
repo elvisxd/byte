@@ -74,6 +74,35 @@ HERRAMIENTAS_QUE_ESCRIBEN = frozenset(
 HERRAMIENTAS_CON_CONTENIDO_EXTERNO = frozenset({"web_search", "doc_search"})
 
 
+def _que_va_a_hacer(llamada: dict[str, Any]) -> str:
+    """Lo que se le muestra a la persona antes de que apruebe.
+
+    Con `code_exec` es el código, que es lo obvio. Con las que escriben hay que
+    armarlo: aprobar sin ver qué archivo se toca ni con qué se reemplaza es
+    firmar en blanco, y era lo que pasaba —el campo venía vacío porque se leía
+    un argumento `code` que estas herramientas no tienen.
+    """
+    args = llamada.get("args") or {}
+    nombre = llamada.get("name", "")
+    if "code" in args:
+        return str(args["code"])
+    if nombre == "write_file":
+        viejo, nuevo = str(args.get("old_str", "")), str(args.get("new_str", ""))
+        return f"{args.get('path', '?')}\n\n- {viejo[:300]}\n+ {nuevo[:300]}"
+    if nombre == "describir_repo":
+        return f"{args.get('repo', '?')}: «{args.get('descripcion', '')}»"
+    if nombre == "poner_topics":
+        return f"{args.get('repo', '?')}: {', '.join(args.get('topics') or [])}"
+    if nombre == "reemplazar_en_cv":
+        return (
+            f"CV\n\n- {str(args.get('viejo', ''))[:300]}\n+ {str(args.get('nuevo_en', ''))[:300]}"
+        )
+    # Las de agregar al CV: se muestran sus argumentos, que son cortos y legibles.
+    if args:
+        return "\n".join(f"{k}: {v}" for k, v in list(args.items())[:6])
+    return ""
+
+
 def requiere_aprobacion(pedidas: list[str], ya_usadas: list[str], safe_mode: bool) -> str | None:
     """Devuelve el motivo por el que hace falta aprobación humana, o None.
 
@@ -364,8 +393,9 @@ def build_graph(
             # mostrarlas todas: si el modelo pide dos ejecuciones y solo se
             # muestra la primera, la persona consiente sobre un código y corre
             # otro, que es lo peor que le puede pasar a una aprobación humana.
-            sensibles = [c for c in llamadas if c["name"] in HERRAMIENTAS_SENSIBLES] or llamadas[:1]
-            codigos = [str(c.get("args", {}).get("code", "")) for c in sensibles]
+            a_confirmar = HERRAMIENTAS_SENSIBLES | HERRAMIENTAS_QUE_ESCRIBEN
+            sensibles = [c for c in llamadas if c["name"] in a_confirmar] or llamadas[:1]
+            codigos = [_que_va_a_hacer(c) for c in sensibles]
             # El run se detiene acá. El runner emite awaiting_approval con el
             # resume_token y cierra con RUN_FINISHED status "paused".
             aprobado = interrupt(

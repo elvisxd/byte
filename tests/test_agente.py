@@ -175,3 +175,29 @@ def test_leer_no_pide_aprobacion() -> None:
         assert requiere_aprobacion([herramienta], [], safe_mode=False) is None, (
             f"{herramienta} solo lee y pidió aprobación"
         )
+
+
+def test_la_aprobacion_muestra_que_va_a_cambiar() -> None:
+    """Aprobar sin ver qué archivo se toca ni con qué se reemplaza es firmar en
+    blanco. El campo venía vacío porque se leía un argumento `code` que estas
+    herramientas no tienen."""
+    from agent.graph import _que_va_a_hacer
+
+    diff = _que_va_a_hacer(
+        {"name": "write_file", "args": {"path": "app.py", "old_str": "viejo", "new_str": "nuevo"}}
+    )
+    assert "app.py" in diff
+    assert "- viejo" in diff and "+ nuevo" in diff
+
+    repo = _que_va_a_hacer(
+        {"name": "describir_repo", "args": {"repo": "byte", "descripcion": "Un agente"}}
+    )
+    assert "byte" in repo and "Un agente" in repo
+
+
+def test_el_codigo_se_sigue_mostrando_tal_cual() -> None:
+    """`code_exec` ya funcionaba: lo que se muestra es el código, y eso no
+    cambia."""
+    from agent.graph import _que_va_a_hacer
+
+    assert _que_va_a_hacer({"name": "code_exec", "args": {"code": "print(1)"}}) == "print(1)"
