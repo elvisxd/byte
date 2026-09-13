@@ -327,6 +327,73 @@ def _parcial(registro: Registro, args: ParcialArgs) -> ToolResult:
     )
 
 
+class PredecirArgs(BaseModel):
+    nivel: float = Field(
+        description=(
+            "El precio concreto de la apuesta. Para 'arriba' tiene que estar POR ENCIMA "
+            "del precio actual, y para 'abajo' por debajo: al revés ya ocurrió."
+        )
+    )
+    hacia: str = Field(description="arriba o abajo")
+    probabilidad: float = Field(
+        description=(
+            "De 0 a 1: qué probabilidad le das a que el precio TOQUE ese nivel antes de "
+            "que venza. Se puntúa con Brier —(probabilidad − ocurrió)²—, así que decir "
+            "0.9 y fallar cuesta mucho más que decir 0.6 y fallar. Si no sabés, 0.5 es "
+            "la respuesta honesta y no se penaliza más que cualquier otra."
+        )
+    )
+    razonamiento: str = Field(
+        description="Qué ves que justifica ESA probabilidad. Queda sellado al predecir."
+    )
+    regimen: str = Field(
+        default="",
+        description="Qué régimen ves vos: RANGE, TREND o NEUTRAL. Opcional.",
+    )
+    horas_vigencia: float = Field(
+        default=24.0, description="Cuántas horas tiene el precio para tocar el nivel."
+    )
+
+
+def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolResult:
+    try:
+        datos = velas(SIMBOLO_UNICO, "15m", 200)
+    except MercadoNoDisponible as exc:
+        return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
+
+    ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    try:
+        pid = registro.predecir(
+            simbolo=SIMBOLO_UNICO,
+            contexto=ctx,
+            nivel=args.nivel,
+            hacia=args.hacia,
+            probabilidad=args.probabilidad,
+            razonamiento=args.razonamiento,
+            horas_vigencia=args.horas_vigencia,
+            regimen_dicho=args.regimen,
+        )
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se registró la predicción: {exc}",
+            summary={"error": "no se registró"},
+            ok=False,
+        )
+
+    logger.info("paper_prediccion", id=pid, nivel=args.nivel, p=args.probabilidad)
+    return ToolResult(
+        content=wrap_untrusted(
+            "PREDICCIÓN",
+            f"Registrada #{pid}: {args.probabilidad:.0%} de que {SIMBOLO_UNICO} toque "
+            f"{args.nivel} hacia {args.hacia} en {args.horas_vigencia:g}h "
+            f"(precio ahora {ctx.precio}).\n"
+            "La resuelve el código contra las velas, no vos. Tu razonamiento queda sellado.",
+            max_chars,
+        ),
+        summary={"id": pid, "nivel": args.nivel, "probabilidad": args.probabilidad},
+    )
+
+
 class OrdenArgs(BaseModel):
     eje: str = Field(description="Qué hipótesis la genera")
     direccion: str = Field(description="long o short")
@@ -472,6 +539,42 @@ def _estado(registro: Registro) -> ToolResult:
                 f"· «{o['razon'][:70]}»"
             )
 
+    # Las predicciones que siguen esperando. Sin esto el agente no sabría que ya
+    # apostó a un nivel y repetiría la misma apuesta cada vuelta, inflando la
+    # muestra con copias en vez de con lecturas nuevas.
+    vivas = registro.predicciones_vivas()
+    if vivas:
+        partes += ["", "Predicciones esperando resolución:"]
+        for p in vivas:
+            partes.append(
+                f"  #{p['id']} {p['probabilidad']:.0%} de tocar {p['nivel']} "
+                f"hacia {p['hacia']} · vence {p['vence_en'][:16]}"
+            )
+
+    # ⚠ LOS TRAMOS SE CALLAN POR DEBAJO DE 50 RESUELTAS, y `brier_por_tramo` lo
+    # garantiza: enseñarle su tasa con 20 es invitarlo a ajustar contra ruido.
+    # Ver paper/CRITERIO_PREDICCIONES.md.
+    brier = registro.brier_por_tramo()
+    if brier.get("tramos"):
+        partes += [
+            "",
+            f"Tus predicciones ({brier['resueltas']} resueltas, "
+            f"Brier medio {brier['brier_medio']}, tasa base {brier['tasa_base']}):",
+        ]
+        for t in brier["tramos"]:
+            partes.append(
+                f"  cuando dijiste ~{t['dijo']:.0%} (n={t['n']}), ocurrió el {t['ocurrio']:.0%}"
+            )
+        partes.append(
+            "Esto no es para elegir qué predecir: es para calibrar el número que decís."
+        )
+    elif brier.get("resueltas"):
+        partes += [
+            "",
+            f"Predicciones resueltas: {brier['resueltas']}. Faltan {brier['faltan']} "
+            "para que la calibración signifique algo.",
+        ]
+
     rotos = registro.verificar_sellos()
     if rotos:
         partes += [
@@ -559,6 +662,9 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
     async def cancelar_orden(args: BaseModel) -> ToolResult:
         return _cancelar_orden(registro, args)  # type: ignore[arg-type]
 
+    async def predecir(args: BaseModel) -> ToolResult:
+        return _predecir(registro, args, max_chars)  # type: ignore[arg-type]
+
     return [
         Tool(
             name="mirar_mercado",
@@ -634,6 +740,17 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
             description="Retira una orden límite que ya no tiene sentido.",
             args_model=CancelarOrdenArgs,
             run=cancelar_orden,
+        ),
+        Tool(
+            name="predecir",
+            description=(
+                "Apostá una PROBABILIDAD a que el precio toque un nivel antes de que "
+                "venza. No cuesta nada —no hay entrada ni stop— y se puede hacer aunque "
+                "no operes: es la forma de dejar constancia de qué esperás del mercado. "
+                "Se puntúa con Brier, así que la confianza exagerada se castiga."
+            ),
+            args_model=PredecirArgs,
+            run=predecir,
         ),
         Tool(
             name="publicar_historial",

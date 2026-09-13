@@ -77,6 +77,12 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    ocurrir. La razón se sella al dejarla, no al dispararse.
 5. Si no hay nada que hacer, decilo y no operes. No entrar es una decisión
    válida: forzar una entrada para "aprovechar la sesión" contamina el eje.
+6. Operes o no, dejá UNA predicción con `predecir`: qué probabilidad le das a
+   que el precio toque cierto nivel antes de que venza. Es lo único que se hace
+   en TODAS las vueltas, porque no cuesta nada y es lo que permite medir si tu
+   lectura del gráfico vale. Se puntúa con Brier —(probabilidad − ocurrió)²—:
+   decir 0.9 y fallar cuesta mucho más que decir 0.6 y fallar, así que decí el
+   número que creés, no el que suena seguro. 0.5 es una respuesta honesta.
 
 Los ejes disponibles, y qué busca cada uno:
 
@@ -143,6 +149,15 @@ async def una_sesion(
         disparadas = registro.evaluar_ordenes(historico["velas"])
         for d in disparadas:
             print(f"[sesión] orden #{d['id']}: {d['resultado']}", flush=True)
+        # Las predicciones se resuelven acá por lo mismo que las órdenes: es
+        # aritmética sobre las velas —¿tocó el nivel?— y no una decisión.
+        # Pedírselo al modelo sería dejarle puntuarse a sí mismo.
+        for p in registro.resolver_predicciones(historico["velas"]):
+            print(
+                f"[sesión] predicción #{p['id']}: dijo {p['probabilidad']:.0%}, "
+                f"{'ocurrió' if p['ocurrio'] else 'no ocurrió'} (Brier {p['brier']})",
+                flush=True,
+            )
     except MercadoNoDisponible as exc:
         # Sin datos no se puede saber si las órdenes entraron. Se avisa y se
         # sigue: el modelo verá las órdenes todavía vivas y decidirá.

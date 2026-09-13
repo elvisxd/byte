@@ -191,6 +191,7 @@ def test_las_herramientas_se_arman(tmp_path: Path) -> None:
         "mover_stop",
         "dejar_orden",
         "cancelar_orden",
+        "predecir",
         "publicar_historial",
     }
 
