@@ -178,11 +178,17 @@ def test_el_sello_no_puede_estar_vacio(registro: Registro, contexto: Contexto) -
 # --- Las herramientas del agente ---
 
 
-def test_las_cuatro_herramientas_se_arman(tmp_path: Path) -> None:
+def test_las_herramientas_se_arman(tmp_path: Path) -> None:
     from tools.paper import build_paper_tools
 
     nombres = {h.name for h in build_paper_tools(str(tmp_path / "ops.db"), 4000)}
-    assert nombres == {"mirar_mercado", "abrir_operacion", "cerrar_operacion", "estado_paper"}
+    assert nombres == {
+        "mirar_mercado",
+        "abrir_operacion",
+        "cerrar_operacion",
+        "estado_paper",
+        "publicar_historial",
+    }
 
 
 def test_abrir_exige_la_razon_en_el_esquema(tmp_path: Path) -> None:

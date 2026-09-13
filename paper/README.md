@@ -41,7 +41,7 @@ medias solo existen ahí.
 
 ## Las herramientas del agente
 
-Cuatro, y el orden importa:
+Cinco, y el orden importa:
 
 | | qué hace |
 |---|---|
@@ -49,6 +49,7 @@ Cuatro, y el orden importa:
 | `abrir_operacion` | registra una entrada — **la razón es obligatoria** |
 | `cerrar_operacion` | cierra al precio actual y calcula el R |
 | `estado_paper` | qué quedó abierto y cómo va cada eje |
+| `publicar_historial` | empuja el historial al panel web, al terminar la sesión |
 
 Que la razón sea un argumento obligatorio del esquema es lo que hace imposible
 registrar una entrada sin justificarla. Si fuera opcional, el modelo la omitiría
@@ -60,6 +61,22 @@ que recuerda qué había a medias. Los ejes se listan **en orden alfabético**, 
 por resultado: ordenarlos por R invita a elegir el mejor mirando la tabla, que
 es el sobreajuste que el criterio de aborto prohíbe.
 
+## El panel web
+
+El registro vive en SQLite dentro de la máquina donde corre el agente, y esa
+máquina se apaga. `publicar_historial` empuja una **foto** del registro al panel
+de trading, que la enseña en `/papel`: los agregados por eje, cada operación con
+su razón sellada y el contexto del gráfico al entrar **y al salir**.
+
+Por qué una foto y no una API: el panel tendría que llegar hasta el Codespace,
+que la mitad del tiempo no existe. Con la foto, el panel enseña lo último que se
+publicó y dice cuándo fue.
+
+**No poder publicar no invalida la sesión.** Las operaciones ya están
+registradas y selladas cuando esto corre; si el panel no responde, la
+herramienta lo dice y se sigue. Lo contrario haría que una sesión entera de
+trabajo pareciera perdida por no haber podido *avisar* de ella.
+
 ## Configuración
 
     BYTE_PAPER_DB=/ruta/a/paper/operaciones.db
@@ -67,6 +84,14 @@ es el sobreajuste que el criterio de aborto prohíbe.
 
 Las dos hacen falta: sin la segunda las herramientas fallarían en cada llamada,
 así que no se registran.
+
+Para el panel, las dos opcionales:
+
+    PANEL_URL=https://<el panel de trading>
+    PANEL_TOKEN=<el mismo valor que PAPEL_TOKEN en el panel>
+
+Sin `PANEL_URL` el historial se queda en el equipo y `publicar_historial` lo
+dice sin tratarlo como un error.
 
 ## Probado de punta a punta
 

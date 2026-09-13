@@ -12,6 +12,8 @@ sale del código. Ya está medido que granite da 1.43 donde el valor real es
 entero. El modelo elige **cuándo y por qué**; el resto es aritmética.
 """
 
+import os
+import urllib.error
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.logging import get_logger
 from paper.mercado import MercadoNoDisponible, indicadores, velas
+from paper.publicar import publicar
 from paper.registro import Contexto, Registro
 from tools.base import Tool, ToolResult, wrap_untrusted
 
@@ -166,8 +169,7 @@ def _cerrar(registro: Registro, args: CerrarArgs) -> ToolResult:
     if operacion is None:
         return ToolResult(
             content=(
-                f"la operación {args.operacion_id} no está abierta. "
-                f"Abiertas: {sorted(abiertas)}"
+                f"la operación {args.operacion_id} no está abierta. Abiertas: {sorted(abiertas)}"
             ),
             summary={"error": "no existe"},
             ok=False,
@@ -246,6 +248,48 @@ def _estado(registro: Registro) -> ToolResult:
     )
 
 
+def _publicar(registro: Registro) -> ToolResult:
+    """Empuja el historial al panel web para que se pueda mirar desde fuera.
+
+    El registro vive en SQLite dentro de la máquina donde corre el agente, y esa
+    máquina se apaga. Sin esto, el historial solo existe mientras la sesión dura
+    y nadie puede revisarlo después.
+    """
+    if not os.environ.get("PANEL_URL"):
+        return ToolResult(
+            content=(
+                "No hay panel configurado (falta PANEL_URL), así que el historial "
+                "se queda solo en este equipo. No es un error: el registro sigue "
+                "completo en la base."
+            ),
+            summary={"publicado": False},
+        )
+    try:
+        foto = publicar(registro)
+    except (OSError, urllib.error.URLError) as e:
+        # Que no se pueda publicar NO invalida la sesión: las operaciones ya
+        # están registradas y selladas. Se avisa y se sigue.
+        return ToolResult(
+            content=(
+                f"No se pudo publicar en el panel: {e}. Las operaciones están "
+                "guardadas igual; se publicarán en el próximo intento."
+            ),
+            summary={"publicado": False},
+        )
+    return ToolResult(
+        content=(
+            f"Historial publicado: {len(foto['cerradas'])} operaciones cerradas y "
+            f"{len(foto['abiertas'])} abiertas."
+            + (f" ⚠ Sellos rotos en {foto['sellosRotos']}." if foto["sellosRotos"] else "")
+        ),
+        summary={
+            "publicado": True,
+            "cerradas": len(foto["cerradas"]),
+            "abiertas": len(foto["abiertas"]),
+        },
+    )
+
+
 def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
     """Las herramientas de paper trading, sobre un registro concreto."""
     registro = Registro(ruta_db)
@@ -261,6 +305,9 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
 
     async def estado(_args: BaseModel) -> ToolResult:
         return _estado(registro)
+
+    async def publicar_historial(_args: BaseModel) -> ToolResult:
+        return _publicar(registro)
 
     return [
         Tool(
@@ -301,5 +348,15 @@ def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
             ),
             args_model=EstadoArgs,
             run=estado,
+        ),
+        Tool(
+            name="publicar_historial",
+            description=(
+                "Publica el historial en el panel web para poder revisarlo desde "
+                "fuera. Usala al TERMINAR una sesión: esta máquina se apaga y el "
+                "registro deja de ser accesible hasta la próxima."
+            ),
+            args_model=EstadoArgs,
+            run=publicar_historial,
         ),
     ]
