@@ -156,7 +156,12 @@ def _abrir(registro: Registro, args: AbrirArgs) -> ToolResult:
 
 class CerrarArgs(BaseModel):
     operacion_id: int = Field(description="El número que devolvió abrir_operacion")
-    motivo: str = Field(description="stop, objetivo, manual o parcial")
+    motivo: str = Field(
+        description=(
+            "stop, objetivo o manual. Los cierres parciales todavía no se pueden "
+            "registrar: cerrá la posición entera o dejala abierta."
+        )
+    )
     analisis: str = Field(
         default="",
         description="Qué pasó, ahora que se conoce el resultado. Va en un campo aparte.",
@@ -180,13 +185,28 @@ def _cerrar(registro: Registro, args: CerrarArgs) -> ToolResult:
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
 
     precio = datos["velas"][-1]["close"]
-    r = registro.cerrar(
-        args.operacion_id,
-        precio_salida=precio,
-        motivo=args.motivo,
-        contexto_salida=_contexto_de(datos, indicadores(datos["velas"], SIEMPRE)),
-        analisis=args.analisis,
-    )
+    # ⚠ EL ValueError SE CAPTURA, y no es simetría con `_abrir` por gusto. Entre
+    # el `abiertas()` de arriba y esta línea hay una llamada a Node que puede
+    # tardar hasta 45 s, y el agente admite dos runs a la vez sobre el MISMO
+    # Registro: en esa ventana la operación puede haberse cerrado por el otro
+    # lado. Sin capturar, el modelo recibía un traceback en vez del texto que le
+    # dice qué pasó y qué sigue abierto.
+    #
+    # También cubre el motivo inválido, que `cerrar()` ahora rechaza.
+    try:
+        r = registro.cerrar(
+            args.operacion_id,
+            precio_salida=precio,
+            motivo=args.motivo,
+            contexto_salida=_contexto_de(datos, indicadores(datos["velas"], SIEMPRE)),
+            analisis=args.analisis,
+        )
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se pudo cerrar la operación {args.operacion_id}: {exc}",
+            summary={"error": "no se cerró"},
+            ok=False,
+        )
     logger.info("paper_cerrada", id=args.operacion_id, r=round(r, 3))
     return ToolResult(
         content=(

@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS operaciones (
     -- Lo de abajo se escribe después, al cerrar.
     cerrada_en      TEXT,
     precio_salida   REAL,
-    motivo_cierre   TEXT,               -- stop | objetivo | manual | parcial
+    motivo_cierre   TEXT,               -- stop | objetivo | manual
     r_multiplo      REAL,               -- (salida-entrada)/(entrada-stop), con signo
     contexto_salida TEXT,               -- el gráfico al cerrar
     analisis        TEXT                -- qué dijo el agente DESPUÉS, aparte
@@ -75,15 +75,44 @@ class Contexto:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def _sellar(contexto: Contexto, razon: str, eje: str) -> str:
-    """El hash que hace imposible reescribir la razón después.
+def _sellar(
+    contexto: Contexto,
+    razon: str,
+    eje: str,
+    *,
+    simbolo: str,
+    direccion: str,
+    stop_loss: float,
+    take_profit: float | None,
+) -> str:
+    """El hash que hace imposible reescribir la decisión después.
 
-    Incluye el precio y el timestamp, así que un contexto retocado da otro hash.
-    No protege de alguien que borre la fila entera —nada lo hace— pero sí de la
-    tentación real: ajustar la razón cuando ya se sabe cómo salió.
+    ⚠ SELLA LOS NÚMEROS, NO SOLO LA PROSA. La primera versión hasheaba solo
+    `{eje, razon, contexto}` y dejaba fuera `direccion` y `stop_loss` — que son
+    justamente los dos campos de los que sale el R múltiplo. Medido: un
+    `UPDATE ... SET direccion='long'` sobre un short convertía un −4R en un +4R
+    y `verificar_sellos()` seguía devolviendo `[]`, o sea "historial limpio".
+    Mover el stop de 99 a 99.9 llevaba un 4R a 40R con el mismo silencio.
+
+    Era el fraude que este módulo existe para impedir, y además el más rentable:
+    editar la razón cambia el relato, editar el stop cambia la cifra que decide
+    si el eje sirve. Un sello que cubre la explicación pero no la decisión no
+    protege nada.
+
+    `simbolo` y `take_profit` entran por el mismo motivo: cambiar el par
+    recontextualiza la operación entera, y el objetivo es parte de lo que se
+    decidió al entrar.
     """
     material = json.dumps(
-        {"eje": eje, "razon": razon, "contexto": asdict(contexto)},
+        {
+            "eje": eje,
+            "razon": razon,
+            "contexto": asdict(contexto),
+            "simbolo": simbolo,
+            "direccion": direccion,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+        },
         sort_keys=True,
         ensure_ascii=False,
     )
@@ -124,6 +153,28 @@ class Registro:
             raise ValueError("en un long el stop va por debajo del precio de entrada")
         if direccion == "short" and stop_loss <= contexto.precio:
             raise ValueError("en un short el stop va por encima del precio de entrada")
+        # ⚠ UN RIESGO MINÚSCULO NO ES UNA OPERACIÓN AJUSTADA, ES UN ERROR DE
+        # TIPEO. El R múltiplo divide por la distancia al stop, así que un stop
+        # pegado al precio produce cifras absurdas: medido, `stop_loss=99.99999999`
+        # sobre un precio de 100 dio **50.000.031 R** en una sola operación. Eso
+        # no desvía el promedio del eje, lo destruye — y como `por_eje()` es lo
+        # que alimenta el criterio de aborto, ese eje queda "ganador" para
+        # siempre por un decimal de más.
+        #
+        # El mínimo es 0.05% del precio. Por debajo de eso el ruido del mercado
+        # ya toca el stop, así que no hay operación que registrar: hay un error.
+        if abs(contexto.precio - stop_loss) < contexto.precio * 0.0005:
+            raise ValueError(
+                f"el stop está pegado al precio (riesgo {abs(contexto.precio - stop_loss)}): "
+                "por debajo del 0.05% el R múltiplo se dispara y contamina el eje"
+            )
+        # El objetivo del lado correcto, por lo mismo que el stop: un long con el
+        # objetivo por debajo de la entrada no es una operación, es un descuido.
+        if take_profit is not None:
+            if direccion == "long" and take_profit <= contexto.precio:
+                raise ValueError("en un long el objetivo va por encima del precio de entrada")
+            if direccion == "short" and take_profit >= contexto.precio:
+                raise ValueError("en un short el objetivo va por debajo del precio de entrada")
 
         cursor = self._con.execute(
             """INSERT INTO operaciones
@@ -134,13 +185,29 @@ class Registro:
                 eje,
                 simbolo,
                 direccion,
-                contexto.timestamp,
+                # ⚠ LA HORA DEL REGISTRO, NO LA DE LA VELA. Acá iba
+                # `contexto.timestamp`, que es el cierre de la última vela: en
+                # 15m puede llevar hasta un cuarto de hora de atraso, así que la
+                # duración de toda operación salía sesgada. Y cuando el proceso
+                # muere entre abrir y cerrar —el caso que `abiertas()` existe
+                # para cubrir— no quedaba ningún sello temporal propio: no había
+                # forma de saber cuánto llevaba abierta una posición al volver.
+                # La hora de la vela no se pierde: está en el contexto sellado.
+                datetime.now(UTC).isoformat(),
                 contexto.precio,
                 stop_loss,
                 take_profit,
                 json.dumps(asdict(contexto), ensure_ascii=False),
                 razon.strip(),
-                _sellar(contexto, razon.strip(), eje),
+                _sellar(
+                    contexto,
+                    razon.strip(),
+                    eje,
+                    simbolo=simbolo,
+                    direccion=direccion,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                ),
             ),
         )
         self._con.commit()
@@ -161,6 +228,21 @@ class Registro:
         decide si un eje sirve, y dejarla en manos del modelo sería construir
         todo el registro sobre un número que puede estar mal.
         """
+        # ⚠ `parcial` NO ESTÁ, y su ausencia es la decisión. El esquema no tiene
+        # columna de tamaño ni filas hijas, así que un cierre parcial escribía
+        # `cerrada_en` igual que uno total: la posición desaparecía de
+        # `abiertas()`, el resto no se registraba nunca y el eje contabilizaba el
+        # R del primer tramo como si fuera el resultado completo. Medido.
+        #
+        # Ofrecerlo en el esquema y no soportarlo es peor que no ofrecerlo: el
+        # modelo lo elegía —tomar parciales es práctica normal— y perdía media
+        # operación en silencio. Cuando haga falta de verdad, se implementa con
+        # una tabla de tramos; mientras tanto, que falle fuerte.
+        if motivo not in ("stop", "objetivo", "manual"):
+            raise ValueError(
+                f"motivo de cierre desconocido: {motivo!r}. Son stop, objetivo o manual. "
+                "Los cierres parciales todavía no se pueden registrar."
+            )
         fila = self._con.execute(
             "SELECT * FROM operaciones WHERE id = ?", (operacion_id,)
         ).fetchone()
@@ -218,29 +300,61 @@ class Registro:
         return [
             dict(f)
             for f in self._con.execute(
+                # ⚠ `WHERE r_multiplo IS NOT NULL` ADEMÁS DE `cerrada_en`. Una
+                # sola fila cerrada sin R —una migración, un cierre a mano—
+                # hacía que AVG y SUM devolvieran NULL para el eje ENTERO: 50
+                # operaciones buenas y una rota daban `r_total: None`. Medido.
+                # Una fila que no se puede medir se excluye del recuento; no
+                # borra lo que sí se midió.
+                #
+                # ⚠ `>= 0` EN LOS ACIERTOS, no `> 0`. Un breakeven exacto no es
+                # una derrota: salir a 0R después de mover el stop es un
+                # resultado neutro, y contarlo como fallo castiga justamente la
+                # gestión que el experimento quiere observar.
                 """SELECT eje,
                           COUNT(*) AS cerradas,
                           ROUND(AVG(r_multiplo), 3) AS r_promedio,
                           ROUND(SUM(r_multiplo), 2) AS r_total,
-                          ROUND(100.0 * SUM(r_multiplo > 0) / COUNT(*), 1) AS aciertos_pct
+                          ROUND(100.0 * SUM(r_multiplo >= 0) / COUNT(*), 1) AS aciertos_pct
                    FROM operaciones
-                   WHERE cerrada_en IS NOT NULL
+                   WHERE cerrada_en IS NOT NULL AND r_multiplo IS NOT NULL
                    GROUP BY eje
                    ORDER BY eje"""
             )
         ]
 
     def verificar_sellos(self) -> list[int]:
-        """Los ids cuya razón o contexto cambiaron después de registrarse.
+        """Los ids cuya decisión cambió después de registrarse.
 
         Debería devolver siempre una lista vacía. Si no lo hace, los datos no
-        sirven: significa que alguien editó una razón, y no hay forma de saber
-        si fue antes o después de ver el resultado.
+        sirven: significa que alguien editó una razón, un stop o una dirección,
+        y no hay forma de saber si fue antes o después de ver el resultado.
+
+        ⚠ UNA FILA ILEGIBLE CUENTA COMO ROTA, no como un error del proceso. Esto
+        hacía `Contexto(**json.loads(...))` a pelo, así que un solo contexto
+        corrupto —o una clave que dejara de existir en el dataclass— lanzaba y
+        se llevaba puesta la publicación entera y `estado_paper` con ella. El
+        agente perdía el registro completo por una fila mala, que es el peor
+        canje posible: lo que no se puede verificar es exactamente lo que hay
+        que marcar como no confiable, no un motivo para no enseñar el resto.
         """
         rotos = []
         for f in self._con.execute("SELECT * FROM operaciones"):
-            contexto = Contexto(**json.loads(f["contexto"]))
-            if _sellar(contexto, f["razon"], f["eje"]) != f["sello"]:
+            try:
+                contexto = Contexto(**json.loads(f["contexto"]))
+                sello = _sellar(
+                    contexto,
+                    f["razon"],
+                    f["eje"],
+                    simbolo=f["simbolo"],
+                    direccion=f["direccion"],
+                    stop_loss=f["stop_loss"],
+                    take_profit=f["take_profit"],
+                )
+            except (ValueError, TypeError):
+                rotos.append(int(f["id"]))
+                continue
+            if sello != f["sello"]:
                 rotos.append(int(f["id"]))
         return rotos
 

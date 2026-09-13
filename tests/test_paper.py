@@ -156,7 +156,7 @@ def test_el_resumen_separa_los_ejes(registro: Registro, contexto: Contexto) -> N
         oid = registro.abrir(
             eje=eje, simbolo="X", direccion="long", contexto=contexto, razon="y", stop_loss=99.0
         )
-        registro.cerrar(oid, precio_salida=salida, motivo="x")
+        registro.cerrar(oid, precio_salida=salida, motivo="manual")
 
     resumen = {f["eje"]: f for f in registro.por_eje()}
     assert resumen["a"]["cerradas"] == 2
@@ -235,9 +235,181 @@ def test_el_estado_no_ordena_los_ejes_por_resultado(tmp_path: Path, contexto: Co
         oid = registro.abrir(
             eje=eje, simbolo="X", direccion="long", contexto=contexto, razon="y", stop_loss=99.0
         )
-        registro.cerrar(oid, precio_salida=salida, motivo="x")
+        registro.cerrar(oid, precio_salida=salida, motivo="manual")
 
     contenido = _estado(registro).content
     # Alfabético: alfa (perdedor) antes que zeta (ganador).
     assert contenido.index("alfa") < contenido.index("zeta")
     assert "No elijas el mejor eje mirando esta tabla" in contenido
+
+
+def test_el_sello_cubre_la_direccion_y_el_stop_no_solo_la_razon(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Es el fraude MÁS rentable, y el sello no lo veía.
+
+    Editar la razón cambia el relato; editar la dirección o el stop cambia el R
+    múltiplo, que es la cifra que decide si un eje sirve. Medido cuando el sello
+    hasheaba solo {eje, razon, contexto}: voltear `direccion` sobre un short
+    convertía un −4R en un +4R y `verificar_sellos()` seguía diciendo que el
+    historial estaba limpio.
+    """
+    # Las sentencias van literales y no interpoladas: un `f"... SET {campo}"`
+    # es seguro acá —los nombres son constantes de este test— pero obliga a
+    # silenciar el aviso de inyección, y un `noqa` en un test sobre integridad
+    # de datos es la clase de ruido que después nadie relee.
+    ediciones = (
+        ("UPDATE operaciones SET direccion = ? WHERE id = ?", "long"),
+        ("UPDATE operaciones SET stop_loss = ? WHERE id = ?", 99.9),
+        ("UPDATE operaciones SET simbolo = ? WHERE id = ?", "OTRO"),
+    )
+    for sentencia, valor in ediciones:
+        oid = registro.abrir(
+            eje="anti-smc",
+            simbolo="BTCUSDT",
+            direccion="short",
+            contexto=contexto,
+            razon="La señal de libro decía long; opero en contra.",
+            stop_loss=101.0,
+            take_profit=96.0,
+        )
+        assert oid not in registro.verificar_sellos()
+
+        registro._con.execute(sentencia, (valor, oid))  # noqa: SLF001
+        registro._con.commit()  # noqa: SLF001
+
+        assert oid in registro.verificar_sellos(), f"pasó desapercibido: {sentencia}"
+
+
+def test_el_sello_cubre_el_take_profit(registro: Registro, contexto: Contexto) -> None:
+    """El objetivo es parte de lo que se decidió al entrar: moverlo después
+    reescribe la operación aunque no toque el R de un cierre por stop."""
+    oid = registro.abrir(
+        eje="range-sweep",
+        simbolo="AAVEUSDT",
+        direccion="long",
+        contexto=contexto,
+        razon="Barrido del piso.",
+        stop_loss=99.0,
+        take_profit=104.0,
+    )
+    registro._con.execute(  # noqa: SLF001
+        "UPDATE operaciones SET take_profit = 120.0 WHERE id = ?", (oid,)
+    )
+    registro._con.commit()  # noqa: SLF001
+
+    assert oid in registro.verificar_sellos()
+
+
+def test_una_fila_ilegible_se_marca_rota_y_no_tumba_el_registro(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """Perder el historial entero por una fila mala es el peor canje posible.
+
+    `verificar_sellos` hacía `Contexto(**json.loads(...))` a pelo, así que un
+    contexto corrupto lanzaba y se llevaba la publicación y `estado_paper` con
+    ella. Lo que no se puede verificar hay que marcarlo como no confiable, que
+    es distinto de no poder enseñar nada.
+    """
+    rota = _operacion_simple(registro, contexto)
+    sana = _operacion_simple(registro, contexto)
+    registro._con.execute(  # noqa: SLF001
+        "UPDATE operaciones SET contexto = ? WHERE id = ?", ("{no es json", rota)
+    )
+    registro._con.commit()  # noqa: SLF001
+
+    rotos = registro.verificar_sellos()
+
+    assert rota in rotos
+    assert sana not in rotos
+
+
+def _operacion_simple(registro: Registro, contexto: Contexto) -> int:
+    return registro.abrir(
+        eje="range-sweep",
+        simbolo="AAVEUSDT",
+        direccion="long",
+        contexto=contexto,
+        razon="Barrido del piso con cierre de vuelta adentro.",
+        stop_loss=99.0,
+    )
+
+
+def test_un_stop_pegado_al_precio_no_se_registra(registro: Registro, contexto: Contexto) -> None:
+    """No es una operación ajustada, es un error de tipeo.
+
+    El R divide por la distancia al stop: medido, `stop_loss=99.99999999` sobre
+    un precio de 100 daba **50.000.031 R** en una sola operación. Eso no desvía
+    el promedio del eje, lo destruye, y `por_eje()` alimenta el criterio de
+    aborto — así que el eje quedaría 'ganador' para siempre por un decimal.
+    """
+    with pytest.raises(ValueError, match="pegado al precio"):
+        registro.abrir(
+            eje="range-sweep",
+            simbolo="AAVEUSDT",
+            direccion="long",
+            contexto=contexto,
+            razon="Stop imposible.",
+            stop_loss=99.99999999,
+        )
+
+
+def test_el_objetivo_va_del_lado_que_corresponde(registro: Registro, contexto: Contexto) -> None:
+    """Un long con el objetivo por debajo de la entrada no es una operación con
+    una tesis rara: es un descuido, y se registra como si fuera intencional."""
+    with pytest.raises(ValueError, match="objetivo"):
+        registro.abrir(
+            eje="range-sweep",
+            simbolo="AAVEUSDT",
+            direccion="long",
+            contexto=contexto,
+            razon="Objetivo al revés.",
+            stop_loss=99.0,
+            take_profit=95.0,
+        )
+
+
+def test_un_cierre_parcial_falla_en_vez_de_perder_media_operacion(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """El esquema lo ofrecía y no lo soportaba, que es lo peor de los dos mundos.
+
+    `motivo="parcial"` escribía `cerrada_en` igual que un cierre total: la
+    posición desaparecía de `abiertas()`, el resto no se registraba nunca, y el
+    eje contabilizaba el R del primer tramo como resultado completo.
+    """
+    oid = _operacion_simple(registro, contexto)
+
+    with pytest.raises(ValueError, match="parciales"):
+        registro.cerrar(oid, precio_salida=102.0, motivo="parcial")
+
+    assert [o["id"] for o in registro.abiertas()] == [oid]
+
+
+def test_una_fila_sin_r_no_anula_las_metricas_del_eje(
+    registro: Registro, contexto: Contexto
+) -> None:
+    """AVG y SUM devuelven NULL si un solo valor lo es, así que 50 operaciones
+    medidas y una rota daban `r_total: None` para el eje entero. Lo que no se
+    pudo medir se excluye; no borra lo que sí."""
+    oid = _operacion_simple(registro, contexto)
+    registro.cerrar(oid, precio_salida=104.0, motivo="objetivo")
+    roto = _operacion_simple(registro, contexto)
+    registro._con.execute(  # noqa: SLF001
+        "UPDATE operaciones SET cerrada_en = 'x', r_multiplo = NULL WHERE id = ?", (roto,)
+    )
+    registro._con.commit()  # noqa: SLF001
+
+    resumen = registro.por_eje()[0]
+
+    assert resumen["r_total"] == 4.0
+    assert resumen["cerradas"] == 1
+
+
+def test_un_breakeven_no_cuenta_como_derrota(registro: Registro, contexto: Contexto) -> None:
+    """Salir a 0R después de mover el stop es un resultado neutro. Contarlo como
+    fallo castiga justamente la gestión que el experimento quiere observar."""
+    oid = _operacion_simple(registro, contexto)
+    registro.cerrar(oid, precio_salida=contexto.precio, motivo="manual")
+
+    assert registro.por_eje()[0]["aciertos_pct"] == 100.0
