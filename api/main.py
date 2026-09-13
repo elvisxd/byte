@@ -68,6 +68,25 @@ def _build_rag(settings: Settings, repo: Repository) -> Any:
     return build_rag_service(settings, pool)
 
 
+def _leer_perfil(ruta: str) -> str:
+    """El perfil del usuario, si hay archivo. Vacío si no, sin fallar.
+
+    Que el agente no sepa con quién habla es una degradación, no un error: sin
+    esto sigue respondiendo, solo que sin contexto de quién pregunta.
+    """
+    if not ruta:
+        return ""
+    try:
+        texto = Path(ruta).expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("perfil_ilegible", ruta=ruta, error=exc.strerror)
+        return ""
+    # Solo lo que está debajo del separador: arriba va la explicación de para
+    # qué sirve el archivo, que al modelo no le aporta nada.
+    _, sep, cuerpo = texto.partition("\n---\n")
+    return (cuerpo if sep else texto).strip()
+
+
 def _avisar_si_hay_varios_workers(env: str) -> None:
     """Byte asume un solo proceso, y conviene que se note al arrancar.
 
@@ -283,6 +302,7 @@ def create_app(
                 max_iterations=resolved_settings.max_iterations,
                 resume_ttl_s=resolved_settings.resume_token_ttl_s,
                 trazas=trazas,
+                perfil=_leer_perfil(resolved_settings.perfil_file),
             )
 
             # Un grafo por modelo alternativo, para poder cambiar en caliente.

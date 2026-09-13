@@ -21,7 +21,7 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent.events import AGUI, Event, keepalive
-from agent.prompts import SYSTEM_PROMPT
+from agent.prompts import system_prompt
 from api.errors import ByteError
 from api.logging import get_logger
 from db.repository import Repository
@@ -191,8 +191,11 @@ class RunManager:
         max_iterations: int = 6,
         resume_ttl_s: int = 3600,
         trazas: Any = None,
+        perfil: str = "",
     ) -> None:
         self._graph = graph
+        # Quién es el usuario, para que el agente no tenga que averiguarlo.
+        self._perfil = perfil
         # Un grafo por modelo alternativo, armado al arrancar. Compilarlos por
         # adelantado y no por run es lo que hace que cambiar cueste solo la
         # recarga del modelo en Ollama y no además rearmar el grafo.
@@ -516,7 +519,10 @@ class RunManager:
         if await self._thread_has_state(config):
             messages: list[Any] = [HumanMessage(content=user_content or "")]
         else:
-            messages = [SystemMessage(content=SYSTEM_PROMPT), *await self._seed_history(run)]
+            messages = [
+                SystemMessage(content=system_prompt(self._perfil)),
+                *await self._seed_history(run),
+            ]
 
         inputs = {
             "messages": messages,

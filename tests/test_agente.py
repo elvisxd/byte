@@ -201,3 +201,26 @@ def test_el_codigo_se_sigue_mostrando_tal_cual() -> None:
     from agent.graph import _que_va_a_hacer
 
     assert _que_va_a_hacer({"name": "code_exec", "args": {"code": "print(1)"}}) == "print(1)"
+
+
+def test_el_perfil_del_usuario_entra_en_el_prompt() -> None:
+    """Sin esto, ante un "¿qué sabés de mí?" el agente contesta que está en un
+    entorno aislado —aunque tenga `ver_cv` y `listar_repos` a mano—. Pedirle en
+    el prompt que las use no alcanzó: uno de cada tres intentos.
+
+    Decidir cuándo llamar una herramienta es lo que un modelo de 8B hace peor;
+    saber con quién habla no debería depender de esa decisión.
+    """
+    from agent.prompts import SYSTEM_PROMPT, system_prompt
+
+    con_perfil = system_prompt("Elvis, ingeniero full-stack.")
+    assert "Elvis" in con_perfil
+    assert SYSTEM_PROMPT in con_perfil, "se perdió el prompt original"
+
+
+def test_sin_perfil_el_prompt_queda_igual() -> None:
+    """Es opcional: sin archivo configurado, el agente funciona como siempre."""
+    from agent.prompts import SYSTEM_PROMPT, system_prompt
+
+    assert system_prompt("") == SYSTEM_PROMPT
+    assert system_prompt("   ") == SYSTEM_PROMPT

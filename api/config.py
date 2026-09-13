@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     # escribir un archivo se deshace mirando el `.bak`, un push a un repo
     # público ya lo tiene GitHub.
     git_tools: bool = Field(default=False, alias="BYTE_GIT_TOOLS")
+    # Un archivo corto que dice quién es el usuario. Entra en el prompt de cada
+    # conversación, así que conviene que sea breve: el detalle vive en las
+    # herramientas.
+    perfil_file: str = Field(default="", alias="BYTE_PERFIL")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

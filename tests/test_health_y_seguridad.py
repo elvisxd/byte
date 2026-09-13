@@ -205,3 +205,24 @@ def test_un_worker_o_un_valor_raro_no_molestan(
     monkeypatch.setenv("WEB_CONCURRENCY", valor)
     _avisar_si_hay_varios_workers("prod")  # no explota
     assert "varios_workers" not in caplog.text
+
+
+def test_el_perfil_se_lee_sin_su_encabezado(tmp_path) -> None:
+    """El archivo explica arriba para qué sirve —eso es para quien lo edita, no
+    para el modelo— y el contenido va debajo del separador."""
+    from api.main import _leer_perfil
+
+    archivo = tmp_path / "quien-soy.md"
+    archivo.write_text(
+        "# Quién es el usuario\n\nEsto explica el archivo.\n\n---\n\nElvis, ingeniero.\n",
+        encoding="utf-8",
+    )
+    assert _leer_perfil(str(archivo)) == "Elvis, ingeniero."
+
+
+def test_un_perfil_que_no_existe_no_rompe_el_arranque(tmp_path) -> None:
+    """Que el agente no sepa con quién habla es una degradación, no un error."""
+    from api.main import _leer_perfil
+
+    assert _leer_perfil(str(tmp_path / "no-existe.md")) == ""
+    assert _leer_perfil("") == ""
