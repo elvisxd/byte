@@ -30,7 +30,17 @@ logger = get_logger("tools.paper")
 # Los que se calculan siempre al mirar. No son los que use el eje: el contexto
 # se guarda entero para poder preguntar después "¿fallaba más con ADX bajo?" sin
 # haber decidido de antemano que el ADX importaba.
-SIEMPRE = ["atr", "adx", "rsi", "macd", "ema"]
+#
+# Los tres últimos contestan una pregunta distinta de los cinco primeros: no
+# "¿cómo está el mercado?" —que se responde con un número— sino "¿a qué PRECIO
+# pasa algo?". Sin ellos el modelo solo puede razonar sobre el piso y el techo
+# de las últimas 20 velas, que es aritmética sobre las velas y no estructura; y
+# sin un nivel concreto, `dejar_orden` no tiene dónde ponerse.
+#
+# Medido el 2026-09-13, sesión de qwen3.6:27b: en cinco vueltas describió "rango
+# estrecho, precio cerca del tope" —el escenario exacto de una orden límite— y
+# no dejó ni una.
+SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime"]
 
 # El par del experimento. Ver la cabecera de paper/sesion.py: con un solo par la
 # diferencia entre operaciones es la hipótesis y no el activo.
@@ -99,6 +109,43 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
         f"MACD {macd.get('macd')} sobre señal {macd.get('signal')}",
         f"EMA20 {ind.get('ema')}",
     ]
+    # ── Los niveles, aparte de los números ────────────────────────────────────
+    #
+    # Van en su propio bloque y con su etiqueta porque son de otra clase: un RSI
+    # de 57 describe el mercado, un pool en 76.471 es un SITIO al que se puede
+    # mandar una orden. Se pintan como texto y no como JSON para que compitan
+    # menos con el resto del contexto — ya está medido que el modelo elige peor
+    # cuanto más ruido tiene delante.
+    regimen = ind.get("regime") or {}
+    if regimen.get("regimen"):
+        lineas.append("")
+        lineas.append(
+            f"régimen: {regimen['regimen']} (chop {regimen.get('chop')}, "
+            f"ancho de bandas en el percentil {regimen.get('bbw_percentil')})"
+        )
+
+    pools = ind.get("liquidity") or []
+    if pools:
+        lineas.append("")
+        lineas.append("pools de liquidez sin barrer — ahí están los stops:")
+        for p in pools:
+            # `swings` > 1 es un EQH/EQL: varios máximos o mínimos al mismo nivel
+            # concentran más stops que un pivote suelto.
+            iguales = f", {p['swings']} swings al mismo nivel" if p.get("swings", 1) > 1 else ""
+            lineas.append(
+                f"  {p['precio']} ({p['lado']} del precio, fuerza {p['fuerza']}{iguales})"
+            )
+
+    gaps = ind.get("fvg") or []
+    if gaps:
+        lineas.append("")
+        lineas.append("huecos sin negociar (FVG) todavía sin rellenar:")
+        for g in gaps:
+            # Un FVG roto cambia de signo: deja de sostener y pasa a resistir, o
+            # al revés. No se deduce del precio, hay que decirlo.
+            vuelto = " — INVERTIDO, ahora funciona al revés" if g.get("invertido") else ""
+            lineas.append(f"  {g['piso']} a {g['techo']} ({g['tipo']}{vuelto})")
+
     if not datos["velas"][-1].get("takerBuyVolume"):
         lineas.append("")
         lineas.append("(sin CVD: esta fuente no expone el volumen comprador)")

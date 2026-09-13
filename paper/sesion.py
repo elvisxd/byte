@@ -78,8 +78,23 @@ Esto es lo que tenés que hacer AHORA, en este turno:
 5. Si no hay nada que hacer, decilo y no operes. No entrar es una decisión
    válida: forzar una entrada para "aprovechar la sesión" contamina el eje.
 
-Los ejes disponibles son range-sweep, zone-reclaim, cvd-divergence, dip-trap y
-anti-smc. Elegí el que corresponda a lo que estás viendo; no inventes otros.
+Los ejes disponibles, y qué busca cada uno:
+
+- `range-sweep`: el piso o el techo de un rango se barre CON MECHA y el precio
+  cierra de vuelta adentro. Se entra a favor de la VUELTA, no de la ruptura.
+- `zone-reclaim`: el precio pierde una zona —soporte, nivel previo, media— y
+  vuelve a cerrarla por encima. La hipótesis es que la pérdida era falsa.
+- `cvd-divergence`: nuevo extremo de precio que el volumen comprador agresivo no
+  acompaña. DORMIDO: esta fuente no expone el dato, no lo uses.
+- `dip-trap`: caída brusca con volumen ALTO que se revierte en pocas velas.
+  Barrió stops y no había vendedores reales detrás.
+- `anti-smc`: aparece un patrón SMC de manual —un CHoCH limpio, un order block
+  claro— y se opera EN CONTRA.
+
+Elegí el que corresponda a lo que estás viendo; no inventes otros.
+
+Son patrones CONCRETOS, no un clima general: si ninguno está ocurriendo ahora,
+lo honesto es no operar —o dejar la orden al precio donde SÍ ocurriría.
 
 No compares ejes entre sí para elegir "el que va mejor": todos corren en
 paralelo a propósito y elegir mirando la tabla es sobreajuste."""
