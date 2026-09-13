@@ -131,4 +131,19 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
         except GhNoDisponible as exc:
             logger.warning("github_sin_sesion", detail=str(exc))
 
+    # Git sobre el proyecto. Necesita la misma raíz que las de archivos: sin
+    # saber sobre qué repo se commitea, no hay nada que hacer.
+    if settings.git_tools and settings.project_root:
+        from pathlib import Path
+
+        from tools.git import build_git_tools
+
+        raiz = Path(settings.project_root).expanduser()
+        if (raiz / ".git").exists():
+            for herramienta in build_git_tools(raiz):
+                registry.add(herramienta)
+            logger.info("git_activo", raiz=str(raiz), detail="el agente puede commitear y subir")
+        else:
+            logger.warning("git_sin_repo", raiz=str(raiz), detail="no es un repositorio")
+
     return registry

@@ -64,6 +64,8 @@ HERRAMIENTAS_QUE_ESCRIBEN = frozenset(
         "agregar_experiencia",
         "agregar_proyecto",
         "reemplazar_en_cv",
+        "git_commit",
+        "git_push",
     }
 )
 
@@ -93,6 +95,10 @@ def _que_va_a_hacer(llamada: dict[str, Any]) -> str:
         return f"{args.get('repo', '?')}: «{args.get('descripcion', '')}»"
     if nombre == "poner_topics":
         return f"{args.get('repo', '?')}: {', '.join(args.get('topics') or [])}"
+    if nombre == "git_commit":
+        return f"git commit -m «{args.get('mensaje', '')}»\n\n(todos los cambios de la rama)"
+    if nombre == "git_push":
+        return "git push — esto sube los commits a GitHub y los hace públicos"
     if nombre == "reemplazar_en_cv":
         return (
             f"CV\n\n- {str(args.get('viejo', ''))[:300]}\n+ {str(args.get('nuevo_en', ''))[:300]}"

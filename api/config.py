@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # la máquina, y esa sesión puede tocar todos tus repos — que el agente pueda
     # usarla tiene que ser una decisión, no algo que venga de fábrica.
     github_tools: bool = Field(default=False, alias="BYTE_GITHUB_TOOLS")
+    # Commit y push sobre BYTE_PROJECT_ROOT. Opt-in aparte de las de archivos:
+    # escribir un archivo se deshace mirando el `.bak`, un push a un repo
+    # público ya lo tiene GitHub.
+    git_tools: bool = Field(default=False, alias="BYTE_GIT_TOOLS")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")
