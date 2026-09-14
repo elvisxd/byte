@@ -313,6 +313,22 @@ async def una_sesion(
         vueltas += 1
         restante = (limite - time.monotonic()) / 60
         print(f"[sesión] vuelta {vueltas} · quedan {restante:.0f} min", flush=True)
+        # ⚠ ANTES DE QUE EL MODELO MIRE: lo que el mercado cerró solo. Un stop
+        # atravesado mientras se esperaba gráfico nuevo —o de noche, entre
+        # sesiones— no espera a que el modelo lo cierre horas después a otro
+        # precio. Va en cada vuelta y no solo al arrancar porque la espera entre
+        # vueltas puede ser de media hora, y en la vuelta 1 cubre además las
+        # órdenes que `evaluar_ordenes` acaba de disparar a una hora pasada.
+        try:
+            recientes = velas_del_mercado(SIMBOLO, "15m", 200)
+            for c in registro.evaluar_abiertas(recientes["velas"]):
+                print(
+                    f"[sesión] operación #{c['id']} cerrada por {c['motivo']} "
+                    f"a {c['precio_salida']} · R {c['r']:+.2f}",
+                    flush=True,
+                )
+        except MercadoNoDisponible as exc:
+            print(f"[sesión] no se pudieron evaluar las abiertas: {exc}", flush=True)
         trace.vuelta = vueltas
         # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
         # cuatro minutos, quien mira tiene que ver que empezó, no una página
