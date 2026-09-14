@@ -71,8 +71,9 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
    justifica entrar ACÁ y no cinco velas después.
    `mirar_mercado` SIN intervalo te da los tres gráficos del mismo instante:
-   empezá por ahí, y pedí un marco suelto solo si te hace falta el detalle.
-   Cada marco tiene su rango y su ATR: no mezcles los de uno con los de otro.
+   empezá por ahí, UNA vez por vuelta —el gráfico no cambia mientras pensás—,
+   y pedí un marco suelto solo si te hace falta el detalle. Cada marco tiene
+   su rango y su ATR: no mezcles los de uno con los de otro.
 4. Si el precio de ahora no te sirve pero SÍ sabrías a qué precio entrarías,
    dejá una orden con `dejar_orden` en vez de no hacer nada. Entre esta sesión y
    la siguiente pasan ~23 horas sin nadie mirando: una orden es la única forma
@@ -132,8 +133,13 @@ Cómo mirar ANTES de tocar `predecir`, `abrir_operacion` o `dejar_orden`.
 Sos un trader discrecional operando en papel, y esto es lo que separa a uno
 de alguien que repite una frase:
 
-1. El régimen. `mirar_mercado` trae el que midió el código (`regime`). Decí
-   cuál ves vos y, si no coincide, decilo: la discrepancia es un dato.
+1. Cada marco con su pregunta, y no otra. En 4h, la ESTRUCTURA: dónde está el
+   precio en el rango, los pools y FVGs grandes, la tesis de fondo. En 1h, el
+   RÉGIMEN y si el impulso sigue o se agota —es el marco por defecto de tus
+   predicciones—. En 15m, solo el TIMING: la vela en curso, el barrido, la
+   entrada. No busques en 15m lo que es de 4h, ni al revés. El régimen que
+   midió el código viene en cada marco (`régimen medido`); decí cuál ves vos
+   y, si no coincide, decilo: la discrepancia es un dato.
 2. Eje por eje, los cuatro activos: ¿está ocurriendo AHORA su patrón
    concreto? Contestá sí o no para CADA uno, con el nivel y la invalidación
    que tendría. «Hay liquidez disponible» no es una respuesta: no dice qué
@@ -158,6 +164,13 @@ paralelo a propósito y elegir mirando la tabla es sobreajuste."""
 # escribió antes que este código y en su propio commit.
 FRACCION_ATR = 0.5
 MINUTOS_POR_MARCO = {"15m": 15, "1h": 60, "4h": 240}
+# El marco de la espera. Era 15m; el 2026-09-14 pasó a 1h —ver la sección de
+# ese día en CRITERIO_CADENCIA.md—: una vuelta dura 25-40 min y la vela de 15m
+# cerraba siempre antes de terminar de pensar, o sea que la espera no esperaba
+# nada, y el gráfico que decide —la estructura de 4h, el régimen de 1h— no
+# cambia en un cuarto de hora. Órdenes y predicciones se siguen resolviendo
+# contra velas de 15m: ahí la granularidad fina sí importa.
+MARCO_DE_LA_ESPERA = "1h"
 
 
 async def _esperar_algo_nuevo(limite: float, marco: str = "15m") -> None:
@@ -370,7 +383,7 @@ async def una_sesion(
             # ⚠ SOLO TRAS UNA VUELTA BUENA. Un fallo ya tiene su propio backoff
             # arriba, y esperar movimiento después de que Ollama se caiga sería
             # sumar dos esperas por el mismo problema.
-            await _esperar_algo_nuevo(limite)
+            await _esperar_algo_nuevo(limite, MARCO_DE_LA_ESPERA)
 
     # `viva=False` marca el trace como terminado: la página deja de refrescar y
     # dice que la sesión acabó, en vez de esperar pasos que no van a llegar.
