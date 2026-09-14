@@ -82,8 +82,9 @@ def test_la_pista_pide_el_plazo_de_15m(monkeypatch: pytest.MonkeyPatch, tmp_path
         }
 
     monkeypatch.setattr(herramientas, "velas", velas)
+    # La pista ahora ofrece 1h antes que 15m; sin vivas de 1h, manda a 1h.
     monkeypatch.setattr(
-        herramientas, "indicadores", lambda v, cuales: {"atr": 651.0 if len(cuales) > 1 else 222.0}
+        herramientas, "indicadores", lambda v, cuales: {"atr": 651.0 if len(cuales) > 1 else 380.0}
     )
     r = Registro(str(tmp_path / "op.db"))
     _predecir(r, "4h", 96)  # la viva que bloquea 4h
@@ -104,4 +105,4 @@ def test_la_pista_pide_el_plazo_de_15m(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     assert res.ok is False
     assert "horas_vigencia=0" in res.content
-    assert "vence en 6 h, que es OTRA pregunta" in res.content
+    assert "vence en 24 h, que es OTRA pregunta" in res.content

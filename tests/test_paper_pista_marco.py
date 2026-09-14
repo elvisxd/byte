@@ -17,11 +17,11 @@ from paper.registro import Contexto, Registro
 from tools.paper import PredecirArgs, _predecir
 
 PRECIO = 78586.42
-ATR_4H = 651.0
-ATR_15M = 186.0
+ATR = {"4h": 651.0, "1h": 380.0, "15m": 186.0}
+ATR_4H, ATR_15M = ATR["4h"], ATR["15m"]
 
 
-def _velas(precio: float) -> dict[str, Any]:
+def _velas(precio: float, marco: str = "4h") -> dict[str, Any]:
     base = int(datetime(2026, 9, 14, 12, 0, tzinfo=UTC).timestamp())
     return {
         "fuente": "prueba",
@@ -33,6 +33,7 @@ def _velas(precio: float) -> dict[str, Any]:
                 "low": precio - 50,
                 "close": precio,
                 "volume": 10.0,
+                "marco": marco,  # para que el mock de indicadores sepa el ATR de cuál
             }
             for i in range(200)
         ],
@@ -42,11 +43,9 @@ def _velas(precio: float) -> dict[str, Any]:
 @pytest.fixture
 def registro(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Registro:
     # Los reales llaman a Node: se simulan los dos, con un ATR por marco.
-    monkeypatch.setattr(herramientas, "velas", lambda simbolo, marco, n: _velas(PRECIO))
+    monkeypatch.setattr(herramientas, "velas", lambda simbolo, marco, n: _velas(PRECIO, marco))
     monkeypatch.setattr(
-        herramientas,
-        "indicadores",
-        lambda velas, cuales: {"atr": ATR_4H if len(cuales) > 1 else ATR_15M},
+        herramientas, "indicadores", lambda velas, cuales: {"atr": ATR[velas[0]["marco"]]}
     )
     r = Registro(str(tmp_path / "op.db"))
     ctx = Contexto(
@@ -96,33 +95,26 @@ def _pedir(registro: Registro, nivel: float, marco: str, hacia: str = "arriba") 
     return res.content
 
 
-def test_el_rechazo_en_4h_dice_que_en_15m_si_entra(registro: Registro) -> None:
-    """El intento 3 de la vuelta 1: 79867.31 chocaba con la viva de 79827.4 en
-    4h, y en 15m distaba 1280 del precio con un mínimo de 279."""
+def test_el_rechazo_en_4h_ofrece_1h_primero(registro: Registro) -> None:
+    """1h es el marco de las predicciones: el rechazo en 4h manda ahí, no a 15m.
+    79867.31 chocaba con la viva de 79827.4 en 4h; en 1h dista 1281 del precio
+    con un mínimo de 570, y no hay vivas de 1h."""
     contenido = _pedir(registro, 79867.31, "4h")
 
     assert "sería la misma apuesta" in contenido
-    assert "En 15m SÍ entra" in contenido
-    assert "el ATR es 186" in contenido and "el mínimo 279" in contenido
-    assert 'temporalidad="15m"' in contenido
+    assert "En 1h SÍ entra" in contenido
+    assert "el ATR es 380" in contenido and "el mínimo 570" in contenido
+    assert 'temporalidad="1h"' in contenido and "vence en 24 h" in contenido
+    assert "15m" not in contenido.split("En 1h SÍ entra")[1]
 
 
-def test_si_en_15m_tampoco_entra_lo_dice_y_no_manda_a_chocar(registro: Registro) -> None:
-    """Mandarlo a 15m para que vuelva a chocar sería gastar otra iteración."""
-    contenido = _pedir(registro, PRECIO + 100, "4h")
-
-    assert "En 15m tampoco" in contenido
-    assert "otro nivel, no otro marco" in contenido
-    assert "SÍ entra" not in contenido
-
-
-def test_si_en_15m_choca_con_una_viva_lo_nombra(registro: Registro) -> None:
+def test_si_1h_esta_ocupado_baja_a_15m_y_lo_dice(registro: Registro) -> None:
     ctx = Contexto(
         precio=PRECIO,
         timestamp="2026-09-14T12:00:00+00:00",
         dia_semana=0,
         hora_utc=12,
-        extra={"indicadores": {"atr": ATR_15M}},
+        extra={"indicadores": {"atr": ATR["1h"]}},
     )
     registro.predecir(
         simbolo="BTCUSDT",
@@ -130,14 +122,61 @@ def test_si_en_15m_choca_con_una_viva_lo_nombra(registro: Registro) -> None:
         nivel=79900.0,
         hacia="arriba",
         probabilidad=0.5,
-        razonamiento="ya en 15m",
-        temporalidad="15m",
+        razonamiento="ya en 1h",
+        temporalidad="1h",
     )
 
     contenido = _pedir(registro, 79867.31, "4h")
 
-    assert "chocaría con la predicción viva #3" in contenido
-    assert "Otro nivel en 15m sí entra" in contenido
+    assert "En 1h chocaría con la predicción viva #3" in contenido
+    assert "En 15m SÍ entra" in contenido
+    assert "el ATR es 186" in contenido and "el mínimo 279" in contenido
+    assert 'temporalidad="15m"' in contenido and "vence en 6 h" in contenido
+
+
+def test_el_rechazo_en_1h_ofrece_15m(registro: Registro) -> None:
+    contenido = _pedir(
+        registro, PRECIO + 400, "1h"
+    )  # a 400: ruido en 1h (mín 570), vale en 15m (mín 279)
+
+    assert "ruido" in contenido
+    assert "En 15m SÍ entra" in contenido
+    assert 'temporalidad="1h"' not in contenido  # 1h es el origen, no el destino
+
+
+def test_si_en_ningun_marco_entra_lo_dice_y_no_manda_a_chocar(registro: Registro) -> None:
+    """Mandarlo a chocar otra vez sería gastar otra iteración."""
+    contenido = _pedir(registro, PRECIO + 100, "4h")
+
+    assert "En 1h tampoco" in contenido and "en 15m tampoco" in contenido
+    assert "otro nivel, no otro marco" in contenido
+    assert "SÍ entra" not in contenido
+
+
+def test_si_1h_y_15m_estan_ocupados_lo_nombra_y_no_manda_a_chocar(registro: Registro) -> None:
+    for marco in ("1h", "15m"):
+        ctx = Contexto(
+            precio=PRECIO,
+            timestamp="2026-09-14T12:00:00+00:00",
+            dia_semana=0,
+            hora_utc=12,
+            extra={"indicadores": {"atr": ATR[marco]}},
+        )
+        registro.predecir(
+            simbolo="BTCUSDT",
+            contexto=ctx,
+            nivel=79900.0,
+            hacia="arriba",
+            probabilidad=0.5,
+            razonamiento=f"ya en {marco}",
+            temporalidad=marco,
+        )
+
+    contenido = _pedir(registro, 79867.31, "4h")
+
+    assert "En 1h chocaría con la predicción viva #3" in contenido
+    assert "en 15m chocaría con la predicción viva #4" in contenido
+    assert "otro nivel, no otro marco" in contenido
 
 
 def test_en_15m_no_hay_pista_que_dar(registro: Registro) -> None:

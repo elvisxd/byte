@@ -400,56 +400,76 @@ class PredecirArgs(BaseModel):
     )
 
 
+MARCO_MENOR = {"4h": "1h", "1h": "15m"}
+
+
 def _pista_de_marco_menor(registro: Registro, marco: str, nivel: float, hacia: str) -> str:
-    """Al rechazar en un marco grande, decir CON NÚMEROS qué pasaría en 15m.
+    """Al rechazar en un marco, decir CON NÚMEROS qué pasaría en el siguiente hacia abajo.
 
     ⚠ EL MODELO SIGUE A LA HERRAMIENTA, NO AL PROMPT. Medido el 2026-09-14 con
     `qwen3:14b` pensando: ante cada rechazo cita los números del mensaje y
     calcula con ellos —«750.21 < 976.5, that's why it was flagged»—, y aun así
     en cuatro intentos seguidos movió el NIVEL y nunca el MARCO, con el prompt
-    diciéndole en mayúsculas que bajara a 15m. Su primer intento, 79237.42,
-    entraba en 15m de sobra. La pista va donde él mira: en el rechazo, y con
-    cifras que pueda verificar, porque es lo que hace con todo lo demás.
+    diciéndole en mayúsculas que bajara. La pista va donde él mira: en el
+    rechazo, y con cifras que pueda verificar, porque es lo que hace con todo
+    lo demás.
 
-    Si el nivel tampoco entra en 15m se dice igual: mandarlo a un marco donde
-    volvería a chocar sería gastar otra iteración por nada.
+    ⚠ EN CASCADA, 4h → 1h → 15m, y no directo a 15m. La primera versión
+    mandaba siempre a 15m, y en una tarde el 15m acumuló cuatro predicciones
+    vivas mientras 1h tenía una: el 15m se volvía el cajón donde acababa todo
+    lo que no cabía arriba. Con los papeles de CRITERIO_CADENCIA.md —1h es el
+    marco de las predicciones; 15m, solo el timing— el rechazo en 4h ofrece
+    1h, y solo si tampoco cabe ahí, 15m. Cada marco con su ATR y su plazo.
+
+    Si en ningún marco cabe se dice igual: mandarlo a chocar otra vez sería
+    gastar otra iteración por nada.
     """
-    if marco.strip() == "15m":
+    siguiente = MARCO_MENOR.get(marco.strip())
+    if siguiente is None:
         return ""
-    try:
-        datos = velas(SIMBOLO_UNICO, "15m", 200)
-    except MercadoNoDisponible:
-        return ""
-    ctx = _contexto_de(datos, indicadores(datos["velas"], ["atr"]))
-    atr = ctx.extra.get("indicadores", {}).get("atr")
-    if not isinstance(atr, int | float) or atr <= 0:
-        return ""
-    minimo = atr * registro.MARGEN_ATR
-    dista = abs(nivel - ctx.precio)
-    if dista < minimo:
+    razones: list[str] = []
+    while siguiente is not None:
+        try:
+            datos = velas(SIMBOLO_UNICO, siguiente, 200)
+        except MercadoNoDisponible:
+            return ""
+        ctx = _contexto_de(datos, indicadores(datos["velas"], ["atr"]))
+        atr = ctx.extra.get("indicadores", {}).get("atr")
+        if not isinstance(atr, int | float) or atr <= 0:
+            return ""
+        minimo = atr * registro.MARGEN_ATR
+        dista = abs(nivel - ctx.precio)
+        plazo = registro.PLAZO_POR_MARCO.get(siguiente, 24.0)
+        if dista < minimo:
+            razones.append(
+                f"en {siguiente} tampoco: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y "
+                f"{nivel} dista {dista:.0f} del precio {ctx.precio}"
+            )
+            siguiente = MARCO_MENOR.get(siguiente)
+            continue
+        choca = [
+            v
+            for v in registro.predicciones_vivas()
+            if str(v.get("temporalidad") or "") == siguiente
+            and v["hacia"] == hacia
+            and abs(nivel - v["nivel"]) < minimo
+        ]
+        if choca:
+            razones.append(
+                f"en {siguiente} chocaría con la predicción viva #{choca[0]['id']} "
+                f"({choca[0]['nivel']}, {hacia})"
+            )
+            siguiente = MARCO_MENOR.get(siguiente)
+            continue
+        previas = ("; ".join(razones) + ". ") if razones else ""
         return (
-            f"\nEn 15m tampoco: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y {nivel} dista "
-            f"{dista:.0f} del precio {ctx.precio}. Buscá otro nivel, no otro marco."
+            f"\n{previas.capitalize()}En {siguiente} SÍ entra: el ATR es {atr:.0f}, el mínimo "
+            f"{minimo:.0f}, y {nivel} dista {dista:.0f} del precio {ctx.precio}. Las "
+            f"predicciones vivas en {marco.strip()} no bloquean {siguiente}. Repetí la llamada "
+            f'con temporalidad="{siguiente}" y horas_vigencia=0: vence en {plazo:.0f} h, que es '
+            f"OTRA pregunta, no la misma apuesta más corta."
         )
-    choca = [
-        v
-        for v in registro.predicciones_vivas()
-        if str(v.get("temporalidad") or "") == "15m"
-        and v["hacia"] == hacia
-        and abs(nivel - v["nivel"]) < minimo
-    ]
-    if choca:
-        return (
-            f"\nEn 15m el nivel {nivel} chocaría con la predicción viva #{choca[0]['id']} "
-            f"({choca[0]['nivel']}, {hacia}). Otro nivel en 15m sí entra."
-        )
-    return (
-        f"\nEn 15m SÍ entra: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y {nivel} dista "
-        f"{dista:.0f} del precio {ctx.precio}. Las predicciones vivas en {marco.strip()} no "
-        f'bloquean 15m. Repetí la llamada con temporalidad="15m" y horas_vigencia=0: '
-        f"vence en {registro.PLAZO_POR_MARCO['15m']:.0f} h, que es OTRA pregunta, no la "
-        f"misma apuesta más corta."
-    )
+    return "\n" + "; ".join(razones).capitalize() + ". Buscá otro nivel, no otro marco."
 
 
 def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolResult:
