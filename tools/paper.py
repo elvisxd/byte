@@ -40,7 +40,7 @@ logger = get_logger("tools.paper")
 # Medido el 2026-09-13, sesión de qwen3.6:27b: en cinco vueltas describió "rango
 # estrecho, precio cerca del tope" —el escenario exacto de una orden límite— y
 # no dejó ni una.
-SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime"]
+SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime", "divergencias"]
 
 # El par del experimento. Ver la cabecera de paper/sesion.py: con un solo par la
 # diferencia entre operaciones es la hipótesis y no el activo.
@@ -145,6 +145,20 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
             # al revés. No se deduce del precio, hay que decirlo.
             vuelto = " — INVERTIDO, ahora funciona al revés" if g.get("invertido") else ""
             lineas.append(f"  {g['piso']} a {g['techo']} ({g['tipo']}{vuelto})")
+
+    # ⚠ DIVERGENCIAS DE AGOTAMIENTO, NO DE OSCILADOR. No comparan el precio con
+    # el RSI: comparan la FUERZA de un swing contra la del anterior —cuánto
+    # rango recorrió y en cuántas velas—. Un nuevo extremo con menos impulso que
+    # el previo es un movimiento agotándose.
+    #
+    # Se dice "hace N velas" y no la hora: lo que decide si todavía cuenta es
+    # cuánto gráfico ha pasado encima, no el reloj.
+    divs = ind.get("divergencias") or []
+    if divs:
+        lineas.append("")
+        lineas.append("agotamiento del impulso (el swing nuevo llegó con menos fuerza):")
+        for d in divs:
+            lineas.append(f"  {d['precio']} ({d['tipo']}, hace {d['hace_velas']} velas)")
 
     if not datos["velas"][-1].get("takerBuyVolume"):
         lineas.append("")

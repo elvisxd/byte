@@ -100,7 +100,9 @@ Los ejes disponibles, y qué busca cada uno:
 - `cvd-divergence`: nuevo extremo de precio que el volumen comprador agresivo no
   acompaña. DORMIDO: esta fuente no expone el dato, no lo uses.
 - `dip-trap`: caída brusca con volumen ALTO que se revierte en pocas velas.
-  Barrió stops y no había vendedores reales detrás.
+  Barrió stops y no había vendedores reales detrás. El agotamiento del impulso
+  que ves en `mirar_mercado` es una pista de que el movimiento se está quedando
+  sin fuerza.
 - `anti-smc`: aparece un patrón SMC de manual —un CHoCH limpio, un order block
   claro— y se opera EN CONTRA.
 
