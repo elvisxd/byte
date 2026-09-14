@@ -612,3 +612,65 @@ def test_el_freno_por_drawdown_aparece_en_el_estado(tmp_path: Path) -> None:
     # Informa sin instruir: ni «operá menos», ni «cambiá de eje».
     for consejo in ("operá menos", "cambiá de eje", "tené cuidado", "dejá de"):
         assert consejo not in aviso.lower()
+
+
+def test_el_modelo_queda_grabado_en_lo_que_se_registra(tmp_path: Path) -> None:
+    """Desde que hay dos máquinas, sin esto la muestra es inservible.
+
+    El Codespace corre qwen3.6:27b y la Mac un 14B. Una racha mala no se podría
+    atribuir al mercado o al modelo más chico — y ya está medido que el 8B abre
+    en todas las vueltas con razones clonadas donde el 27B se abstiene cinco
+    veces seguidas.
+
+    ⚠ NO ENTRA EN EL SELLO, y es deliberado: el sello impide reescribir una
+    DECISIÓN del agente, y el modelo es un hecho del entorno que fija el código.
+    Meterlo ahí marcaría como adulterada toda fila anterior al cambio, que es
+    ruido y no fraude.
+    """
+    from paper.registro import Contexto, Registro
+
+    ruta = tmp_path / "modelo.db"
+    ctx = Contexto(
+        precio=100.0, timestamp="2026-09-14T00:00:00Z", dia_semana=0, hora_utc=0,
+        extra={"indicadores": {"atr": 2.0}},
+    )
+
+    # Sin modelo —como las filas de antes del cambio— queda NULL. Rellenarlas
+    # con el de ahora sería inventar quién las hizo.
+    sin = Registro(ruta)
+    sin.abrir(
+        eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
+        razon="de antes", stop_loss=99.0,
+    )
+    assert sin._con.execute("SELECT modelo FROM operaciones").fetchone()[0] is None  # noqa: SLF001
+
+    # Otra máquina, misma base: es el caso que motiva la columna.
+    con = Registro(ruta, modelo="qwen3.6:27b")
+    con.abrir(
+        eje="dip-trap", simbolo="BTCUSDT", direccion="long", contexto=ctx,
+        razon="del codespace", stop_loss=99.0,
+    )
+    con.dejar_orden(
+        eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
+        razon="orden", precio_limite=95.0, stop_loss=90.0,
+    )
+    con.predecir(
+        simbolo="BTCUSDT", contexto=ctx, nivel=110.0, hacia="arriba",
+        probabilidad=0.6, razonamiento="pred", temporalidad="1h",
+    )
+
+    # Las tres tablas, no solo las operaciones: una orden y una predicción
+    # también son trabajo de un modelo concreto.
+    for tabla in ("operaciones", "ordenes", "predicciones"):
+        ultimos = con._con.execute(  # noqa: SLF001
+            f"SELECT modelo FROM {tabla} ORDER BY id DESC LIMIT 1"  # noqa: S608
+        ).fetchone()[0]
+        assert ultimos == "qwen3.6:27b", tabla
+
+    # Y lo que de verdad importa: la mezcla se puede separar después.
+    por_modelo = dict(
+        con._con.execute(  # noqa: SLF001
+            "SELECT COALESCE(modelo,'(sin modelo)'), COUNT(*) FROM operaciones GROUP BY modelo"
+        ).fetchall()
+    )
+    assert por_modelo == {"(sin modelo)": 1, "qwen3.6:27b": 1}
