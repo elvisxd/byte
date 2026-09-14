@@ -92,3 +92,35 @@ las que uno querría.
 Y si se sube, se anota aquí el valor viejo, el nuevo y qué se vio en el registro
 —igual que esta sección—, para que el historial distinga «se midió» de «se
 tocó».
+
+## 2026-09-14 · el marco de la espera pasa de 15m a 1h
+
+**Valor viejo:** la vuelta esperaba a que cerrara una vela de **15m** o a 0,5
+ATR de 15m. **Valor nuevo:** vela de **1h** o 0,5 ATR de 1h. El 0,5 no se
+toca.
+
+**Lo que se vio en el registro y en las trazas (sesiones 7 a 10, con
+razonamiento):** una vuelta del modelo dura entre 25 y 40 minutos. Con la
+espera en 15m, «que cierre una vela» se cumplía siempre antes de terminar de
+pensar: la espera no esperaba nada. Y lo que el modelo relee en cada vuelta
+—el rango de 4h, los pools, el régimen de 1h— no había cambiado: la sesión 10
+pidió el mapa dos veces seguidas y obtuvo el mismo gráfico. Diez vueltas sobre
+el mismo gráfico general no son diez observaciones, que es lo que este archivo
+ya decía del 15m contra el 15m.
+
+**Por qué no es «da pocas vueltas»:** las vueltas no bajan por la espera —ya
+las limita el modelo—; lo que cambia es que cada una empieza con algo
+distinto que mirar en el marco que decide. Es el argumento de la sección
+anterior aplicado un marco más arriba: el umbral de 15m no consigue que cada
+vuelta sea una observación distinta.
+
+**Lo que NO cambia:** las órdenes límite y las predicciones se siguen
+resolviendo contra velas de 15m —ahí la granularidad fina importa, porque un
+toque de un minuto es un toque—. Y el 15m sigue siendo el marco del timing
+de la entrada: lo que cambia es cuándo se vuelve a mirar, no qué se mira.
+
+**Cada marco con su pregunta**, que es lo que faltaba escribir: 4h es la
+estructura —dónde está el precio en el rango, los pools y FVGs grandes, la
+tesis de fondo—; 1h es el régimen y si el impulso sigue o se agota, y el marco
+por defecto de las predicciones; 15m es solo el timing —la vela en curso, el
+barrido, la entrada—. No se busca en 15m lo que es de 4h, ni al revés.
