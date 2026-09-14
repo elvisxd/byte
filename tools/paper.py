@@ -377,9 +377,11 @@ class PredecirArgs(BaseModel):
         description="Qué ves que justifica ESA probabilidad. Queda sellado al predecir."
     )
     temporalidad: str = Field(
-        default="15m",
+        default="1h",
         description=(
-            "En qué gráfico lo estás viendo: 15m, 1h o 4h. Tiene que ser el mismo que "
+            "En qué gráfico lo estás viendo: 15m, 1h o 4h. 1h es el marco por defecto "
+            "de las predicciones (el régimen y el impulso); 15m es solo timing y 4h la "
+            "estructura. Tiene que ser el mismo que "
             "miraste, porque el contexto se sella con él."
         ),
     )
