@@ -100,6 +100,11 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
         f"precio {ctx.precio}",
         f"rango de 20 velas: {ctx.extra['rango_piso']} a {ctx.extra['rango_techo']} "
         f"({ctx.ancho_rango_pct}% de ancho)",
+        # ⚠ EL NÚMERO HECHO, NO EL CÁLCULO. Trampa 2 de paper/TRAMPAS.md: el
+        # modelo dijo «en el techo» con el precio un 1,2 % por debajo, y «en el
+        # piso» con el precio al 73 % del recorrido. Con el porcentaje delante
+        # no hay nada que estimar.
+        f"al {_posicion_en_rango(ctx):.0f}% del rango: 0% es el piso, 100% el techo",
         f"volumen relativo a las últimas 50: {ctx.volumen_relativo}x",
         f"día {ctx.dia_semana} (0=lunes), hora {ctx.hora_utc} UTC",
         "",
@@ -581,6 +586,39 @@ def _mover_stop(registro: Registro, args: MoverStopArgs) -> ToolResult:
     )
 
 
+def _posicion_en_rango(ctx: Contexto) -> float:
+    """Dónde está el precio dentro del rango de 20 velas, de 0 (piso) a 100 (techo)."""
+    piso, techo = ctx.extra["rango_piso"], ctx.extra["rango_techo"]
+    ancho = techo - piso
+    if not ancho:
+        return 50.0
+    return (ctx.precio - piso) / ancho * 100
+
+
+def _precio_ahora() -> float | None:
+    """El último cierre de 15m, o None si el mercado no responde."""
+    try:
+        datos = velas(SIMBOLO_UNICO, "15m", 2)
+    except MercadoNoDisponible:
+        return None
+    ultimas = datos.get("velas") or []
+    return float(ultimas[-1]["close"]) if ultimas else None
+
+
+def _como_va(o: dict[str, Any], precio: float | None) -> str:
+    """« · +0.06R a favor (precio 78803.28)», o nada si no hay precio."""
+    if precio is None:
+        return ""
+    riesgo = abs(o["precio_entrada"] - o["stop_loss"])
+    if not riesgo:
+        return ""
+    r = (precio - o["precio_entrada"]) / riesgo
+    if o["direccion"] == "short":
+        r = -r
+    palabra = "a favor" if r > 0 else "en contra" if r < 0 else "en tablas"
+    return f" · {r:+.2f}R {palabra} (precio {precio})"
+
+
 def _estado(registro: Registro) -> ToolResult:
     """Lo que quedó abierto y cómo va cada eje. Es lo que el agente lee al volver.
 
@@ -589,14 +627,22 @@ def _estado(registro: Registro) -> ToolResult:
     """
     abiertas = registro.abiertas()
     ejes = registro.por_eje()
+    # ⚠ EL R ABIERTO SE LE DA HECHO, CON SIGNO Y PALABRA. Trampa 1 de
+    # paper/TRAMPAS.md: el modelo cerró un short en +0,057R diciendo «1000+
+    # puntos por debajo del entry […] la operación está en pérdida». Eran 57
+    # puntos y un short con el precio abajo GANA. No es un filtro —no decide
+    # nada—: es el mismo gesto que darle el ATR en vez de las 200 velas.
+    # Best-effort: sin precio, la lista sale como antes.
+    precio_ahora = _precio_ahora() if abiertas else None
 
     partes = []
     if abiertas:
         partes.append("Operaciones abiertas:")
         for o in abiertas:
+            como_va = _como_va(o, precio_ahora)
             partes.append(
                 f"  #{o['id']} {o['direccion']} {o['simbolo']} a {o['precio_entrada']} "
-                f"(stop {o['stop_loss']}) · eje '{o['eje']}' · «{o['razon'][:90]}»"
+                f"(stop {o['stop_loss']}){como_va} · eje '{o['eje']}' · «{o['razon'][:90]}»"
             )
     else:
         partes.append("No hay operaciones abiertas.")
