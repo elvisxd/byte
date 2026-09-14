@@ -70,6 +70,9 @@ Esto es lo que tenés que hacer AHORA, en este turno:
 3. Si no hay ninguna abierta —o si además ves una entrada clara— mirá el mercado
    y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
    justifica entrar ACÁ y no cinco velas después.
+   `mirar_mercado` SIN intervalo te da los tres gráficos del mismo instante:
+   empezá por ahí, y pedí un marco suelto solo si te hace falta el detalle.
+   Cada marco tiene su rango y su ATR: no mezcles los de uno con los de otro.
 4. Si el precio de ahora no te sirve pero SÍ sabrías a qué precio entrarías,
    dejá una orden con `dejar_orden` en vez de no hacer nada. Entre esta sesión y
    la siguiente pasan ~23 horas sin nadie mirando: una orden es la única forma
@@ -234,7 +237,7 @@ async def una_sesion(
     etiqueta_modelo = ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
 
     herramientas = ToolRegistry(
-        build_paper_tools(ruta_db, ajustes.max_tool_result_chars, etiqueta_modelo)
+        build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta_modelo)
     )
 
     # Sin checkpointer: cada turno se arma con el estado que el agente LEE del
@@ -263,7 +266,7 @@ async def una_sesion(
         ),
         herramientas,
         max_iterations=ajustes.max_iterations,
-        max_tool_result_chars=ajustes.max_tool_result_chars,
+        max_tool_result_chars=ajustes.paper_max_tool_result_chars,
         num_ctx=ajustes.ollama_num_ctx,
     )
 

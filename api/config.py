@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # La API no los lee —usa los de arriba—, así que su latencia no cambia.
     paper_reasoning: bool = Field(default=False, alias="BYTE_PAPER_REASONING")
     paper_num_predict: int = Field(default=4096, alias="BYTE_PAPER_NUM_PREDICT")
+    # El mapa de `mirar_mercado` son tres gráficos en una respuesta; con los
+    # 4000 de la API el de 4h se recortaba. Solo lo usa el agente en papel.
+    paper_max_tool_result_chars: int = Field(default=8000, alias="BYTE_PAPER_MAX_TOOL_RESULT_CHARS")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")

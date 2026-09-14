@@ -49,7 +49,14 @@ SIMBOLO_UNICO = "BTCUSDT"
 
 class MirarArgs(BaseModel):
     simbolo: str = Field(default="BTCUSDT", description="Par, por ejemplo BTCUSDT o ETHUSDT")
-    intervalo: str = Field(default="15m", description="Temporalidad: 15m, 1h, 4h")
+    intervalo: str = Field(
+        default="",
+        description=(
+            "Dejalo VACÍO (lo normal) y recibís el mapa: 15m, 1h y 4h del mismo instante, "
+            "compactos, cada uno con su rango, su ATR y su régimen. Poné 15m, 1h o 4h solo "
+            "si necesitás UN gráfico con todo el detalle."
+        ),
+    )
 
 
 def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
@@ -592,6 +599,146 @@ def _mover_stop(registro: Registro, args: MoverStopArgs) -> ToolResult:
     )
 
 
+MARCOS_DEL_MAPA = ("15m", "1h", "4h")
+
+
+def _n(x: Any, dec: int = 1) -> Any:
+    """Redondea si es número, para que el mapa quepa; deja pasar lo demás."""
+    return round(x, dec) if isinstance(x, int | float) else x
+
+
+def _hechos_de_la_vela(velas: list[dict[str, Any]], atr: Any) -> str:
+    """La vela en curso comparada con las 19 previas, como HECHO y no como dictamen.
+
+    Es lo que `range-sweep` mira —una mecha que excede el rango y un cierre que
+    vuelve adentro— y lo que `dip-trap` mira —una vela grande con volumen—.
+    Se dice cuánto excedió y dónde está el cierre; si eso es un barrido lo
+    decide el modelo. Un «range-sweep: SÍ» acá sería el script decidiendo, y
+    eso es lo que `sesion.py` prohíbe: habría dos estrategias y el registro no
+    diría cuál produjo cada resultado.
+    """
+    if len(velas) < 21 or not isinstance(atr, int | float) or atr <= 0:
+        return "vela en curso: sin datos suficientes"
+    v = velas[-1]
+    previas = velas[-20:-1]
+    techo = max(c["high"] for c in previas)
+    piso = min(c["low"] for c in previas)
+    rango = v["high"] - v["low"]
+    partes = [f"vela en curso: rango {rango / atr:.1f} ATR"]
+    if rango > 0:
+        partes.append(f"cierre en el {(v['close'] - v['low']) / rango * 100:.0f}% de su rango")
+    if v["high"] > techo:
+        dentro = "cierre dentro" if v["close"] <= techo else "cierre FUERA"
+        partes.append(
+            f"mecha {v['high'] - techo:.0f} por ENCIMA del techo de las 19 previas, {dentro}"
+        )
+    if v["low"] < piso:
+        dentro = "cierre dentro" if v["close"] >= piso else "cierre FUERA"
+        partes.append(
+            f"mecha {piso - v['low']:.0f} por DEBAJO del piso de las 19 previas, {dentro}"
+        )
+    return " · ".join(partes)
+
+
+def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
+    """Un marco en cuatro a siete líneas. Hechos; los mismos que `_mirar`, apretados."""
+    ctx = _contexto_de(datos, ind)
+    adx = ind.get("adx") or {}
+    macd = ind.get("macd") or {}
+    reg = ind.get("regime") or {}
+    piso, techo = ctx.extra["rango_piso"], ctx.extra["rango_techo"]
+    cabecera = (
+        f"── {marco} ── precio {ctx.precio} · al {_posicion_en_rango(ctx):.0f}% del rango "
+        f"{piso}–{techo} ({ctx.ancho_rango_pct}% de ancho)"
+    )
+    if reg.get("regimen"):
+        cabecera += f" · régimen medido: {reg['regimen']} (chop {_n(reg.get('chop'))})"
+    lineas = [
+        cabecera,
+        f"   ATR {_n(ind.get('atr'))} · ADX {_n(adx.get('adx'))} · RSI {_n(ind.get('rsi'))} · "
+        f"MACD {_n(macd.get('macd'))} sobre señal {_n(macd.get('signal'))} · "
+        f"EMA20 {_n(ind.get('ema'))}{_respecto_a_ema(ctx.precio, ind.get('ema'))}",
+        f"   volumen {ctx.volumen_relativo}x de la media · "
+        f"{_hechos_de_la_vela(datos['velas'], ind.get('atr'))}",
+    ]
+    pools = ind.get("liquidity") or []
+    if pools:
+        lineas.append(
+            "   pools sin barrer: "
+            + ", ".join(
+                f"{p['precio']} ({p['lado']}, f{p['fuerza']}"
+                + (f", {p['swings']} swings" if p.get("swings", 1) > 1 else "")
+                + ")"
+                for p in pools[:6]
+            )
+        )
+    gaps = ind.get("fvg") or []
+    if gaps:
+        lineas.append(
+            "   FVG sin rellenar: "
+            + ", ".join(
+                f"{g['piso']}–{g['techo']} "
+                f"({g['tipo']}{', INVERTIDO' if g.get('invertido') else ''})"
+                for g in gaps[:4]
+            )
+        )
+    divs = ind.get("divergencias") or []
+    if divs:
+        lineas.append(
+            "   agotamiento: "
+            + ", ".join(
+                f"{d['precio']} ({d['tipo']}, hace {d['hace_velas']} velas)" for d in divs[:3]
+            )
+        )
+    return "\n".join(lineas)
+
+
+def _mapa(simbolo: str, max_chars: int) -> ToolResult:
+    """Los tres gráficos del mismo instante, compactos.
+
+    ⚠ POR QUÉ EXISTE. Medido el 2026-09-14 con qwen3:14b pensando: pedía 4h,
+    luego 15m, y entre medias leía el rango de 4h dentro del gráfico de 15m
+    —régimen dicho RANGE, medido TREND, tres veces de cuatro—. Y cada llamada
+    a `mirar_mercado` son ~7 minutos de pensamiento y una de las seis
+    iteraciones. Con el mapa, una llamada trae los tres y la cabecera dice lo
+    que la trampa 6 de TRAMPAS.md enseñó: cada marco tiene lo suyo.
+
+    Hechos, no veredictos: ver `_hechos_de_la_vela`.
+    """
+    bloques: list[str] = []
+    fallos: list[str] = []
+    precio: float | None = None
+    fuente = ""
+    sin_cvd = False
+    for marco in MARCOS_DEL_MAPA:
+        try:
+            datos = velas(simbolo, marco, 200)
+        except MercadoNoDisponible as exc:
+            fallos.append(f"{marco}: {exc}")
+            continue
+        ind = indicadores(datos["velas"], SIEMPRE)
+        bloques.append(_bloque(marco, datos, ind))
+        ultima = datos["velas"][-1]
+        precio, fuente = ultima["close"], datos["fuente"]
+        sin_cvd = sin_cvd or not ultima.get("takerBuyVolume")
+    if not bloques:
+        return ToolResult(content="; ".join(fallos), summary={"error": "sin datos"}, ok=False)
+    cabecera = (
+        f"{simbolo} — los tres gráficos del mismo instante ({fuente}). Cada marco tiene SU "
+        "rango, SU ATR y SU régimen: no mezcles los de uno con los de otro. El % del rango "
+        "y la EMA son de ese marco; una predicción en 15m se mide con el ATR de 15m."
+    )
+    cuerpo = cabecera + "\n\n" + "\n\n".join(bloques)
+    if fallos:
+        cuerpo += "\n\n(sin " + "; ".join(fallos) + ")"
+    if sin_cvd:
+        cuerpo += "\n\n(sin CVD: esta fuente no expone el volumen comprador)"
+    return ToolResult(
+        content=wrap_untrusted(f"MERCADO {simbolo}", cuerpo, max_chars),
+        summary={"simbolo": simbolo, "precio": precio, "marcos": [b[3:6].strip() for b in bloques]},
+    )
+
+
 def _respecto_a_ema(precio: float, ema: Any) -> str:
     """« (precio 1.9% por ENCIMA de la EMA20)», o nada si no hay EMA."""
     if not isinstance(ema, int | float) or ema <= 0:
@@ -818,6 +965,10 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
     registro = Registro(ruta_db, modelo=modelo)
 
     async def mirar(args: BaseModel) -> ToolResult:
+        # Sin intervalo: el mapa —los tres gráficos del mismo instante—. Con
+        # intervalo: un gráfico con todo el detalle. Ver `_mapa`.
+        if not str(getattr(args, "intervalo", "")).strip():
+            return _mapa(str(getattr(args, "simbolo", SIMBOLO_UNICO)), max_chars)
         return _mirar(args, max_chars)  # type: ignore[arg-type]
 
     async def abrir(args: BaseModel) -> ToolResult:
@@ -851,9 +1002,11 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
         Tool(
             name="mirar_mercado",
             description=(
-                "El estado actual de un par: precio, rango de las últimas 20 velas, "
-                "volumen relativo, ATR, ADX, RSI, MACD y EMA. Usala ANTES de decidir "
-                "cualquier entrada."
+                "El mercado. Sin `intervalo` te da los TRES gráficos del mismo instante "
+                "(15m, 1h, 4h): precio, dónde está en su rango, régimen medido, ATR, "
+                "ADX, RSI, MACD, de qué lado de la EMA, la vela en curso, pools de "
+                "liquidez y FVGs. Empezá SIEMPRE por ahí. Con `intervalo` te da uno solo "
+                "con más detalle. Usala ANTES de decidir cualquier entrada."
             ),
             args_model=MirarArgs,
             run=mirar,
