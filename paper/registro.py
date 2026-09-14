@@ -1070,8 +1070,9 @@ class Registro:
         """Registra una apuesta probabilística, sellada como una razón de entrada.
 
         `horas_vigencia` en 0 significa "el plazo que le toca a su marco" —ver
-        `PLAZO_POR_MARCO`—. Un número explícito lo pisa, para las tesis que
-        piden otro plazo.
+        `PLAZO_POR_MARCO`—. Un número explícito lo ACORTA, para las tesis que
+        piden menos tiempo; alargarlo se rechaza, porque el plazo máximo es el
+        del marco y un 15m a 96 h es una tesis de 4h con otro nombre.
         """
         if hacia not in ("arriba", "abajo"):
             raise ValueError(f"dirección desconocida: {hacia!r}")

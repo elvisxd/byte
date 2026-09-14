@@ -59,7 +59,8 @@ def test_sin_marco_conocido_no_hay_tope(registro: Registro) -> None:
 
 def test_la_pista_pide_el_plazo_de_15m(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     import tools.paper as herramientas
-    from tools.paper import PredecirArgs, _predecir as predecir_tool
+    from tools.paper import PredecirArgs
+    from tools.paper import _predecir as predecir_tool
 
     def velas(_s: str, marco: str, _n: int) -> dict[str, Any]:
         from datetime import UTC, datetime
