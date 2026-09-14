@@ -122,6 +122,84 @@ entradas en FVG solo. Si el LVN no añade nada, sobra.
 
 ---
 
+## 4 · `vela-reversion` — la anatomía de la vela, no el nombre del patrón
+
+Anotado el 2026-09-14 tras revisar la evidencia. **No se activa.**
+
+**Lo que dice la literatura, con números.** En acciones, no: Marshall, Young
+y Rose (2006), DJIA 1992-2002 contra series aleatorias por bootstrap —los
+patrones no generan retorno distinguible del azar—, replicado en Japón y
+Taiwán. Bulkowski da tasas por patrón sobre 4,7 millones de velas (morning
+star 78 % de reversión, abandoned baby 70 %, engulfing 63 %), pero es acciones,
+diario y a diez días. En cripto, dividido: el estudio de 2026 en ScienceDirect
+(55 patrones de reversión, velas de 1h, ~400 monedas, 36 exchanges, 200 millones
+de observaciones, con test SPA por data-snooping) encuentra que UNOS POCOS sí
+preceden retornos —Harami y Hikkake alcistas; Harami bajista y Hanging Man—,
+robustos entre exchanges y períodos (tamaño del efecto y costes no
+consultables: de pago). La tesis de la Universidad Carolina (41 patrones, 5
+conjuntos, t-test ajustado por asimetría y binomial): **8 de 41 útiles, solo 4
+robustos**, y ninguno significativo en uno de los conjuntos. Un backtest de 43
+patrones × 5 marcos en BTC con walk-forward: cero sobreviven (no publicado).
+
+**La trampa, que es lo que vale de esta revisión.** En cripto, el Shooting
+Star —catalogado como bajista— y la mecha superior larga **son alcistas**; la
+tesis propone reclasificarlos y concluye que «el etiquetado tradicional de los
+patrones es cuestionable en cripto». Es la misma lógica de `anti-smc`: el
+manual dice una cosa y el mercado hace otra. Y los patrones con hueco
+(Rising Window, Tasuki, Abandoned Baby) apenas existen: cripto no cierra.
+
+**Por qué NO un eje de «patrones».** Tres razones. Las etiquetas no se
+trasladan, así que un eje «hammer alcista» ya nace con la dirección puesta por
+un libro de otro mercado. Probar 41 o 103 patrones es la trampa de
+comparaciones múltiples que el repo de trading ya pagó (`mlb/Pitching Outs`,
+de p=0,0099 a 0,804 al corregir). Y lo que el estudio grande encuentra son
+anatomías —una vela pequeña dentro de la anterior, una mecha larga en un
+extremo—, no nombres.
+
+**El candidato, si algún día entra:** una vela de 1h con mecha ≥ 2 veces el
+cuerpo, en un extremo del rango de 1h, **sin dirección presupuesta**: la
+hipótesis es que el precio se aleja de la mecha (rechazo) y la contraria, que
+la sigue (continuación, lo que la tesis vio en el Shooting Star). Las dos se
+miden; ninguna se elige antes.
+
+**Qué lo falsaría.** Que las entradas de `range-sweep` hechas tras una vela de
+mecha larga en el extremo no se aparten en R/trade de las hechas sin ella. Se
+puede medir SIN activar nada: el contexto sellado guarda las velas del
+momento, y el mapa va a decir la anatomía de la última vela cerrada.
+
+**Qué hace falta antes.** Que el mapa enseñe la anatomía de la última vela
+cerrada como hecho —cuerpo, mechas en ATR, color— sin nombrar patrones. Eso
+es «el número hecho, no el cálculo», y va en código aparte de este archivo.
+
+## 5 · `turn-of-the-candle` — el reloj, no la vela
+
+Anotado el 2026-09-14. **No se activa.** Salió buscando lo anterior y es más
+robusto que cualquier patrón: en BTC, los retornos positivos —0,58 puntos
+básicos por minuto— se concentran en los minutos **0, 15, 30 y 45** de cada
+hora, con t > 9 en los siete exchanges estudiados (Bitfinex, Binance, Gemini,
+Bitstamp, Bittrex, Kucoin, FTX), robusto a colas pesadas y outliers, y una
+estrategia que lo explota rinde 74,18 % neto anual contra 60,27 % de comprar y
+mantener, con costes y con capital desde 5.000 $. Los autores lo atribuyen a
+algoritmos que reaccionan a la llegada de la vela de 15 min.
+
+**Por qué está aquí y no en un eje.** No es una lectura del gráfico: es un
+efecto de microestructura a un minuto, y el agente opera con velas de 15m en
+adelante. Encaja mejor como regla de EJECUCIÓN —cuándo dentro del cuarto de
+hora conviene que se dispare una orden— que como hipótesis de entrada.
+
+**Qué lo falsaría.** Que el efecto haya desaparecido: el paper es de 2023 con
+datos hasta 2022, y un efecto de algoritmos se arbitra. Se comprueba con
+velas de un minuto de MEXC antes de hacer nada.
+
+**Fuentes (2026-09-14):** Marshall, Young y Rose (2006)
+https://www.researchgate.net/publication/223853109 · ScienceDirect 2026
+https://www.sciencedirect.com/science/article/pii/S1059056026002716 · Tesis
+Universidad Carolina
+https://dspace.cuni.cz/bitstream/handle/20.500.11956/197060/130412926.pdf ·
+Bulkowski https://thepatternsite.com/MorningStar.html · Turn-of-the-candle
+https://pmc.ncbi.nlm.nih.gov/articles/PMC10015199/ · Backtest BTC 43×5
+walk-forward https://www.youtube.com/watch?v=U_jhKw7rdB8
+
 ## Lo que NO se hace con esta lista
 
 - **No se activa ninguno antes de las 100 operaciones.** Ni «solo para probar».
