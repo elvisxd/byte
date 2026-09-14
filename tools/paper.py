@@ -549,6 +549,26 @@ def _estado(registro: Registro) -> ToolResult:
             "ninguno se ajusta hasta el final (paper/CRITERIO_ABORTO.md).",
         ]
 
+        # ⚠ EL FRENO DEL PUNTO 4, Y VA DIRIGIDO A QUIEN LEE, NO AL AGENTE. Un
+        # umbral que nadie mira no frena nada, así que tiene que aparecer donde
+        # se mira; pero decirle al modelo «vas perdiendo, tené cuidado» le
+        # cambiaría el comportamiento a mitad del experimento, que es
+        # exactamente lo que el criterio prohíbe. Por eso informa sin instruir:
+        # ni «operá menos», ni «cambiá de eje».
+        #
+        # No es «va perdiendo»: perder no aborta nada (ver la sección de abajo
+        # del criterio). Es que una racha destructiva consume las 100
+        # operaciones sin producir variedad de razones, y cien entradas
+        # idénticas perdiendo no son cien datos, son uno.
+        total = sum(e["r_total"] or 0 for e in ejes)
+        if total <= -30:
+            partes += [
+                "",
+                f"⚠ FRENO: {total:.1f}R acumulados, por debajo de −30R. El criterio "
+                "pide parar a revisar antes de gastar más muestra. No es un veredicto "
+                "sobre las hipótesis ni algo que tengas que corregir vos.",
+            ]
+
     # Las órdenes que esperan. Sin esto el agente no sabría que dejó un plan
     # puesto y podría dejar otro encima sobre el mismo nivel.
     ordenes = registro.ordenes_vivas()

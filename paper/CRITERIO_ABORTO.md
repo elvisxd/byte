@@ -37,12 +37,36 @@ que es lo que un backtest calibrado no puede decir.
    —las que ningún ajuste pudo ver— se aborta: es el mismo sobreajuste que
    convirtió -96R en +88R en `rangeSweepCombo.ts`.
 
+## Se para —que no es lo mismo que abortar— si:
+
+4. **El drawdown pasa de −30R acumulados.** No es un veredicto sobre la
+   estrategia: es un freno para mirar qué está pasando antes de gastar más
+   muestra. Se revisa, se anota qué se vio, y se decide si seguir o no. Si se
+   sigue, se sigue sin tocar nada —ese es el punto—.
+
+   ⚠ ESTO NO CONTRADICE LA SECCIÓN DE ABAJO, y la diferencia importa: perder
+   plata simulada no aborta nada. Lo que este umbral vigila es otra cosa —que el
+   agente entre en una racha destructiva que consuma las 100 operaciones sin
+   producir variedad de razones, que es lo único que el experimento viene a
+   medir—. Cien entradas idénticas perdiendo no son cien datos, son uno.
+
+   El número sale de fuera: los agentes de trading en producción operan dentro
+   de «contratos de autoridad» con umbrales de drawdown y escalado a un humano,
+   y el único resultado en vivo de 2026 con pinta honesta reportaba ~7% a 30
+   días **con un 22% de drawdown**. Acá no hay dinero, así que el umbral no
+   protege capital: protege la muestra.
+
+   Es un freno, no un ajuste. Bajar el umbral después de tocarlo sería calibrar.
+
 ## Lo que NO es criterio de aborto
 
 Que el P&L simulado sea negativo. Un conjunto de ejes exploratorios puede perder
 plata simulada y aun así producir el dato que se busca: cuáles razones fallan y
 por qué. Confundir "no ganó" con "no sirvió" es lo que empuja a calibrar hasta
 que gane, que es exactamente lo que se está tratando de no repetir.
+
+Tampoco lo es tocar el freno del punto 4. Pararse a mirar y seguir es una
+decisión válida; lo que no vale es seguir sin haber mirado.
 
 ## Qué se registra, y cuándo
 
