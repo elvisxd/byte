@@ -1087,6 +1087,20 @@ class Registro:
             # vence nunca no se resuelve— y elegir el más corto castigaría a
             # quien no dijo el marco.
             horas_vigencia = self.PLAZO_POR_MARCO.get(temporalidad.strip(), 24.0)
+        # ⚠ EL PLAZO NO PUEDE SUPERAR EL DE SU MARCO. Acortarlo sí —una tesis
+        # que pide menos tiempo es legítima—; alargarlo no. Medido el 2026-09-14
+        # (sesión 8, predicción #7): un «15m» con horas_vigencia=96 explícito
+        # pasó como marco distinto de la 4h viva —misma dirección, mismo nivel,
+        # misma probabilidad, mismo vencimiento—. La separación por marco existe
+        # porque «tocará X en 6 h» y «tocará X en 96 h» son preguntas distintas;
+        # si el plazo se copia, el marco es una etiqueta y la apuesta es la misma.
+        plazo = self.PLAZO_POR_MARCO.get(temporalidad.strip())
+        if plazo is not None and horas_vigencia > plazo:
+            raise ValueError(
+                f"en {temporalidad.strip()} el plazo máximo son {plazo:.0f} h, no "
+                f"{horas_vigencia:.0f}: una tesis a {horas_vigencia:.0f} h es de otro marco. "
+                f"Dejá horas_vigencia en 0 y toma el plazo de {temporalidad.strip()}."
+            )
         # ⚠ EL NIVEL TIENE QUE ESTAR DEL LADO QUE DICE. Un "arriba" por debajo
         # del precio actual ya ocurrió antes de registrarse: sería un acierto
         # garantizado que infla la muestra sin decir nada del modelo.

@@ -380,9 +380,9 @@ class PredecirArgs(BaseModel):
         default=0.0,
         description=(
             "Cuántas horas tiene el precio para tocar el nivel. Dejalo en 0 y se "
-            "calcula desde la temporalidad: ~6h en 15m, 24h en 1h, 96h en 4h. Ponelo "
-            "a mano solo si tu tesis pide otro plazo, y decí por qué en el "
-            "razonamiento."
+            "calcula desde la temporalidad: 6h en 15m, 24h en 1h, 96h en 4h. Podés "
+            "acortarlo si tu tesis pide menos tiempo; NUNCA alargarlo: el plazo máximo "
+            "es el de su marco, y un 15m a 96h es una tesis de 4h con otro nombre."
         ),
     )
 
@@ -433,7 +433,9 @@ def _pista_de_marco_menor(registro: Registro, marco: str, nivel: float, hacia: s
     return (
         f"\nEn 15m SÍ entra: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y {nivel} dista "
         f"{dista:.0f} del precio {ctx.precio}. Las predicciones vivas en {marco.strip()} no "
-        f'bloquean 15m. Repetí la llamada con temporalidad="15m".'
+        f'bloquean 15m. Repetí la llamada con temporalidad="15m" y horas_vigencia=0: '
+        f"vence en {registro.PLAZO_POR_MARCO['15m']:.0f} h, que es OTRA pregunta, no la "
+        f"misma apuesta más corta."
     )
 
 
