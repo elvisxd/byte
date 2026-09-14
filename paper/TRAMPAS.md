@@ -57,6 +57,11 @@ está el precio —«al 73 % del rango: piso 76077.62, techo 79827.4»—.
 **Qué lo falsaría:** lo mismo: que con el porcentaje delante siga diciendo
 «techo» a un 73 %.
 
+**Visto (n=1, sesión 8, vuelta 1):** con «al 72% del rango» delante en
+`mirar_mercado`, la razón dijo «el precio está en el techo del rango
+(79827.4)» con el precio en 78769. Puede ser abreviatura de «cerca del
+techo»; con n=1 no se decide. Se sigue mirando.
+
 ### 3. Entra sin el patrón del eje, y lo reconoce después
 
 `range-sweep` exige que el techo o el piso **se barra con mecha y el precio
@@ -113,6 +118,16 @@ Sesión 8, vuelta 1, la primera con la pista de 15m. Rechazada en 4h por
 chocar con la #2 (76077.62, abajo, 0,7), la pista le dijo que en 15m entraba
 y el modelo la repitió tal cual: 76077.62, abajo, 0,7, **«15m»… y
 `horas_vigencia=96`**. Vence el mismo día que la #2. Es la #2 con otro nombre.
+
+Y lo más revelador está en su pensamiento, en la sesión 8:
+
+> «The original had 96 hours, but for 15m, maybe 6 hours? […] However, the
+> system didn't mention changing that, just the timeframe.»
+
+**Vio el problema y siguió la instrucción literal de la herramienta.** Sigue a
+la herramienta incluso contra su propia duda —que es exactamente la razón por
+la que la pista funciona, y por la que el arreglo va en la herramienta y no
+en el prompt—.
 
 Dos partes son mías: `predecir` aceptaba cualquier plazo explícito sin
 mirar el marco —`PLAZO_POR_MARCO` solo aplicaba con 0—, y la pista decía
