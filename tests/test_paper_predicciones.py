@@ -163,9 +163,7 @@ def test_una_prediccion_viva_que_no_vencio_sigue_abierta(
     assert len(registro.predicciones_vivas()) == 1
 
 
-def test_el_regimen_lo_pone_el_codigo_no_el_modelo(
-    registro: Registro, contexto: Contexto
-) -> None:
+def test_el_regimen_lo_pone_el_codigo_no_el_modelo(registro: Registro, contexto: Contexto) -> None:
     """Se guardan los dos por separado porque la pregunta es si COINCIDEN.
 
     Si el modelo pudiera escribir `regimen_medido`, la comparación mediría su
@@ -185,9 +183,7 @@ def test_el_regimen_lo_pone_el_codigo_no_el_modelo(
     assert fila["regimen_dicho"] == "TREND"  # lo que dijo el modelo
 
 
-def test_los_tramos_callan_por_debajo_del_minimo(
-    registro: Registro, contexto: Contexto
-) -> None:
+def test_los_tramos_callan_por_debajo_del_minimo(registro: Registro, contexto: Contexto) -> None:
     """Enseñarle su tasa con 20 predicciones es invitarlo a ajustar contra ruido.
 
     La fiabilidad del Brier es inestable con muestra pequeña y todos los modelos
@@ -265,22 +261,42 @@ def test_dos_niveles_a_menos_de_un_atro_y_medio_son_la_misma_apuesta(
         extra={"indicadores": {"atr": 87.0}},
     )
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=76500.0, hacia="abajo",
-        probabilidad=0.6, razonamiento="pool EQL", temporalidad="1h",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=76500.0,
+        hacia="abajo",
+        probabilidad=0.6,
+        razonamiento="pool EQL",
+        temporalidad="1h",
     )
     with pytest.raises(ValueError, match="misma"):
         registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx, nivel=76400.0, hacia="abajo",
-            probabilidad=0.4, razonamiento="y", temporalidad="1h",
+            simbolo="BTCUSDT",
+            contexto=ctx,
+            nivel=76400.0,
+            hacia="abajo",
+            probabilidad=0.4,
+            razonamiento="y",
+            temporalidad="1h",
         )
     # Lejos sí entra, y hacia el otro lado también: no es un veto general.
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=76300.0, hacia="abajo",
-        probabilidad=0.3, razonamiento="z", temporalidad="1h",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=76300.0,
+        hacia="abajo",
+        probabilidad=0.3,
+        razonamiento="z",
+        temporalidad="1h",
     )
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=77500.0, hacia="arriba",
-        probabilidad=0.5, razonamiento="techo", temporalidad="1h",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=77500.0,
+        hacia="arriba",
+        probabilidad=0.5,
+        razonamiento="techo",
+        temporalidad="1h",
     )
     assert len(registro.predicciones_vivas()) == 3
 
@@ -299,33 +315,59 @@ def test_un_marco_no_bloquea_a_otro(registro: Registro) -> None:
     distintos, así que sus resultados no están correlacionados.
     """
     ctx_4h = Contexto(
-        precio=77519.0, timestamp="x", dia_semana=0, hora_utc=6,
+        precio=77519.0,
+        timestamp="x",
+        dia_semana=0,
+        hora_utc=6,
         extra={"indicadores": {"atr": 653.3}},
     )
     ctx_15m = Contexto(
-        precio=77519.0, timestamp="x", dia_semana=0, hora_utc=6,
+        precio=77519.0,
+        timestamp="x",
+        dia_semana=0,
+        hora_utc=6,
         extra={"indicadores": {"atr": 179.7}},
     )
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx_4h, nivel=76077.62, hacia="abajo",
-        probabilidad=0.7, razonamiento="piso del rango", temporalidad="4h",
+        simbolo="BTCUSDT",
+        contexto=ctx_4h,
+        nivel=76077.62,
+        hacia="abajo",
+        probabilidad=0.7,
+        razonamiento="piso del rango",
+        temporalidad="4h",
     )
     # A 574 del anterior: dentro de los 980 que exige 4h, así que choca.
     with pytest.raises(ValueError, match="misma"):
         registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx_4h, nivel=75503.6, hacia="abajo",
-            probabilidad=0.7, razonamiento="x", temporalidad="4h",
+            simbolo="BTCUSDT",
+            contexto=ctx_4h,
+            nivel=75503.6,
+            hacia="abajo",
+            probabilidad=0.7,
+            razonamiento="x",
+            temporalidad="4h",
         )
     # El MISMO nivel en 15m sí entra: 574 supera de sobra los 270 de su escala.
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx_15m, nivel=75503.6, hacia="abajo",
-        probabilidad=0.6, razonamiento="scalp distinto", temporalidad="15m",
+        simbolo="BTCUSDT",
+        contexto=ctx_15m,
+        nivel=75503.6,
+        hacia="abajo",
+        probabilidad=0.6,
+        razonamiento="scalp distinto",
+        temporalidad="15m",
     )
     # Pero dentro de 15m la regla sigue viva: 104 < 270.
     with pytest.raises(ValueError, match="misma"):
         registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx_15m, nivel=75400.0, hacia="abajo",
-            probabilidad=0.5, razonamiento="y", temporalidad="15m",
+            simbolo="BTCUSDT",
+            contexto=ctx_15m,
+            nivel=75400.0,
+            hacia="abajo",
+            probabilidad=0.5,
+            razonamiento="y",
+            temporalidad="15m",
         )
     assert len(registro.predicciones_vivas()) == 2
 
@@ -337,13 +379,21 @@ def test_un_nivel_pegado_al_precio_lo_toca_el_ruido(registro: Registro) -> None:
     lectura del gráfico.
     """
     ctx = Contexto(
-        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        precio=77300.0,
+        timestamp="x",
+        dia_semana=6,
+        hora_utc=20,
         extra={"indicadores": {"atr": 100.0}},
     )
     with pytest.raises(ValueError, match="ruido"):
         registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx, nivel=77250.0, hacia="abajo",
-            probabilidad=0.6, razonamiento="x", temporalidad="15m",
+            simbolo="BTCUSDT",
+            contexto=ctx,
+            nivel=77250.0,
+            hacia="abajo",
+            probabilidad=0.6,
+            razonamiento="x",
+            temporalidad="15m",
         )
 
 
@@ -358,20 +408,33 @@ def test_la_temporalidad_se_guarda_y_entra_en_el_sello(registro: Registro) -> No
     from paper.registro import _sellar_prediccion
 
     ctx = Contexto(
-        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        precio=77300.0,
+        timestamp="x",
+        dia_semana=6,
+        hora_utc=20,
         extra={"indicadores": {"atr": 87.0}},
     )
     registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=76500.0, hacia="abajo",
-        probabilidad=0.6, razonamiento="pool EQL", temporalidad="4h",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=76500.0,
+        hacia="abajo",
+        probabilidad=0.6,
+        razonamiento="pool EQL",
+        temporalidad="4h",
     )
     fila = registro.predicciones_vivas()[0]
     assert fila["temporalidad"] == "4h"
 
     # El mismo sello con otra temporalidad tiene que dar distinto.
     con_otra = _sellar_prediccion(
-        ctx, fila["razonamiento"], simbolo=fila["simbolo"], nivel=fila["nivel"],
-        hacia=fila["hacia"], probabilidad=fila["probabilidad"], temporalidad="15m",
+        ctx,
+        fila["razonamiento"],
+        simbolo=fila["simbolo"],
+        nivel=fila["nivel"],
+        hacia=fila["hacia"],
+        probabilidad=fila["probabilidad"],
+        temporalidad="15m",
     )
     assert con_otra != fila["sello"], "cambiar la temporalidad tiene que romper el sello"
 
@@ -385,32 +448,46 @@ def test_el_plazo_sale_de_la_temporalidad(registro: Registro, contexto: Contexto
     ensucian el Brier con ruido que no tiene que ver con la lectura del modelo.
     """
     ctx = Contexto(
-        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        precio=77300.0,
+        timestamp="x",
+        dia_semana=6,
+        hora_utc=20,
         extra={"indicadores": {"atr": 87.0}},
     )
     esperado = {"15m": 6.0, "1h": 24.0, "4h": 96.0, "": 24.0}
     niveles = {"15m": 76000.0, "1h": 75000.0, "4h": 74000.0, "": 73000.0}
     for marco, horas in esperado.items():
         pid = registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx, nivel=niveles[marco], hacia="abajo",
-            probabilidad=0.5, razonamiento=f"m{marco}", temporalidad=marco,
+            simbolo="BTCUSDT",
+            contexto=ctx,
+            nivel=niveles[marco],
+            hacia="abajo",
+            probabilidad=0.5,
+            razonamiento=f"m{marco}",
+            temporalidad=marco,
         )
         fila = next(p for p in registro.predicciones_vivas() if p["id"] == pid)
-        vivo = datetime.fromisoformat(fila["vence_en"]) - datetime.fromisoformat(
-            fila["hecha_en"]
-        )
+        vivo = datetime.fromisoformat(fila["vence_en"]) - datetime.fromisoformat(fila["hecha_en"])
         assert vivo.total_seconds() / 3600 == pytest.approx(horas, abs=0.01), marco
 
 
 def test_un_plazo_explicito_pisa_al_derivado(registro: Registro) -> None:
     """Una tesis puede pedir otro plazo; lo que no puede es no tener ninguno."""
     ctx = Contexto(
-        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        precio=77300.0,
+        timestamp="x",
+        dia_semana=6,
+        hora_utc=20,
         extra={"indicadores": {"atr": 87.0}},
     )
     pid = registro.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=76000.0, hacia="abajo",
-        probabilidad=0.4, razonamiento="tesis larga", temporalidad="15m",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=76000.0,
+        hacia="abajo",
+        probabilidad=0.4,
+        razonamiento="tesis larga",
+        temporalidad="15m",
         horas_vigencia=48.0,
     )
     fila = next(p for p in registro.predicciones_vivas() if p["id"] == pid)
@@ -428,13 +505,21 @@ def test_el_desglose_por_marco_no_sustituye_al_global(registro: Registro) -> Non
     """
     ahora = datetime.now(UTC)
     ctx = Contexto(
-        precio=77300.0, timestamp="x", dia_semana=6, hora_utc=20,
+        precio=77300.0,
+        timestamp="x",
+        dia_semana=6,
+        hora_utc=20,
         extra={"indicadores": {"atr": 10.0}},
     )
     for i in range(50):
         registro.predecir(
-            simbolo="BTCUSDT", contexto=ctx, nivel=77300.0 + 100 * (i + 1), hacia="arriba",
-            probabilidad=0.5, razonamiento=f"x{i}", temporalidad=["15m", "1h", "4h"][i % 3],
+            simbolo="BTCUSDT",
+            contexto=ctx,
+            nivel=77300.0 + 100 * (i + 1),
+            hacia="arriba",
+            probabilidad=0.5,
+            razonamiento=f"x{i}",
+            temporalidad=["15m", "1h", "4h"][i % 3],
         )
     registro.resolver_predicciones([_vela(ahora + timedelta(minutes=5), high=999999, low=1)])
 

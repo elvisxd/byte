@@ -631,7 +631,10 @@ def test_el_modelo_queda_grabado_en_lo_que_se_registra(tmp_path: Path) -> None:
 
     ruta = tmp_path / "modelo.db"
     ctx = Contexto(
-        precio=100.0, timestamp="2026-09-14T00:00:00Z", dia_semana=0, hora_utc=0,
+        precio=100.0,
+        timestamp="2026-09-14T00:00:00Z",
+        dia_semana=0,
+        hora_utc=0,
         extra={"indicadores": {"atr": 2.0}},
     )
 
@@ -639,24 +642,42 @@ def test_el_modelo_queda_grabado_en_lo_que_se_registra(tmp_path: Path) -> None:
     # con el de ahora sería inventar quién las hizo.
     sin = Registro(ruta)
     sin.abrir(
-        eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-        razon="de antes", stop_loss=99.0,
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=ctx,
+        razon="de antes",
+        stop_loss=99.0,
     )
     assert sin._con.execute("SELECT modelo FROM operaciones").fetchone()[0] is None  # noqa: SLF001
 
     # Otra máquina, misma base: es el caso que motiva la columna.
     con = Registro(ruta, modelo="qwen3.6:27b")
     con.abrir(
-        eje="dip-trap", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-        razon="del codespace", stop_loss=99.0,
+        eje="dip-trap",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=ctx,
+        razon="del codespace",
+        stop_loss=99.0,
     )
     con.dejar_orden(
-        eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-        razon="orden", precio_limite=95.0, stop_loss=90.0,
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=ctx,
+        razon="orden",
+        precio_limite=95.0,
+        stop_loss=90.0,
     )
     con.predecir(
-        simbolo="BTCUSDT", contexto=ctx, nivel=110.0, hacia="arriba",
-        probabilidad=0.6, razonamiento="pred", temporalidad="1h",
+        simbolo="BTCUSDT",
+        contexto=ctx,
+        nivel=110.0,
+        hacia="arriba",
+        probabilidad=0.6,
+        razonamiento="pred",
+        temporalidad="1h",
     )
 
     # Las tres tablas, no solo las operaciones: una orden y una predicción

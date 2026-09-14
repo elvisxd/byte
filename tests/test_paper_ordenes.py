@@ -161,28 +161,51 @@ def test_dos_ordenes_al_mismo_nivel_son_la_misma_apuesta(tmp_path: Path) -> None
     r = Registro(tmp_path / "sep.db", modelo="qwen3:14b")
     # Los números de la sesión real: ATR de 4h, así que el mínimo son 931.6.
     ctx = Contexto(
-        precio=77556.7, timestamp="x", dia_semana=0, hora_utc=0,
+        precio=77556.7,
+        timestamp="x",
+        dia_semana=0,
+        hora_utc=0,
         extra={"indicadores": {"atr": 621.1}},
     )
     r.dejar_orden(
-        eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-        razon="piso del rango", precio_limite=76077.62, stop_loss=75503.6,
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=ctx,
+        razon="piso del rango",
+        precio_limite=76077.62,
+        stop_loss=75503.6,
     )
     with pytest.raises(ValueError, match="misma apuesta"):
         r.dejar_orden(
-            eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-            razon="piso del rango", precio_limite=76077.62, stop_loss=75503.6,
+            eje="range-sweep",
+            simbolo="BTCUSDT",
+            direccion="long",
+            contexto=ctx,
+            razon="piso del rango",
+            precio_limite=76077.62,
+            stop_loss=75503.6,
         )
 
     # No es un veto general: lejos entra, y el otro lado tampoco colisiona
     # —un short arriba es otro evento, no la misma apuesta—.
     r.dejar_orden(
-        eje="dip-trap", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-        razon="otro nivel", precio_limite=74000.0, stop_loss=73000.0,
+        eje="dip-trap",
+        simbolo="BTCUSDT",
+        direccion="long",
+        contexto=ctx,
+        razon="otro nivel",
+        precio_limite=74000.0,
+        stop_loss=73000.0,
     )
     r.dejar_orden(
-        eje="range-sweep", simbolo="BTCUSDT", direccion="short", contexto=ctx,
-        razon="techo", precio_limite=79000.0, stop_loss=80000.0,
+        eje="range-sweep",
+        simbolo="BTCUSDT",
+        direccion="short",
+        contexto=ctx,
+        razon="techo",
+        precio_limite=79000.0,
+        stop_loss=80000.0,
     )
     assert len(r.ordenes_vivas()) == 3
 
@@ -196,11 +219,19 @@ def test_una_orden_pegada_al_precio_la_dispara_el_ruido(tmp_path: Path) -> None:
 
     r = Registro(tmp_path / "ruido.db")
     ctx = Contexto(
-        precio=77556.7, timestamp="x", dia_semana=0, hora_utc=0,
+        precio=77556.7,
+        timestamp="x",
+        dia_semana=0,
+        hora_utc=0,
         extra={"indicadores": {"atr": 621.1}},
     )
     with pytest.raises(ValueError, match="ruido"):
         r.dejar_orden(
-            eje="range-sweep", simbolo="BTCUSDT", direccion="long", contexto=ctx,
-            razon="pegada", precio_limite=77000.0, stop_loss=76000.0,
+            eje="range-sweep",
+            simbolo="BTCUSDT",
+            direccion="long",
+            contexto=ctx,
+            razon="pegada",
+            precio_limite=77000.0,
+            stop_loss=76000.0,
         )

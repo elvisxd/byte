@@ -65,9 +65,7 @@ async def test_la_api_solo_acepta_get_y_post() -> None:
     """PUT, PATCH y DELETE modifican del otro lado, y un modelo probando
     endpoints no debería poder borrar nada de nadie."""
     for metodo in ("DELETE", "PUT", "PATCH"):
-        resultado = await _llamar_api(
-            LlamarApiArgs(url="https://example.com", metodo=metodo), 4000
-        )
+        resultado = await _llamar_api(LlamarApiArgs(url="https://example.com", metodo=metodo), 4000)
         assert resultado.ok is False
         assert "GET y POST" in resultado.content
 

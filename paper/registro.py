@@ -1301,9 +1301,7 @@ class Registro:
             "tasa_base": round(sum(f["ocurrio"] for f in filas) / len(filas), 3),
             # Ordenados por tramo y NO por resultado: ordenar por acierto
             # invitaría a quedarse con el mejor, que es el sobreajuste de siempre.
-            "tramos": [
-                {"tramo": nombre, **_resumen(fs)} for nombre, fs in sorted(tramos.items())
-            ],
+            "tramos": [{"tramo": nombre, **_resumen(fs)} for nombre, fs in sorted(tramos.items())],
             # Por marco, también alfabético y por el mismo motivo.
             "porMarco": [
                 {

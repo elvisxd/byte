@@ -47,8 +47,15 @@ jobs:
         with:
           enable-cache: true
 
+      # ⚠ CON `--extra observabilidad`, O 17 TESTS NO CORREN. `uv sync --frozen`
+      # a secas no instala los extras, así que langfuse y sentry-sdk faltaban y
+      # todo test_observabilidad.py moría con ModuleNotFoundError. Eso pasó
+      # desapercibido porque el paso «Formato» fallaba ANTES y los tests ni
+      # llegaban a ejecutarse: tres merges seguidos en rojo sin que nadie mirara
+      # por qué. Las dos librerías ya estaban en el lock —langfuse 4.15.2,
+      # sentry-sdk 2.69.1—: lo único que faltaba era pedirlas.
       - name: Instalar dependencias desde el lock
-        run: uv sync --frozen
+        run: uv sync --frozen --extra observabilidad
 
       - name: Lint
         run: uv run ruff check .
