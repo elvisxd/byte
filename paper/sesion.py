@@ -119,6 +119,28 @@ Elegí el que corresponda a lo que estás viendo; no inventes otros.
 Son patrones CONCRETOS, no un clima general: si ninguno está ocurriendo ahora,
 lo honesto es no operar —o dejar la orden al precio donde SÍ ocurriría.
 
+Cómo mirar ANTES de tocar `predecir`, `abrir_operacion` o `dejar_orden`.
+Sos un trader discrecional operando en papel, y esto es lo que separa a uno
+de alguien que repite una frase:
+
+1. El régimen. `mirar_mercado` trae el que midió el código (`regime`). Decí
+   cuál ves vos y, si no coincide, decilo: la discrepancia es un dato.
+2. Eje por eje, los cuatro activos: ¿está ocurriendo AHORA su patrón
+   concreto? Contestá sí o no para CADA uno, con el nivel y la invalidación
+   que tendría. «Hay liquidez disponible» no es una respuesta: no dice qué
+   eje, ni dónde, ni qué lo invalida.
+3. Si ninguno está ocurriendo, abstenete —o dejá la orden donde SÍ
+   ocurriría—. Si uno sí, ese es el eje, y no otro.
+4. La predicción, en un marco donde haya sitio (ver el punto 6).
+
+⚠ LA RAZÓN QUE SELLÁS LLEVA ESE RECORRIDO, no solo la conclusión:
+«range-sweep: no, sin mecha bajo 76.900; dip-trap: sí, caída de 1,8 ATR con
+volumen 2,1x que ya cerró dos velas arriba; entro ahí, invalida 76.350». Una
+razón que podría haberse escrito sin mirar el gráfico no discrimina nada, y
+lo que este experimento mide es si tus razones discriminan. Medido: en una
+sesión de 13 vueltas, 31 de 44 razones fueron la MISMA frase palabra por
+palabra. Eso no es una lectura, es una plantilla.
+
 No compares ejes entre sí para elegir "el que va mejor": todos corren en
 paralelo a propósito y elegir mirando la tabla es sobreajuste."""
 
@@ -203,8 +225,27 @@ async def una_sesion(
     # Sin checkpointer: cada turno se arma con el estado que el agente LEE del
     # registro, no con el historial del chat. Es lo que hace que una sesión
     # nueva —proceso nuevo, máquina nueva— continúe de donde quedó la anterior.
+    #
+    # ⚠ EL RAZONAMIENTO SE PIDE ACÁ Y NO EN `build_llm`. La API comparte esa
+    # función y su latencia no tiene que pagar por esto: medido el 2026-09-14,
+    # la misma pregunta pasa de 88 s a 279 s con el pensamiento encendido.
+    #
+    # Se enciende porque `qwen3:14b` no reacciona a los rechazos: 11 vueltas,
+    # 11 topes de iteraciones y cero escrituras en la sesión de esa mañana,
+    # reintentando los mismos tres niveles ya ocupados. Preguntado directamente,
+    # compara las predicciones ENTRE SÍ en vez de medir la distancia de la
+    # nueva, y concluye que puede registrar otra: reintenta porque cree que
+    # puede. Dos rondas de arreglar eso con más texto en el prompt no lo
+    # movieron —ver el commit de `BAJÁ DE MARCO`—, así que el problema no era
+    # cómo estaba escrita la regla.
+    #
+    # `paper_num_predict` va con él por lo que dice `build_llm`: son un par.
     grafo = build_graph(
-        build_llm(ajustes),
+        build_llm(
+            ajustes,
+            reasoning=ajustes.paper_reasoning,
+            num_predict=ajustes.paper_num_predict,
+        ),
         herramientas,
         max_iterations=ajustes.max_iterations,
         max_tool_result_chars=ajustes.max_tool_result_chars,

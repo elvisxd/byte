@@ -44,6 +44,12 @@ TOPE_PASOS = 200
 # sin mandar 200 velas por la red en cada paso.
 RECORTE = 400
 
+# Cuánto de un PENSAMIENTO viaja. Bastante más que un resultado, porque es lo
+# que se audita: si el modelo recorre los ejes o repite una plantilla se ve
+# ahí, y 400 caracteres cortan antes de llegar a la conclusión. Medido con
+# qwen3:14b el 2026-09-14: un pensamiento entero son ~3.400 caracteres.
+RECORTE_PENSAMIENTO = 2000
+
 
 class TraceDeSesion:
     """Acumula los eventos del agente y los empuja al panel.
@@ -65,6 +71,9 @@ class TraceDeSesion:
         self.vuelta = 0
         self._pasos: deque[dict[str, Any]] = deque(maxlen=TOPE_PASOS)
         self._lock = threading.Lock()
+        # La última llamada completa —herramienta, argumentos, resultado— y el
+        # paso donde vive su contador. Ver `_es_repeticion`.
+        self._ultima_llamada: tuple[tuple[str, str, str, int], dict[str, Any]] | None = None
 
     # ── el protocolo que espera el grafo ──────────────────────────────────
     def emit(self, event_type: str, data: dict[str, Any]) -> None:
@@ -79,15 +88,54 @@ class TraceDeSesion:
             # paso de texto y ninguna herramienta. Juntarlo al publicar no
             # servía — para entonces lo que había que juntar ya se había caído.
             ultimo = self._pasos[-1] if self._pasos else None
+            # El pensamiento también llega token a token, y se junta igual que
+            # el texto — con su propio recorte, más generoso.
             if (
-                paso["tipo"] == "texto"
+                paso["tipo"] in ("texto", "pensamiento")
                 and ultimo is not None
-                and ultimo["tipo"] == "texto"
+                and ultimo["tipo"] == paso["tipo"]
                 and ultimo["vuelta"] == self.vuelta
             ):
-                ultimo["texto"] = _recortar(str(ultimo["texto"]) + str(paso["texto"]))
+                tope = RECORTE_PENSAMIENTO if paso["tipo"] == "pensamiento" else RECORTE
+                ultimo["texto"] = _recortar(str(ultimo["texto"]) + str(paso["texto"]), tope)
+                return
+            if paso["tipo"] == "resultado" and self._es_repeticion(paso):
                 return
             self._pasos.append({"en": datetime.now(UTC).isoformat(), "vuelta": self.vuelta, **paso})
+
+    def _es_repeticion(self, resultado: dict[str, Any]) -> bool:
+        """Una llamada idéntica a la anterior no se guarda: se CUENTA.
+
+        Misma herramienta, mismos argumentos, misma respuesta, misma vuelta. Se
+        descartan los dos pasos que acaban de entrar —herramienta y argumentos—,
+        no se guarda el resultado, y el paso de herramienta de la PRIMERA vez
+        suma uno en `veces`.
+
+        ⚠ CONTAR, NO BORRAR. Medido el 2026-09-14 con qwen3:14b: 44 razones en
+        una sesión, 31 de ellas la misma frase palabra por palabra, apuntando 32
+        veces al mismo nivel ya ocupado. Ese `×31` ES el hallazgo —que el modelo
+        no reacciona a los rechazos— y una traza que enseñara un intento cuando
+        hubo treinta y uno lo habría tapado. Pero treinta y una copias del mismo
+        paso son ruido, y con el tope de 200 pasos expulsaban el resto de la
+        sesión: la de esa mañana terminó con 200 justos, es decir, recortada.
+
+        Solo se colapsa dentro de la misma vuelta a propósito: repetir en la
+        vuelta 3 lo que ya se repitió en la 2 es otro dato, y se quiere ver.
+        """
+        if len(self._pasos) < 2:
+            return False
+        argumentos, herramienta = self._pasos[-1], self._pasos[-2]
+        if argumentos["tipo"] != "argumentos" or herramienta["tipo"] != "herramienta":
+            return False
+        llamada = (herramienta["nombre"], argumentos["texto"], resultado["texto"], self.vuelta)
+        anterior = self._ultima_llamada
+        if anterior is None or anterior[0] != llamada:
+            self._ultima_llamada = (llamada, herramienta)
+            return False
+        self._pasos.pop()
+        self._pasos.pop()
+        anterior[1]["veces"] = anterior[1].get("veces", 1) + 1
+        return True
 
     def _traducir(self, tipo: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """De evento AG-UI a algo que se pueda leer en una página.
@@ -117,6 +165,10 @@ class TraceDeSesion:
             # El texto llega en trozos; se junta en el último paso si ya había
             # uno de texto, para no convertir cada token en una fila.
             return {"tipo": "texto", "texto": str(data.get("delta", ""))}
+        if tipo == "THINKING_TEXT_MESSAGE_CONTENT":
+            # Igual que el texto, pero es lo que el modelo pensó ANTES de
+            # decidir. Solo llega con el razonamiento encendido (ver `build_llm`).
+            return {"tipo": "pensamiento", "texto": str(data.get("delta", ""))}
         if tipo == "RUN_ERROR":
             return {"tipo": "error", "texto": _recortar(data.get("message", ""))}
         return None
@@ -163,9 +215,9 @@ class TraceDeSesion:
         return True
 
 
-def _recortar(valor: Any) -> str:
+def _recortar(valor: Any, tope: int = RECORTE) -> str:
     texto = valor if isinstance(valor, str) else json.dumps(valor, ensure_ascii=False)
-    return texto if len(texto) <= RECORTE else texto[:RECORTE] + f"… (+{len(texto) - RECORTE})"
+    return texto if len(texto) <= tope else texto[:tope] + f"… (+{len(texto) - tope})"
 
 
 def _juntar_texto(pasos: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -178,12 +230,13 @@ def _juntar_texto(pasos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for paso in pasos:
         ultimo = juntos[-1] if juntos else None
         if (
-            paso.get("tipo") == "texto"
+            paso.get("tipo") in ("texto", "pensamiento")
             and ultimo is not None
-            and ultimo.get("tipo") == "texto"
+            and ultimo.get("tipo") == paso.get("tipo")
             and ultimo.get("vuelta") == paso.get("vuelta")
         ):
-            ultimo["texto"] = _recortar(str(ultimo["texto"]) + str(paso["texto"]))
+            tope = RECORTE_PENSAMIENTO if paso.get("tipo") == "pensamiento" else RECORTE
+            ultimo["texto"] = _recortar(str(ultimo["texto"]) + str(paso["texto"]), tope)
             continue
         juntos.append(dict(paso))
     return juntos
