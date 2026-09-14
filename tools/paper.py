@@ -698,6 +698,37 @@ def _hechos_de_la_vela(velas: list[dict[str, Any]], atr: Any) -> str:
     return " · ".join(partes)
 
 
+def _anatomia_de_la_vela_cerrada(velas: list[dict[str, Any]], atr: Any) -> str:
+    """La última vela CERRADA, por partes y sin nombre: cuerpo, mechas, color.
+
+    ⚠ ANATOMÍA, NO PATRÓN. CANDIDATOS.md (4): en cripto el Shooting Star
+    «bajista» es alcista y la mecha superior larga también, así que nombrar
+    el patrón le pondría al modelo una dirección sacada de un libro de otro
+    mercado. Se dicen las partes —cuánto cuerpo, cuánta mecha, de qué lado— y
+    lo que eso signifique lo decide él. Un «hammer» aquí sería el script
+    leyendo por el modelo.
+
+    La cerrada y no la en curso: la en curso ya está en `_hechos_de_la_vela`
+    y su forma cambia hasta que cierra.
+    """
+    if len(velas) < 2 or not isinstance(atr, int | float) or atr <= 0:
+        return ""
+    v = velas[-2]
+    rango = v["high"] - v["low"]
+    if rango <= 0:
+        return ""
+    cuerpo = abs(v["close"] - v["open"])
+    arriba = v["high"] - max(v["open"], v["close"])
+    abajo = min(v["open"], v["close"]) - v["low"]
+    color = (
+        "alcista" if v["close"] > v["open"] else "bajista" if v["close"] < v["open"] else "plana"
+    )
+    return (
+        f"vela cerrada: {color}, cuerpo {cuerpo / rango * 100:.0f}% de su rango, "
+        f"mecha superior {arriba / atr:.1f} ATR, inferior {abajo / atr:.1f} ATR"
+    )
+
+
 def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     """Un marco en cuatro a siete líneas. Hechos; los mismos que `_mirar`, apretados."""
     ctx = _contexto_de(datos, ind)
@@ -719,6 +750,9 @@ def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
         f"   volumen {ctx.volumen_relativo}x de la media · "
         f"{_hechos_de_la_vela(datos['velas'], ind.get('atr'))}",
     ]
+    cerrada = _anatomia_de_la_vela_cerrada(datos["velas"], ind.get("atr"))
+    if cerrada:
+        lineas.append(f"   {cerrada}")
     pools = ind.get("liquidity") or []
     if pools:
         lineas.append(

@@ -150,3 +150,35 @@ async def test_el_mapa_cabe_en_el_tope_de_papel(mercado: None, tmp_path: Any) ->
 
 def test_mirar_directo_sigue_funcionando(mercado: None) -> None:
     assert "al 82% del rango" in _mirar(MirarArgs(simbolo="BTCUSDT", intervalo="4h"), 4000).content
+
+
+async def test_la_ultima_vela_cerrada_se_describe_por_partes_sin_nombrarla(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Un martillo se dice como «cuerpo 20%, mecha inferior 1.5 ATR», no como martillo:
+    en cripto las etiquetas del manual no se trasladan (CANDIDATOS.md, 4)."""
+
+    def velas(_s: str, marco: str, _n: int) -> dict[str, Any]:
+        d = _velas(marco)
+        # la penúltima —la cerrada— con cuerpo chico arriba y mecha larga abajo
+        d["velas"][-2] = {
+            "time": d["velas"][-2]["time"],
+            "open": 79000.0,
+            "high": 79130.0,
+            "low": 78025.0,
+            "close": 79100.0,
+            "volume": 30.0,
+        }
+        return d
+
+    monkeypatch.setattr(herramientas, "velas", velas)
+    monkeypatch.setattr(herramientas, "indicadores", lambda v, cuales: dict(INDICADORES))
+
+    texto = await _mapa_por_la_herramienta(tmp_path)
+
+    assert (
+        "vela cerrada: alcista, cuerpo 9% de su rango, mecha superior 0.0 ATR, inferior 1.5 ATR"
+        in texto
+    )
+    for nombre in ("hammer", "martillo", "doji", "engulfing", "envolvente", "shooting"):
+        assert nombre not in texto.lower()
