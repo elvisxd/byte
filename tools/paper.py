@@ -632,9 +632,7 @@ def _estado(registro: Registro) -> ToolResult:
             partes.append(
                 f"  cuando dijiste ~{t['dijo']:.0%} (n={t['n']}), ocurrió el {t['ocurrio']:.0%}"
             )
-        partes.append(
-            "Esto no es para elegir qué predecir: es para calibrar el número que decís."
-        )
+        partes.append("Esto no es para elegir qué predecir: es para calibrar el número que decís.")
     elif brier.get("resueltas"):
         partes += [
             "",
