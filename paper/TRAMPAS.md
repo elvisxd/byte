@@ -62,6 +62,11 @@ está el precio —«al 73 % del rango: piso 76077.62, techo 79827.4»—.
 (79827.4)» con el precio en 78769. Puede ser abreviatura de «cerca del
 techo»; con n=1 no se decide. Se sigue mirando.
 
+**Visto (sesión 9, vuelta 1):** el pensamiento leyó la métrica —«the price
+is at 82% of the range, so closer to the upper end»— y la razón escrita puso
+«en el techo». La métrica llegó a donde piensa, no a donde escribe. Lo que se
+sella es la razón; se sigue mirando.
+
 ### 3. Entra sin el patrón del eje, y lo reconoce después
 
 `range-sweep` exige que el techo o el piso **se barra con mecha y el precio
@@ -112,6 +117,12 @@ Ayer discreparon dos veces (modelo RANGE, código TREND). Hoy coincidieron
 (RANGE/RANGE). Las dos columnas viajan al panel a propósito; con n=3 no hay
 nada que decir todavía.
 
+**Sesión 9 (n=4, 3 discrepancias):** en 15m el código midió TREND y la razón
+dijo RANGE —el rango de 4h leído dentro del gráfico de 15m—. Pero en el
+pensamiento sí vio el TREND de 15m (ADX 44) y por eso descartó range-sweep.
+Otra vez: la lectura correcta está en el pensamiento y la etiqueta sale de
+otro sitio.
+
 ### 7. Baja de marco para colar la misma apuesta — y el agujero era mío
 
 Sesión 8, vuelta 1, la primera con la pista de 15m. Rechazada en 4h por
@@ -141,6 +152,24 @@ se edita, y su Brier a 96 h es un dato.
 **Qué lo falsaría:** que con el plazo capado siga poniendo 0,7 a tocar un
 nivel a 12 ATR de 15m en seis horas. Eso ya no sería un agujero: sería una
 calibración, y Brier la mide.
+
+### 8. Arriba y abajo, al revés
+
+Tres veces en dos sesiones. «Un short con el precio por debajo de la entrada
+está en pérdida» (trampa 1). Y en la sesión 9, dos veces en la misma vuelta:
+«The EMA20 is 77698.89, above the current price» con el precio en 79136 —la
+EMA está 1,9 % por DEBAJO— y de ahí «could indicate a potential reversal».
+
+No es aritmética: es la posición relativa de dos números, y la lee invertida
+con una frecuencia que ya no parece azar. Afecta al razonamiento aguas abajo
+—una EMA «por encima» sugiere reversión; una «por debajo», continuación—.
+
+**Qué se hizo:** `mirar_mercado` dice «precio 1.9% por ENCIMA de la EMA20»
+en vez de dejar los dos números sueltos. Mismo gesto que el R con signo.
+
+**Qué lo falsaría:** que con la palabra delante siga diciéndolo al revés.
+Entonces no sería lectura de números: sería que «arriba» y «abajo» no
+significan lo mismo para él que para nosotros, y eso ya es otro problema.
 
 ## Cómo se usa esta lista
 
