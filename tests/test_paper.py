@@ -575,3 +575,40 @@ def test_un_stop_de_verdad_se_registra_como_stop(registro: Registro, contexto: C
         ).fetchone()
     )
     assert fila["motivo_cierre"] == "stop"
+
+
+def test_el_freno_por_drawdown_aparece_en_el_estado(tmp_path: Path) -> None:
+    """Un umbral que nadie mira no frena nada, y `estado_paper` es donde se mira.
+
+    No vigila que el P&L sea negativo —eso NO aborta nada, lo dice el criterio—
+    sino que una racha destructiva consuma las 100 operaciones sin producir
+    variedad de razones: cien entradas idénticas perdiendo no son cien datos.
+
+    ⚠ EL AVISO INFORMA SIN INSTRUIR. Decirle al modelo «operá menos» o «cambiá
+    de eje» le cambiaría el comportamiento a mitad del experimento, que es
+    exactamente lo que el criterio prohíbe. Si este test empieza a fallar porque
+    alguien añadió un consejo al texto, el fallo es el consejo.
+    """
+    from paper.registro import Registro
+    from tools.paper import _estado
+
+    def registro_con(r_total: float) -> Registro:
+        reg = Registro(tmp_path / f"d{r_total}.db")
+        for _ in range(3):
+            reg._con.execute(  # noqa: SLF001 - se fabrica el estado, no se opera
+                "INSERT INTO operaciones (eje, simbolo, direccion, abierta_en,"
+                " precio_entrada, stop_loss, contexto, razon, sello, cerrada_en,"
+                " r_multiplo) VALUES ('range-sweep','BTCUSDT','long','2026-09-13T10:00:00Z',"
+                "100,99,'{}','x','s','2026-09-13T11:00:00Z', ?)",
+                (r_total / 3,),
+            )
+        reg._con.commit()  # noqa: SLF001
+        return reg
+
+    assert "FRENO" not in _estado(registro_con(-12.0)).content, "−12R no cruza el umbral"
+
+    aviso = _estado(registro_con(-33.0)).content
+    assert "FRENO" in aviso, "−33R tiene que avisar"
+    # Informa sin instruir: ni «operá menos», ni «cambiá de eje».
+    for consejo in ("operá menos", "cambiá de eje", "tené cuidado", "dejá de"):
+        assert consejo not in aviso.lower()
