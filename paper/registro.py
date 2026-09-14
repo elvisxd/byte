@@ -632,6 +632,21 @@ class Registro:
             )
         if horas_vigencia <= 0:
             raise ValueError("una orden que vence antes de existir no se registra")
+        # ⚠ LA MISMA REGLA QUE EN `predecir`, Y AQUÍ IMPORTA MÁS. Dos
+        # predicciones correlacionadas ensucian la calibración; dos órdenes
+        # idénticas se disparan LAS DOS y abren operaciones gemelas, que
+        # contaminan el R del eje. Medido en la primera sesión del 14B: tres
+        # órdenes long a 76077.62, con el mismo stop, en tres vueltas seguidas
+        # —y pasaron porque esta validación solo existía en `predecir`—.
+        self._exigir_separacion(
+            contexto=contexto,
+            nivel=precio_limite,
+            direccion=direccion,
+            vivas=self.ordenes_vivas(),
+            campo_nivel="precio_limite",
+            campo_direccion="direccion",
+            que="una orden viva",
+        )
 
         ahora = datetime.now(UTC)
         cursor = self._con.execute(
@@ -1025,27 +1040,15 @@ class Registro:
         # barre el mismo movimiento. 1.5 exige que haga falta más de una vela
         # para pasar del uno al otro, que es lo mínimo para que sean eventos
         # separables.
-        MARGEN = 1.5
-        atr = None
-        indicadores_ctx = contexto.extra.get("indicadores")
-        if isinstance(indicadores_ctx, dict):
-            crudo = indicadores_ctx.get("atr")
-            if isinstance(crudo, int | float):
-                atr = float(crudo)
-        if atr and atr > 0:
-            minimo = atr * MARGEN
-            if abs(nivel - contexto.precio) < minimo:
-                raise ValueError(
-                    f"el nivel {nivel} está a menos de {MARGEN} ATR ({minimo:.1f}) del "
-                    f"precio {contexto.precio}: el precio lo toca por ruido, no por tu tesis"
-                )
-            for viva in self.predicciones_vivas():
-                if viva["hacia"] == hacia and abs(nivel - viva["nivel"]) < minimo:
-                    raise ValueError(
-                        f"ya hay una predicción viva en {viva['nivel']} hacia {hacia} "
-                        f"(#{viva['id']}), a menos de {MARGEN} ATR de {nivel}: sería la "
-                        "misma apuesta contada dos veces"
-                    )
+        self._exigir_separacion(
+            contexto=contexto,
+            nivel=nivel,
+            direccion=hacia,
+            vivas=self.predicciones_vivas(),
+            campo_nivel="nivel",
+            campo_direccion="hacia",
+            que="una predicción viva",
+        )
 
         ahora = datetime.now(UTC)
         # El régimen que midió el código, si `mirar_mercado` lo trajo. No se le
@@ -1089,6 +1092,66 @@ class Registro:
         )
         self._con.commit()
         return int(cursor.lastrowid or 0)
+
+    # ⚠ EL MÍNIMO ES 1.5 ATR Y NO 1, Y NO ES UN NÚMERO ELEGIDO A OJO. Con 1 ATR
+    # estricto el caso real no se bloqueaba: el modelo predijo 76.500 y 76.400
+    # con un ATR de ~87, y 100 > 87, así que habrían pasado las dos. Un ATR es
+    # lo que recorre UNA vela: dos niveles a esa distancia los barre el mismo
+    # movimiento. 1.5 exige más de una vela para pasar del uno al otro, que es
+    # lo mínimo para que sean eventos separables.
+    MARGEN_ATR = 1.5
+
+    def _exigir_separacion(
+        self,
+        *,
+        contexto: Contexto,
+        nivel: float,
+        direccion: str,
+        vivas: list[dict[str, Any]],
+        campo_nivel: str,
+        campo_direccion: str,
+        que: str,
+    ) -> None:
+        """Dos niveles a menos de 1.5 ATR son la misma apuesta contada dos veces.
+
+        ⚠ ESTO VIVE EN UN SOLO SITIO A PROPÓSITO. La primera versión validaba
+        solo en `predecir` y `dejar_orden` se quedó sin la regla — y ahí importa
+        MÁS: dos predicciones correlacionadas ensucian la calibración, pero dos
+        órdenes idénticas se disparan las dos y abren operaciones gemelas, que
+        contaminan el R del eje. Medido en la primera sesión del 14B: tres
+        órdenes long al mismo precio, con el mismo stop, en tres vueltas
+        seguidas.
+
+        No es un umbral de estrategia —no decide cuándo entrar—: es lo que hace
+        que dos apuestas sean eventos distintos. Y va en ATR, no en porcentaje,
+        porque tiene que adaptarse a la volatilidad y a la temporalidad: un 0.5%
+        fijo es enorme en 15m y ridículo en 4h.
+
+        Sin ATR en el contexto no se valida nada: es preferible dejar pasar una
+        apuesta dudosa a rechazar una buena por un dato que no llegó.
+        """
+        indicadores_ctx = contexto.extra.get("indicadores")
+        atr = None
+        if isinstance(indicadores_ctx, dict):
+            crudo = indicadores_ctx.get("atr")
+            if isinstance(crudo, int | float):
+                atr = float(crudo)
+        if not atr or atr <= 0:
+            return
+
+        minimo = atr * self.MARGEN_ATR
+        if abs(nivel - contexto.precio) < minimo:
+            raise ValueError(
+                f"el nivel {nivel} está a menos de {self.MARGEN_ATR} ATR ({minimo:.1f}) "
+                f"del precio {contexto.precio}: el precio lo toca por ruido, no por tu tesis"
+            )
+        for viva in vivas:
+            if viva[campo_direccion] == direccion and abs(nivel - viva[campo_nivel]) < minimo:
+                raise ValueError(
+                    f"ya hay {que} en {viva[campo_nivel]} ({direccion}, #{viva['id']}), "
+                    f"a menos de {self.MARGEN_ATR} ATR de {nivel}: sería la misma apuesta "
+                    "contada dos veces"
+                )
 
     def predicciones_vivas(self) -> list[dict[str, Any]]:
         return [
