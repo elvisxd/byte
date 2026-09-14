@@ -208,6 +208,7 @@ def _sellar(
     direccion: str,
     stop_loss: float,
     take_profit: float | None,
+    temporalidad: str = "",
 ) -> str:
     """El hash que hace imposible reescribir la decisión después.
 
@@ -236,6 +237,11 @@ def _sellar(
             "direccion": direccion,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+            # ⚠ SOLO SI VIENE. El marco de la tesis llegó cuando ya había
+            # operaciones selladas sin él; meterlo siempre rompería esos sellos
+            # sin que nadie los hubiera tocado. Con marco, entra al sello por lo
+            # mismo que el stop: cambiar «4h» por «15m» cambia qué tesis era.
+            **({"temporalidad": temporalidad} if temporalidad else {}),
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -315,7 +321,12 @@ class Registro:
         conservar.
         """
         columnas = {f["name"] for f in self._con.execute("PRAGMA table_info(operaciones)")}
-        for nombre, tipo in (("stop_actual", "REAL"), ("nota_stop", "TEXT")):
+        for nombre, tipo in (
+            ("stop_actual", "REAL"),
+            ("nota_stop", "TEXT"),
+            # El marco de la tesis, sellado solo cuando viene. Ver `_sellar`.
+            ("temporalidad", "TEXT"),
+        ):
             if nombre not in columnas:
                 self._con.execute(f"ALTER TABLE operaciones ADD COLUMN {nombre} {tipo}")  # noqa: S608
 
@@ -347,8 +358,14 @@ class Registro:
         razon: str,
         stop_loss: float,
         take_profit: float | None = None,
+        temporalidad: str = "",
     ) -> int:
-        """Registra una entrada. La razón queda sellada acá y no se toca más."""
+        """Registra una entrada. La razón queda sellada acá y no se toca más.
+
+        `temporalidad` es el marco de la TESIS —en qué gráfico se vio la
+        entrada— y va al sello. Sin él, una operación abierta sobre 4h se
+        juzgaba diecisiete minutos después mirando 15m (la #1, 2026-09-14).
+        """
         if direccion not in ("long", "short"):
             raise ValueError(f"dirección desconocida: {direccion!r}")
         if not razon.strip():
@@ -386,8 +403,8 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO operaciones
                (eje, simbolo, direccion, abierta_en, precio_entrada, stop_loss,
-                take_profit, contexto, razon, sello, modelo)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                take_profit, contexto, razon, sello, modelo, temporalidad)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 eje,
                 simbolo,
@@ -414,8 +431,10 @@ class Registro:
                     direccion=direccion,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
+                    temporalidad=temporalidad.strip(),
                 ),
                 self.modelo or None,
+                temporalidad.strip() or None,
             ),
         )
         self._con.commit()
@@ -1038,6 +1057,7 @@ class Registro:
                     direccion=f["direccion"],
                     stop_loss=f["stop_loss"],
                     take_profit=f["take_profit"],
+                    temporalidad=f["temporalidad"] or "",
                 )
             except (ValueError, TypeError):
                 rotos.append(int(f["id"]))

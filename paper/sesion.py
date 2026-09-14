@@ -67,6 +67,13 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    cómo va cada eje.
 2. Si hay operaciones abiertas, mirá el mercado y decidí sobre CADA una: dejarla
    correr, tomar un parcial, mover el stop o cerrarla. Usá las herramientas.
+   Juzgala en el MARCO en que la abriste y contra la INVALIDACIÓN que escribiste
+   al entrar —`estado_paper` te da los dos, y cuántas velas de su marco lleva—.
+   Cerrarla antes del stop exige que el hecho que la invalida HAYA ocurrido, y
+   el análisis de cierre tiene que decir cuál. No la cierres porque pasaron
+   minutos, ni porque en 15m no ves lo que era de 4h, ni porque «va en contra»
+   sin que el stop lo diga. Medido: la #1 se abrió sobre 4h y se cerró a los 17
+   minutos —0,07 velas de 4h— mirando 15m, con su invalidación intacta.
 3. Si no hay ninguna abierta —o si además ves una entrada clara— mirá el mercado
    y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
    justifica entrar ACÁ y no cinco velas después.
