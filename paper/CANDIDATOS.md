@@ -131,6 +131,44 @@ entradas en FVG solo. Si el LVN no añade nada, sobra.
   que dé positivo es `rangeSweepCombo.ts` otra vez: −96R convertidos en +88R
   recortando la muestra de 474 operaciones a 67.
 
+## Actualización 2026-09-14 — el bloqueo de `funding-extremo` se levantó
+
+El candidato 1 decía «hace falta una fuente de funding y OI que responda desde
+esta red». Ya la hay, con un matiz que importa.
+
+**Binance responde, pero solo con VPN.** Medido hoy: sin VPN devuelve **451 en
+todo** —spot, funding y OI—, y **también desde la Mac**, así que nunca fue cosa
+del Codespace ni de la máquina: es geo-bloqueo. Con el VPN activo, los dos
+endpoints que `derivatives.ts` ya declara en sus líneas 8-9 responden 200:
+
+    GET fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT
+      → [{fundingTime, fundingRate, markPrice}, ...]   ciclos de 8h
+    GET fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h
+      → [{sumOpenInterest, sumOpenInterestValue, timestamp}, ...]
+
+**MEXC también los tiene, en otra API.** `contract.mexc.com/api/v1/contract/...`
+—distinta de la de spot, `api.mexc.com/api/v3/...`, y por eso el fallback de
+velas funcionaba mientras los derivados parecían inalcanzables—. Da
+`fundingRate`, `holdVol` (el OI), `indexPrice` y `fairPrice`, sin VPN.
+
+**Cuál sirve para esta hipótesis: Binance.** No por preferencia, sino por lo que
+pide la tesis. `funding-extremo` dice «el funding lleva DÍAS en un extremo», y
+eso es una serie temporal: Binance la trae hecha, MEXC solo da la lectura
+puntual y habría que construirla guardando lecturas durante semanas antes de
+poder medir nada. Además MEXC es una fracción del mercado de derivados, y el
+posicionamiento de una fracción dice menos sobre las liquidaciones que mueven el
+precio.
+
+**Lo que esto NO cambia.** Sigue sin activarse hasta las 100 operaciones
+cerradas —van cero—, y sigue pendiente el requisito previo de más arriba: los
+indicadores de `derivatives.ts` no llegan a `mirar_mercado`, así que el modelo
+no los ve. Esto solo tacha «no se puede ni escribir».
+
+**La decisión que queda abierta, para cuando se active.** Si el VPN se cae en
+mitad de una sesión, Binance vuelve a 451. Habrá que elegir entonces entre que
+el eje se abstenga o que caiga a MEXC como fallback —como hace `velas.mjs` con
+las velas—. No se decide ahora: se decide con el eje delante, y se anota aquí.
+
 ## Fuentes consultadas el 2026-09-13
 
 - Funding negativo 46 días seguidos y OI al alza:
