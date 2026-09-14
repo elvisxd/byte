@@ -225,21 +225,9 @@ async def _esperar_algo_nuevo(limite: float, marco: str = "15m") -> None:
             return
 
 
-async def una_sesion(
-    *,
-    minutos: float,
-    ruta_db: str,
-    ruta_scripts: str,
-    publicar_al_final: bool = True,
-) -> dict[str, Any]:
-    """Corre una sesión y devuelve qué pasó."""
-    ajustes = Settings()  # type: ignore[call-arg]
-    os.environ.setdefault("BYTE_PAPER_SCRIPTS", ruta_scripts)
-
+def armar(ajustes: Settings, ruta_db: str) -> tuple[Registro, Any, str]:
+    """El registro, el grafo y la etiqueta del modelo. Lo comparten la sesión y el vigía."""
     registro = Registro(ruta_db)
-    # Solo las del experimento: sin CV, sin GitHub, sin navegador. Cada
-    # herramienta de más son tokens de definiciones compitiendo con el contexto
-    # del gráfico, y ya está medido que el modelo elige peor cuantas más hay.
     # ⚠ EL MODELO QUE SE REGISTRA DICE SI PENSÓ. `qwen3:14b` sin razonamiento y
     # con él son dos agentes distintos —medido el 2026-09-14: el primero
     # escribe la misma frase 31 veces en una sesión, el segundo tarda diez
@@ -249,6 +237,9 @@ async def una_sesion(
     # dijera, que es exactamente lo que `EJES.md` prohíbe mezclar.
     etiqueta_modelo = ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
 
+    # Solo las del experimento: sin CV, sin GitHub, sin navegador. Cada
+    # herramienta de más son tokens de definiciones compitiendo con el contexto
+    # del gráfico, y ya está medido que el modelo elige peor cuantas más hay.
     herramientas = ToolRegistry(
         build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta_modelo)
     )
@@ -282,35 +273,96 @@ async def una_sesion(
         max_tool_result_chars=ajustes.paper_max_tool_result_chars,
         num_ctx=ajustes.ollama_num_ctx,
     )
+    return registro, grafo, etiqueta_modelo
 
-    # ⚠ LO PRIMERO: QUÉ PASÓ MIENTRAS NO ESTÁBAMOS. Las órdenes límite existen
-    # justamente para cubrir las ~23 horas entre sesiones, así que evaluarlas
-    # tiene que ocurrir ANTES de que el modelo decida nada: una orden que se
-    # disparó anoche es una operación abierta, y el agente tiene que saberlo
-    # antes de plantearse entrar otra vez.
-    #
-    # Se hace con código y no pidiéndoselo al modelo por la misma razón que el R
-    # múltiplo: es aritmética sobre las velas —¿el precio tocó el nivel?— y no
-    # una decisión.
-    disparadas = []
+
+def poner_al_dia(registro: Registro, prefijo: str = "[sesión]") -> dict[str, list[dict[str, Any]]]:
+    """Lo que pasó mientras nadie miraba. Con código, sin modelo.
+
+    ⚠ VA ANTES DE QUE EL MODELO MIRE. Las órdenes límite existen justamente
+    para cubrir las horas sin nadie mirando: una orden que se disparó anoche
+    es una operación abierta, y el agente tiene que saberlo antes de
+    plantearse entrar otra vez. Un stop atravesado mientras se esperaba
+    gráfico nuevo no espera a que el modelo lo cierre horas después a otro
+    precio. Y una predicción que tocó su nivel se resuelve sola.
+
+    Se hace con código y no pidiéndoselo al modelo por la misma razón que el R
+    múltiplo: es aritmética sobre las velas —¿el precio tocó el nivel?— y no
+    una decisión. Pedírselo al modelo sería dejarle puntuarse a sí mismo.
+    """
+    cambios: dict[str, list[dict[str, Any]]] = {"ordenes": [], "predicciones": [], "cerradas": []}
     try:
         historico = velas_del_mercado(SIMBOLO, "15m", 200)
-        disparadas = registro.evaluar_ordenes(historico["velas"])
-        for d in disparadas:
-            print(f"[sesión] orden #{d['id']}: {d['resultado']}", flush=True)
-        # Las predicciones se resuelven acá por lo mismo que las órdenes: es
-        # aritmética sobre las velas —¿tocó el nivel?— y no una decisión.
-        # Pedírselo al modelo sería dejarle puntuarse a sí mismo.
-        for p in registro.resolver_predicciones(historico["velas"]):
-            print(
-                f"[sesión] predicción #{p['id']}: dijo {p['probabilidad']:.0%}, "
-                f"{'ocurrió' if p['ocurrio'] else 'no ocurrió'} (Brier {p['brier']})",
-                flush=True,
-            )
     except MercadoNoDisponible as exc:
-        # Sin datos no se puede saber si las órdenes entraron. Se avisa y se
-        # sigue: el modelo verá las órdenes todavía vivas y decidirá.
-        print(f"[sesión] no se pudieron evaluar las órdenes: {exc}", flush=True)
+        # Sin datos no se puede saber qué pasó. Se avisa y se sigue: el modelo
+        # verá lo que haya vivo y decidirá.
+        print(f"{prefijo} no se pudo poner al día: {exc}", flush=True)
+        return cambios
+    velas = historico["velas"]
+    cambios["ordenes"] = registro.evaluar_ordenes(velas)
+    for d in cambios["ordenes"]:
+        print(f"{prefijo} orden #{d['id']}: {d['resultado']}", flush=True)
+    cambios["predicciones"] = registro.resolver_predicciones(velas)
+    for pr in cambios["predicciones"]:
+        print(
+            f"{prefijo} predicción #{pr['id']}: dijo {pr['probabilidad']:.0%}, "
+            f"{'ocurrió' if pr['ocurrio'] else 'no ocurrió'} (Brier {pr['brier']})",
+            flush=True,
+        )
+    # Después de las órdenes a propósito: una que se disparó a una hora pasada
+    # puede haber tocado su stop después, en el mismo período sin vigilancia.
+    cambios["cerradas"] = registro.evaluar_abiertas(velas)
+    for c in cambios["cerradas"]:
+        print(
+            f"{prefijo} operación #{c['id']} cerrada por {c['motivo']} "
+            f"a {c['precio_salida']} · R {c['r']:+.2f}",
+            flush=True,
+        )
+    return cambios
+
+
+async def una_vuelta(grafo: Any, trace: TraceDeSesion, numero: int) -> str | None:
+    """Una pregunta al modelo. Devuelve el error si falló; None si fue bien."""
+    trace.vuelta = numero
+    # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
+    # cuatro minutos, quien mira tiene que ver que empezó, no una página
+    # quieta que no distingue "pensando" de "colgado".
+    trace.publicar(viva=True)
+    try:
+        # El estado va COMPLETO: `iterations` y los acumuladores no tienen
+        # default en el grafo, y sin ellos el primer nodo revienta con un
+        # KeyError que parece un fallo del modelo.
+        await grafo.ainvoke(
+            {
+                "messages": [{"role": "user", "content": INSTRUCCION}],
+                "iterations": 0,
+                "sources": [],
+                "tools_used": [],
+            },
+            {"configurable": {"thread_id": f"papel-{numero}", "emitter": trace}},
+        )
+    except Exception as exc:  # noqa: BLE001 — una vuelta mala no mata la sesión
+        # Un fallo de red o un timeout del modelo no debe perder lo que ya se
+        # registró: se anota y quien llama decide si sigue.
+        return str(exc)[:200]
+    return None
+
+
+async def una_sesion(
+    *,
+    minutos: float,
+    ruta_db: str,
+    ruta_scripts: str,
+    publicar_al_final: bool = True,
+) -> dict[str, Any]:
+    """Corre una sesión y devuelve qué pasó."""
+    ajustes = Settings()  # type: ignore[call-arg]
+    os.environ.setdefault("BYTE_PAPER_SCRIPTS", ruta_scripts)
+
+    registro, grafo, etiqueta_modelo = armar(ajustes, ruta_db)
+
+    # Lo primero: qué pasó mientras no estábamos. Ver `poner_al_dia`.
+    disparadas = poner_al_dia(registro)["ordenes"]
 
     limite = time.monotonic() + minutos * 60
     vueltas, errores, seguidos = 0, [], 0
@@ -329,45 +381,13 @@ async def una_sesion(
         vueltas += 1
         restante = (limite - time.monotonic()) / 60
         print(f"[sesión] vuelta {vueltas} · quedan {restante:.0f} min", flush=True)
-        # ⚠ ANTES DE QUE EL MODELO MIRE: lo que el mercado cerró solo. Un stop
-        # atravesado mientras se esperaba gráfico nuevo —o de noche, entre
-        # sesiones— no espera a que el modelo lo cierre horas después a otro
-        # precio. Va en cada vuelta y no solo al arrancar porque la espera entre
-        # vueltas puede ser de media hora, y en la vuelta 1 cubre además las
-        # órdenes que `evaluar_ordenes` acaba de disparar a una hora pasada.
-        try:
-            recientes = velas_del_mercado(SIMBOLO, "15m", 200)
-            for c in registro.evaluar_abiertas(recientes["velas"]):
-                print(
-                    f"[sesión] operación #{c['id']} cerrada por {c['motivo']} "
-                    f"a {c['precio_salida']} · R {c['r']:+.2f}",
-                    flush=True,
-                )
-        except MercadoNoDisponible as exc:
-            print(f"[sesión] no se pudieron evaluar las abiertas: {exc}", flush=True)
-        trace.vuelta = vueltas
-        # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
-        # cuatro minutos, quien mira tiene que ver que empezó, no una página
-        # quieta que no distingue "pensando" de "colgado".
-        trace.publicar(viva=True)
-        try:
-            # El estado va COMPLETO: `iterations` y los acumuladores no tienen
-            # default en el grafo, y sin ellos el primer nodo revienta con un
-            # KeyError que parece un fallo del modelo.
-            await grafo.ainvoke(
-                {
-                    "messages": [{"role": "user", "content": INSTRUCCION}],
-                    "iterations": 0,
-                    "sources": [],
-                    "tools_used": [],
-                },
-                {"configurable": {"thread_id": f"papel-{vueltas}", "emitter": trace}},
-            )
-        except Exception as exc:  # noqa: BLE001 — una vuelta mala no mata la sesión
-            # Un fallo de red o un timeout del modelo no debe perder lo que ya
-            # se registró: se anota y se sigue con la vuelta siguiente.
-            errores.append(str(exc)[:200])
-            print(f"[sesión] vuelta {vueltas} falló: {str(exc)[:120]}", flush=True)
+        # En cada vuelta y no solo al arrancar: la espera entre vueltas puede
+        # ser de una hora, y en ese rato una orden se dispara o un stop se toca.
+        poner_al_dia(registro)
+        error = await una_vuelta(grafo, trace, vueltas)
+        if error is not None:
+            errores.append(error)
+            print(f"[sesión] vuelta {vueltas} falló: {error[:120]}", flush=True)
             # ⚠ SE ESPERA ANTES DE REINTENTAR. Sin esto, un error inmediato
             # —Ollama caído, una clave mal— hace girar el bucle a toda velocidad:
             # medido, 13 vueltas fallidas en 30 segundos, que en un codespace es
