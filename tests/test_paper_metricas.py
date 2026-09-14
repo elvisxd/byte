@@ -36,7 +36,9 @@ def _velas(cierre: float) -> dict[str, Any]:
 @pytest.fixture
 def mercado(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(herramientas, "velas", lambda simbolo, marco, n: _velas(78803.28))
-    monkeypatch.setattr(herramientas, "indicadores", lambda velas, cuales: {"atr": 650.0})
+    monkeypatch.setattr(
+        herramientas, "indicadores", lambda velas, cuales: {"atr": 650.0, "ema": 77698.89}
+    )
 
 
 def _abrir(registro: Registro, direccion: str, entrada: float, stop: float) -> int:
@@ -94,3 +96,11 @@ def test_mirar_mercado_dice_en_que_porcentaje_del_rango_esta_el_precio(mercado: 
     texto = _mirar(MirarArgs(simbolo="BTCUSDT", intervalo="4h"), 4000).content
 
     assert "al 73% del rango: 0% es el piso, 100% el techo" in texto
+
+
+def test_mirar_mercado_dice_de_que_lado_de_la_ema_esta_el_precio(mercado: None) -> None:
+    """Trampa 8: «la EMA20 es 77698.89, por encima del precio» con el precio en
+    78803. Está un 1.4 % por DEBAJO, y la palabra va delante."""
+    texto = _mirar(MirarArgs(simbolo="BTCUSDT", intervalo="4h"), 4000).content
+
+    assert "EMA20 77698.89 (precio 1.4% por ENCIMA de la EMA20)" in texto

@@ -112,7 +112,11 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
         f"ADX {adx.get('adx')} (+DI {adx.get('plusDI')} / -DI {adx.get('minusDI')})",
         f"RSI {ind.get('rsi')}",
         f"MACD {macd.get('macd')} sobre señal {macd.get('signal')}",
-        f"EMA20 {ind.get('ema')}",
+        # ⚠ LA POSICIÓN RELATIVA, DICHA. Trampa 8 de paper/TRAMPAS.md: «la
+        # EMA20 es 77698.89, por encima del precio» con el precio en 79136, dos
+        # veces en una vuelta, y de ahí «posible reversión». Dos números sueltos
+        # los ordena al revés; con la palabra delante no hay nada que ordenar.
+        f"EMA20 {ind.get('ema')}{_respecto_a_ema(ctx.precio, ind.get('ema'))}",
     ]
     # ── Los niveles, aparte de los números ────────────────────────────────────
     #
@@ -586,6 +590,15 @@ def _mover_stop(registro: Registro, args: MoverStopArgs) -> ToolResult:
         ),
         summary={"id": args.operacion_id, "stop": args.nuevo_stop},
     )
+
+
+def _respecto_a_ema(precio: float, ema: Any) -> str:
+    """« (precio 1.9% por ENCIMA de la EMA20)», o nada si no hay EMA."""
+    if not isinstance(ema, int | float) or ema <= 0:
+        return ""
+    pct = (precio - ema) / ema * 100
+    lado = "por ENCIMA de" if pct > 0 else "por DEBAJO de" if pct < 0 else "justo en"
+    return f" (precio {abs(pct):.1f}% {lado} la EMA20)"
 
 
 def _posicion_en_rango(ctx: Contexto) -> float:
