@@ -41,7 +41,7 @@ from typing import Any
 from agent.graph import build_graph
 from agent.llm import build_llm
 from api.config import Settings
-from paper.mercado import MercadoNoDisponible
+from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
 from paper.publicar import publicar
 from paper.registro import Registro
@@ -113,6 +113,64 @@ lo honesto es no operar —o dejar la orden al precio donde SÍ ocurriría.
 
 No compares ejes entre sí para elegir "el que va mejor": todos corren en
 paralelo a propósito y elegir mirando la tabla es sobreajuste."""
+
+
+# Cuánto se espera entre vueltas. Ver paper/CRITERIO_CADENCIA.md, que se
+# escribió antes que este código y en su propio commit.
+FRACCION_ATR = 0.5
+MINUTOS_POR_MARCO = {"15m": 15, "1h": 60, "4h": 240}
+
+
+async def _esperar_algo_nuevo(limite: float, marco: str = "15m") -> None:
+    """Espera a que haya gráfico nuevo que mirar, o a que se acabe la sesión.
+
+    ⚠ SIN ESTO EL AGENTE MIRA EL MISMO INSTANTE UNA Y OTRA VEZ. Medido el
+    2026-09-14 con qwen3:14b: 31 vueltas en 40 minutos, 23 agotando las
+    iteraciones sin registrar nada, y tres órdenes idénticas seguidas. Entre la
+    primera vuelta y la quinta, BTC se movió 20,7 dólares —un 0,03%— con un ATR
+    de 170. El modelo no fallaba: repetía porque no había nada nuevo.
+
+    Se sale por lo que ocurra primero: media vela de movimiento, el cierre de
+    una vela, o el tope de dos velas —un mercado quieto también es un dato, y
+    una sesión que no da ninguna vuelta no registra la abstención—.
+
+    Nunca se espera más allá del presupuesto: si la sesión termina en dos
+    minutos, no tiene sentido dormir quince.
+    """
+    minutos_vela = MINUTOS_POR_MARCO.get(marco, 15)
+    tope = time.monotonic() + minutos_vela * 2 * 60
+
+    try:
+        datos = velas_del_mercado(SIMBOLO, marco, 200)
+    except MercadoNoDisponible:
+        # Sin mercado no se puede comparar nada. Se espera una vela y se sigue:
+        # el modelo verá lo que haya cuando vuelva.
+        await asyncio.sleep(min(minutos_vela * 60, max(0.0, limite - time.monotonic())))
+        return
+
+    referencia = datos["velas"][-1]["close"]
+    ultima_vela = datos["velas"][-1]["time"]
+    indicadores_ref = indicadores(datos["velas"], ["atr"])
+    atr = indicadores_ref.get("atr")
+    umbral = atr * FRACCION_ATR if isinstance(atr, int | float) and atr > 0 else None
+
+    while True:
+        # El presupuesto manda sobre todo lo demás.
+        if time.monotonic() >= limite or time.monotonic() >= tope:
+            return
+        # Un minuto entre sondeos: BTC no se mueve medio ATR en menos, y cada
+        # consulta es una llamada al exchange.
+        await asyncio.sleep(min(60.0, max(1.0, limite - time.monotonic())))
+        try:
+            ahora_datos = velas_del_mercado(SIMBOLO, marco, 2)
+        except MercadoNoDisponible:
+            continue
+        vela = ahora_datos["velas"][-1]
+        # Cerró una vela: hay información nueva por construcción.
+        if vela["time"] != ultima_vela:
+            return
+        if umbral is not None and abs(vela["close"] - referencia) >= umbral:
+            return
 
 
 async def una_sesion(
@@ -226,6 +284,10 @@ async def una_sesion(
             await asyncio.sleep(min(10 * seguidos, 30))
         else:
             seguidos = 0
+            # ⚠ SOLO TRAS UNA VUELTA BUENA. Un fallo ya tiene su propio backoff
+            # arriba, y esperar movimiento después de que Ollama se caiga sería
+            # sumar dos esperas por el mismo problema.
+            await _esperar_algo_nuevo(limite)
 
     # `viva=False` marca el trace como terminado: la página deja de refrescar y
     # dice que la sesión acabó, en vez de esperar pasos que no van a llegar.

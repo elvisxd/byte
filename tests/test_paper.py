@@ -674,3 +674,42 @@ def test_el_modelo_queda_grabado_en_lo_que_se_registra(tmp_path: Path) -> None:
         ).fetchall()
     )
     assert por_modelo == {"(sin modelo)": 1, "qwen3.6:27b": 1}
+
+
+def test_la_espera_nunca_se_come_el_presupuesto() -> None:
+    """Con la sesión terminándose, esperar quince minutos la mataría.
+
+    `_esperar_algo_nuevo` duerme hasta que haya gráfico nuevo, pero el
+    presupuesto manda: si quedan dos minutos de sesión no tiene sentido dormir
+    una vela entera. Sin esta guarda, la última vuelta de cada sesión se
+    quedaría colgada hasta el tope en vez de cerrar.
+    """
+    import asyncio
+    import time
+
+    from paper.sesion import _esperar_algo_nuevo
+
+    t0 = time.monotonic()
+    asyncio.run(_esperar_algo_nuevo(time.monotonic() - 1, "15m"))
+    assert time.monotonic() - t0 < 5, "con el límite vencido tiene que volver ya"
+
+
+def test_la_cadencia_esta_fijada_y_es_por_marco() -> None:
+    """El umbral es un PARÁMETRO, y los parámetros se calibran.
+
+    Está en `paper/CRITERIO_CADENCIA.md`, escrito antes que el código y en su
+    propio commit, con el porqué de 0.5: medio recorrido de vela, bastante para
+    que el gráfico haya cambiado y poco para no perderse un movimiento que
+    empieza.
+
+    ⚠ SI ESTE TEST FALLA PORQUE ALGUIEN BAJÓ EL NÚMERO para que la sesión diera
+    más vueltas, el fallo es el cambio. «Da pocas vueltas» es lo que el mercado
+    ofrecía, no un problema que arreglar — es el mismo sobreajuste que convirtió
+    −96R en +88R en `rangeSweepCombo.ts`.
+    """
+    from paper.sesion import FRACCION_ATR, MINUTOS_POR_MARCO
+
+    assert FRACCION_ATR == 0.5
+    # Cada marco espera lo que dura SU vela: mezclarlos haría que un scalp de
+    # 15m esperase cuatro horas, o que una tesis de 4h mirase cada cuarto.
+    assert MINUTOS_POR_MARCO == {"15m": 15, "1h": 60, "4h": 240}
