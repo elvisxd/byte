@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     ollama_num_ctx: int = Field(default=16384, alias="OLLAMA_NUM_CTX")
     # Tope de tokens por respuesta (denegación de billetera).
     ollama_num_predict: int = Field(default=1024, alias="OLLAMA_NUM_PREDICT")
+    # --- Razonamiento, SOLO para el agente en papel ---
+    # ⚠ VAN EN PAREJA. Encender el razonamiento sin subir el presupuesto de
+    # tokens deja al modelo pensando y sin emitir la llamada a la herramienta:
+    # medido el 2026-09-14 con qwen3:14b, el pensamiento ocupó 3.389 caracteres,
+    # agotó los 1024 de `ollama_num_predict` y la respuesta salió VACÍA.
+    # La API no los lee —usa los de arriba—, así que su latencia no cambia.
+    paper_reasoning: bool = Field(default=False, alias="BYTE_PAPER_REASONING")
+    paper_num_predict: int = Field(default=4096, alias="BYTE_PAPER_NUM_PREDICT")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")

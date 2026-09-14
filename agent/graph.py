@@ -322,6 +322,21 @@ def build_graph(
         text_open = False
         async for chunk in model.astream(await _con_resumen(state["messages"], config)):
             accumulated = chunk if accumulated is None else accumulated + chunk
+            # ⚠ EL PENSAMIENTO NO VIENE EN `content`. Con `reasoning=True`,
+            # langchain-ollama lo separa en `additional_kwargs["reasoning_content"]`
+            # y deja `content` vacío mientras el modelo piensa. Sin esto, esos
+            # chunks caían en el `continue` de abajo y la traza enseñaba las
+            # llamadas sin el razonamiento que las precedió —que es justo lo que
+            # se quiere auditar: si recorre los ejes o repite una plantilla—.
+            # No entra al historial del chat: `reply` se arma con `content` y
+            # `tool_calls` solamente, y meter 3.000 caracteres de pensamiento por
+            # iteración en el contexto lo llenaría en dos vueltas.
+            pensamiento = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+            if pensamiento:
+                emitter.emit(
+                    AGUI.THINKING_TEXT_MESSAGE_CONTENT,
+                    {"messageId": message_id, "delta": str(pensamiento)},
+                )
             delta = chunk.content if isinstance(chunk.content, str) else ""
             if not delta:
                 continue

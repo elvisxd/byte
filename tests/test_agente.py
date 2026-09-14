@@ -224,3 +224,30 @@ def test_sin_perfil_el_prompt_queda_igual() -> None:
 
     assert system_prompt("") == SYSTEM_PROMPT
     assert system_prompt("   ") == SYSTEM_PROMPT
+
+
+async def test_el_pensamiento_del_modelo_se_emite_aparte_del_texto() -> None:
+    """Con `reasoning=True`, langchain-ollama manda el pensamiento en
+    `additional_kwargs["reasoning_content"]` y deja `content` vacío mientras
+    piensa. Antes esos chunks caían en el `continue` de los chunks sin texto y
+    la traza enseñaba las llamadas sin el razonamiento que las precedió."""
+    from langchain_core.messages import AIMessageChunk
+
+    llm = FakeLLM(
+        [
+            [
+                AIMessageChunk(content="", additional_kwargs={"reasoning_content": "miro el "}),
+                AIMessageChunk(content="", additional_kwargs={"reasoning_content": "régimen"}),
+                AIMessageChunk(content="no opero"),
+            ]
+        ]
+    )
+
+    final, grabador = await correr(llm, registro(), "¿qué ves?")
+
+    pensado = [d["delta"] for t, d in grabador.eventos if t == "THINKING_TEXT_MESSAGE_CONTENT"]
+    assert "".join(pensado) == "miro el régimen"
+    # El pensamiento NO entra al historial: `reply` se arma solo con content y
+    # tool_calls, y 3.000 caracteres por iteración llenarían el contexto en dos vueltas.
+    assert final["messages"][-1].content == "no opero"
+    assert "reasoning_content" not in final["messages"][-1].additional_kwargs

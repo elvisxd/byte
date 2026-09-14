@@ -25,6 +25,10 @@ class AGUI:
     TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
     TEXT_MESSAGE_CONTENT = "TEXT_MESSAGE_CONTENT"
     TEXT_MESSAGE_END = "TEXT_MESSAGE_END"
+    # El pensamiento del modelo, cuando el razonamiento está encendido. Nombre
+    # del estándar AG-UI. Solo lo emite el agente en papel —ver `build_llm`—:
+    # para la API, que razona apagado, estos eventos no existen.
+    THINKING_TEXT_MESSAGE_CONTENT = "THINKING_TEXT_MESSAGE_CONTENT"
     STATE_SNAPSHOT = "STATE_SNAPSHOT"
     STATE_DELTA = "STATE_DELTA"
 
