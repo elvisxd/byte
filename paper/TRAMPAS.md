@@ -107,6 +107,26 @@ Ayer discreparon dos veces (modelo RANGE, código TREND). Hoy coincidieron
 (RANGE/RANGE). Las dos columnas viajan al panel a propósito; con n=3 no hay
 nada que decir todavía.
 
+### 7. Baja de marco para colar la misma apuesta — y el agujero era mío
+
+Sesión 8, vuelta 1, la primera con la pista de 15m. Rechazada en 4h por
+chocar con la #2 (76077.62, abajo, 0,7), la pista le dijo que en 15m entraba
+y el modelo la repitió tal cual: 76077.62, abajo, 0,7, **«15m»… y
+`horas_vigencia=96`**. Vence el mismo día que la #2. Es la #2 con otro nombre.
+
+Dos partes son mías: `predecir` aceptaba cualquier plazo explícito sin
+mirar el marco —`PLAZO_POR_MARCO` solo aplicaba con 0—, y la pista decía
+literalmente «repetí la llamada con 15m» sin decir que el plazo cambia.
+
+**Qué se hizo:** el plazo no puede superar el de su marco (acortar sí,
+alargar no), con un rechazo que lo explica; la pista pide `horas_vigencia=0`
+y dice que vence en 6 h, que es OTRA pregunta. La #7 se queda: el registro no
+se edita, y su Brier a 96 h es un dato.
+
+**Qué lo falsaría:** que con el plazo capado siga poniendo 0,7 a tocar un
+nivel a 12 ATR de 15m en seis horas. Eso ya no sería un agujero: sería una
+calibración, y Brier la mide.
+
 ## Cómo se usa esta lista
 
 Cada sesión con razonamiento se lee entera —el trace lo permite ahora— y lo

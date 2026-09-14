@@ -472,7 +472,13 @@ def test_el_plazo_sale_de_la_temporalidad(registro: Registro, contexto: Contexto
 
 
 def test_un_plazo_explicito_pisa_al_derivado(registro: Registro) -> None:
-    """Una tesis puede pedir otro plazo; lo que no puede es no tener ninguno."""
+    """Una tesis puede pedir MENOS plazo que su marco; lo que no puede es más.
+
+    Este test fijaba 48 h en 15m, y ese contrato fue el agujero de la trampa 7
+    de TRAMPAS.md: un «15m» a 96 h era una tesis de 4h con otro nombre. Alargar
+    se rechaza —ver test_paper_plazo.py—; acortar sigue valiendo, y eso es lo
+    que se prueba acá.
+    """
     ctx = Contexto(
         precio=77300.0,
         timestamp="x",
@@ -486,13 +492,13 @@ def test_un_plazo_explicito_pisa_al_derivado(registro: Registro) -> None:
         nivel=76000.0,
         hacia="abajo",
         probabilidad=0.4,
-        razonamiento="tesis larga",
+        razonamiento="tesis corta",
         temporalidad="15m",
-        horas_vigencia=48.0,
+        horas_vigencia=3.0,
     )
     fila = next(p for p in registro.predicciones_vivas() if p["id"] == pid)
     vivo = datetime.fromisoformat(fila["vence_en"]) - datetime.fromisoformat(fila["hecha_en"])
-    assert vivo.total_seconds() / 3600 == pytest.approx(48.0, abs=0.01)
+    assert vivo.total_seconds() / 3600 == pytest.approx(3.0, abs=0.01)
 
 
 def test_el_desglose_por_marco_no_sustituye_al_global(registro: Registro) -> None:
