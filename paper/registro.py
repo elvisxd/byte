@@ -429,8 +429,13 @@ class Registro:
         motivo: str,
         contexto_salida: Contexto | None = None,
         analisis: str = "",
+        cuando: datetime | None = None,
     ) -> float:
         """Cierra una operación y devuelve su R múltiplo.
+
+        `cuando` es la hora del cierre si no es ahora: `evaluar_abiertas` cierra
+        a la hora de la vela que tocó el stop, no a la hora en que alguien
+        volvió a mirar.
 
         El R lo calcula este método, no quien llama: es la única cifra que
         decide si un eje sirve, y dejarla en manos del modelo sería construir
@@ -465,7 +470,7 @@ class Registro:
         restante = 1.0 - vendido
         r_tramo = self._r_de(fila, precio_salida)
 
-        ahora = datetime.now(UTC).isoformat()
+        ahora = (cuando or datetime.now(UTC)).isoformat()
         contexto_json = (
             json.dumps(asdict(contexto_salida), ensure_ascii=False) if contexto_salida else None
         )
@@ -688,6 +693,81 @@ class Registro:
                 "SELECT * FROM ordenes WHERE resuelta_en IS NULL ORDER BY id"
             )
         ]
+
+    def evaluar_abiertas(self, velas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Cierra por stop u objetivo lo que el mercado ya cerró mientras nadie miraba.
+
+        La tercera hermana de `evaluar_ordenes` y `resolver_predicciones`, y la
+        que faltaba: una orden que se disparó de noche es una operación abierta,
+        una predicción que tocó su nivel se resuelve sola, pero una posición
+        cuyo stop atravesó el precio a las tres de la mañana seguía ABIERTA
+        hasta que el modelo la cerrara —horas después, al precio que
+        encontrara—. Y el R de ese cierre no es el R del stop: es el de un
+        precio arbitrario, y contamina el eje. Visto el 2026-09-14 con la
+        primera operación del experimento: un short sin objetivo abierto a las
+        12:53 y ninguna sesión hasta la siguiente.
+
+        ⚠ SE CIERRA AL PRECIO DEL STOP, no al de la vela que lo atravesó. Es
+        una decisión, no una aproximación: hace que un stop sea SIEMPRE −1R,
+        que es lo que permite comparar ejes. Un stop real en el libro se
+        ejecuta con deslizamiento, pero ese deslizamiento sería ruido distinto
+        en cada operación, y el experimento mide razones, no ejecución.
+
+        ⚠ SI EL STOP Y EL OBJETIVO CAEN EN LA MISMA VELA, GANA EL STOP. No se
+        sabe cuál tocó primero, y la duda se resuelve en contra: contar como
+        ganada una operación que pudo perderse es la forma más barata de
+        inflar un eje.
+
+        ⚠ SE MIRA `high`/`low` DESDE LA VELA SIGUIENTE A LA APERTURA. La vela
+        en la que se entró contiene precios de ANTES de entrar, y una mecha
+        previa no pudo tocar un stop que todavía no existía. Mismo criterio
+        que `evaluar_ordenes` con `creada_en`.
+        """
+        cerradas: list[dict[str, Any]] = []
+        for op in self.abiertas():
+            abierta = datetime.fromisoformat(op["abierta_en"])
+            stop = op["stop_actual"] if op["stop_actual"] is not None else op["stop_loss"]
+            objetivo = op["take_profit"]
+            salida: tuple[float, str, datetime] | None = None
+            for vela in velas:
+                momento = datetime.fromtimestamp(vela["time"], UTC)
+                if momento < abierta:
+                    continue
+                if op["direccion"] == "long":
+                    toco_stop = vela["low"] <= stop
+                    toco_objetivo = objetivo is not None and vela["high"] >= objetivo
+                else:
+                    toco_stop = vela["high"] >= stop
+                    toco_objetivo = objetivo is not None and vela["low"] <= objetivo
+                if toco_stop:
+                    salida = (stop, "stop", momento)
+                    break
+                if toco_objetivo:
+                    salida = (objetivo, "objetivo", momento)
+                    break
+            if salida is None:
+                continue
+            precio, motivo, cuando = salida
+            r = self.cerrar(
+                op["id"],
+                precio_salida=precio,
+                motivo=motivo,
+                cuando=cuando,
+                analisis=(
+                    f"cerrada al evaluar las velas sin vigilancia: tocó el {motivo} "
+                    f"en la vela de las {cuando.isoformat()}"
+                ),
+            )
+            cerradas.append(
+                {
+                    "id": op["id"],
+                    "eje": op["eje"],
+                    "motivo": motivo,
+                    "precio_salida": precio,
+                    "r": r,
+                }
+            )
+        return cerradas
 
     def evaluar_ordenes(
         self, velas: list[dict[str, Any]], *, contexto_ahora: Contexto | None = None
