@@ -602,10 +602,21 @@ def _estado(registro: Registro) -> ToolResult:
     if vivas:
         partes += ["", "Predicciones esperando resolución:"]
         for p in vivas:
+            marco = f" en {p['temporalidad']}" if p.get("temporalidad") else ""
             partes.append(
                 f"  #{p['id']} {p['probabilidad']:.0%} de tocar {p['nivel']} "
-                f"hacia {p['hacia']} · vence {p['vence_en'][:16]}"
+                f"hacia {p['hacia']}{marco} · vence {p['vence_en'][:16]}"
             )
+        # ⚠ LOS NIVELES OCUPADOS, ANTES DE QUE LO INTENTE. El rechazo por
+        # cercanía ya le explica el motivo, pero llega DESPUÉS de gastar una
+        # iteración. Medido el 2026-09-14: cuatro llamadas seguidas rechazadas
+        # —dos predicciones y dos órdenes— y la vuelta terminada en el tope sin
+        # registrar nada. Saberlo antes convierte cuatro intentos ciegos en uno
+        # informado.
+        partes.append(
+            "  (no apuntes a esos niveles ni a menos de ~1.5 ATR de ellos en su "
+            "mismo marco: sería la misma apuesta dos veces. Otro marco sí vale.)"
+        )
 
     # ⚠ LOS TRAMOS SE CALLAN POR DEBAJO DE 50 RESUELTAS, y `brier_por_tramo` lo
     # garantiza: enseñarle su tasa con 20 es invitarlo a ajustar contra ruido.

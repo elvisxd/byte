@@ -251,6 +251,11 @@ def test_dos_niveles_a_menos_de_un_atro_y_medio_son_la_misma_apuesta(
     ⚠ EL MÍNIMO ES 1.5 ATR Y NO 1. Con 1 ATR estricto este caso NO se bloqueaba
     —100 > 87— así que el arreglo no arreglaba nada. Un ATR es lo que recorre
     una vela; hacen falta más de una para que los dos niveles sean separables.
+
+    ⚠ Y CHOCAN SOLO DENTRO DEL MISMO MARCO. La primera versión de este test
+    ponía «1h» y «15m» en las dos predicciones sin querer, porque entonces la
+    temporalidad no participaba en la comparación. El caso real que motivó la
+    regla eran dos apuestas del MISMO gráfico.
     """
     ctx = Contexto(
         precio=77300.0,
@@ -266,18 +271,63 @@ def test_dos_niveles_a_menos_de_un_atro_y_medio_son_la_misma_apuesta(
     with pytest.raises(ValueError, match="misma"):
         registro.predecir(
             simbolo="BTCUSDT", contexto=ctx, nivel=76400.0, hacia="abajo",
-            probabilidad=0.4, razonamiento="y", temporalidad="15m",
+            probabilidad=0.4, razonamiento="y", temporalidad="1h",
         )
     # Lejos sí entra, y hacia el otro lado también: no es un veto general.
     registro.predecir(
         simbolo="BTCUSDT", contexto=ctx, nivel=76300.0, hacia="abajo",
-        probabilidad=0.3, razonamiento="z", temporalidad="4h",
+        probabilidad=0.3, razonamiento="z", temporalidad="1h",
     )
     registro.predecir(
         simbolo="BTCUSDT", contexto=ctx, nivel=77500.0, hacia="arriba",
-        probabilidad=0.5, razonamiento="techo", temporalidad="15m",
+        probabilidad=0.5, razonamiento="techo", temporalidad="1h",
     )
     assert len(registro.predicciones_vivas()) == 3
+
+
+def test_un_marco_no_bloquea_a_otro(registro: Registro) -> None:
+    """Una tesis de 4h y un scalp de 15m no son la misma apuesta.
+
+    Pasó de verdad el 2026-09-14: dos predicciones de 4h —con un ATR de 653, o
+    sea ±980 de bloqueo— dejaron al modelo sin sitio donde apostar en NINGÚN
+    marco. Agotó las seis iteraciones chocando contra ellas: cuatro llamadas
+    seguidas rechazadas y cero registros en la vuelta.
+
+    En 15m el ATR es ~180, así que su noción de «el mismo nivel» es cinco veces
+    más estrecha. Aplicarle el bloqueo de 4h veta un rango que su propia escala
+    jamás consideraría repetido — y los dos se resuelven en horizontes
+    distintos, así que sus resultados no están correlacionados.
+    """
+    ctx_4h = Contexto(
+        precio=77519.0, timestamp="x", dia_semana=0, hora_utc=6,
+        extra={"indicadores": {"atr": 653.3}},
+    )
+    ctx_15m = Contexto(
+        precio=77519.0, timestamp="x", dia_semana=0, hora_utc=6,
+        extra={"indicadores": {"atr": 179.7}},
+    )
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx_4h, nivel=76077.62, hacia="abajo",
+        probabilidad=0.7, razonamiento="piso del rango", temporalidad="4h",
+    )
+    # A 574 del anterior: dentro de los 980 que exige 4h, así que choca.
+    with pytest.raises(ValueError, match="misma"):
+        registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx_4h, nivel=75503.6, hacia="abajo",
+            probabilidad=0.7, razonamiento="x", temporalidad="4h",
+        )
+    # El MISMO nivel en 15m sí entra: 574 supera de sobra los 270 de su escala.
+    registro.predecir(
+        simbolo="BTCUSDT", contexto=ctx_15m, nivel=75503.6, hacia="abajo",
+        probabilidad=0.6, razonamiento="scalp distinto", temporalidad="15m",
+    )
+    # Pero dentro de 15m la regla sigue viva: 104 < 270.
+    with pytest.raises(ValueError, match="misma"):
+        registro.predecir(
+            simbolo="BTCUSDT", contexto=ctx_15m, nivel=75400.0, hacia="abajo",
+            probabilidad=0.5, razonamiento="y", temporalidad="15m",
+        )
+    assert len(registro.predicciones_vivas()) == 2
 
 
 def test_un_nivel_pegado_al_precio_lo_toca_el_ruido(registro: Registro) -> None:
