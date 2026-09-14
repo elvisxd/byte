@@ -79,6 +79,7 @@ def eventos(
     pools: list[dict[str, Any]],
     cierre_4h: int | None,
     cierre_4h_visto: int | None,
+    plazos_avisados: set[int] | None = None,
 ) -> list[str]:
     """Qué justifica despertar al modelo ahora. Vacío si nada.
 
@@ -111,6 +112,15 @@ def eventos(
                 f"{pool['precio']} (f{pool['fuerza']})"
             )
     for op in registro.abiertas():
+        # El cuarto evento (CRITERIO_GESTION.md): la tesis agotó el plazo de su
+        # marco sin tocar stop ni objetivo. Se avisa UNA vez por operación: si
+        # el modelo decide seguir, no se le vuelve a despertar por esto cada
+        # cuarto de hora, que se comería el tope diario.
+        if registro.agoto_plazo(op) and (
+            plazos_avisados is None or op["id"] not in plazos_avisados
+        ):
+            plazo = registro.plazo_de(op)
+            motivos.append(f"la operación #{op['id']} agotó su plazo de {plazo:.0f} h: decidí")
         stop = op["stop_actual"] if op["stop_actual"] is not None else op["stop_loss"]
         if abs(precio - stop) <= margen:
             motivos.append(
@@ -165,6 +175,7 @@ async def vigilar(
     vueltas_total = 0
     vueltas_hoy: dict[str, int] = {}
     cierre_4h_visto: int | None = None
+    plazos_avisados: set[int] = set()
     pendiente_arranque = primera_vuelta_al_arrancar
     ultimo_latido = 0.0
     n_ticks = 0
@@ -193,6 +204,7 @@ async def vigilar(
                 pools=ind.get("liquidity") or [],
                 cierre_4h=cierre_4h,
                 cierre_4h_visto=cierre_4h_visto,
+                plazos_avisados=plazos_avisados,
             )
             # Se anota SIEMPRE, dentro o fuera de la ventana: si no, el cierre de
             # las 04 dispararía la vuelta de las 08, y la de las 08 tiene que
@@ -215,6 +227,10 @@ async def vigilar(
                 f"[vigía] {momento:%H:%M} · vuelta {vueltas_total} ({hoy + 1}/{tope_diario} hoy) · "
                 + "; ".join(motivos),
                 flush=True,
+            )
+            # Los plazos por los que se despertó quedan avisados, se cierre o no.
+            plazos_avisados.update(
+                op["id"] for op in registro.abiertas() if registro.agoto_plazo(op)
             )
             error = await correr_vuelta(vueltas_total)
             if error:

@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS operaciones (
     -- Lo de abajo se escribe después, al cerrar.
     cerrada_en      TEXT,
     precio_salida   REAL,
-    motivo_cierre   TEXT,               -- stop | objetivo | manual
+    motivo_cierre   TEXT,               -- stop | objetivo | manual | tiempo
     r_multiplo      REAL,               -- (salida-entrada)/(entrada-stop), con signo
     contexto_salida TEXT,               -- el gráfico al cerrar
     analisis        TEXT                -- qué dijo el agente DESPUÉS, aparte
@@ -466,10 +466,10 @@ class Registro:
         # `abiertas()`, el resto no se registraba nunca y el eje contabilizaba el
         # R del primer tramo como si fuera el resultado completo. Medido.
         #
-        if motivo not in ("stop", "objetivo", "manual"):
+        if motivo not in ("stop", "objetivo", "manual", "tiempo"):
             raise ValueError(
-                f"motivo de cierre desconocido: {motivo!r}. Son stop, objetivo o manual "
-                "(para soltar solo una parte, usá salir_parcial)."
+                f"motivo de cierre desconocido: {motivo!r}. Son stop, objetivo, manual o "
+                "tiempo (para soltar solo una parte, usá salir_parcial)."
             )
         fila = self._abierta(operacion_id)
 
@@ -950,6 +950,11 @@ class Registro:
         """
         if dicho == "manual":
             return dicho
+        # Un «tiempo» solo lo es si el plazo de su marco se agotó de verdad, por
+        # lo mismo que un «stop» solo lo es si el precio llegó al stop. Antes
+        # de eso es un cierre discrecional, y se llama manual.
+        if dicho == "tiempo":
+            return "tiempo" if self.agoto_plazo(fila) else "manual"
         stop = fila["stop_actual"] if fila["stop_actual"] is not None else fila["stop_loss"]
         objetivo = fila["take_profit"]
         # Una tolerancia de medio por mil: el precio de salida es el cierre de
@@ -966,6 +971,25 @@ class Registro:
         if dicho == "objetivo" and toco_objetivo:
             return "objetivo"
         return "manual"
+
+    def plazo_de(self, op: Any) -> float | None:
+        """Cuántas horas tiene la tesis para jugarse: el plazo de su marco.
+
+        El mismo que una predicción de ese marco —6 h en 15m, 24 h en 1h, 96 h
+        en 4h—, que son 2-3 vidas medias de la reversión de BTC medidas el
+        2026-09-14 (ver CRITERIO_GESTION.md). Sin marco, sin plazo: las
+        operaciones de antes del marco no se juzgan con un reloj que no tenían.
+        """
+        marco = str(op["temporalidad"] or "") if "temporalidad" in op.keys() else ""
+        return self.PLAZO_POR_MARCO.get(marco)
+
+    def agoto_plazo(self, op: Any) -> bool:
+        """Si la abierta lleva más que el plazo de su marco sin tocar stop ni objetivo."""
+        plazo = self.plazo_de(op)
+        if plazo is None:
+            return False
+        abierta = datetime.fromisoformat(op["abierta_en"])
+        return (datetime.now(UTC) - abierta).total_seconds() / 3600 >= plazo
 
     def _r_de(self, fila: sqlite3.Row, precio_salida: float) -> float:
         """El R de una salida a ese precio, contra el riesgo ORIGINAL."""

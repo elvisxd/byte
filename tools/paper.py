@@ -192,7 +192,14 @@ class AbrirArgs(BaseModel):
     intervalo: str = Field(default="15m", description="Temporalidad")
     direccion: str = Field(description="long o short")
     stop_loss: float = Field(description="Precio del stop. En un long va debajo del precio")
-    take_profit: float = Field(default=0.0, description="Precio objetivo. 0 si no hay")
+    take_profit: float = Field(
+        default=0.0,
+        description=(
+            "Precio objetivo. OBLIGATORIO: una tesis de reversión tiene destino —el otro "
+            "lado del rango, la media— y sin él no es una entrada. Podés salir antes si "
+            "tu invalidación ocurre; lo que no podés es entrar sin saber adónde vas."
+        ),
+    )
     razon: str = Field(
         description=(
             "Por qué entrás ACÁ y no cinco velas después. Concreto: qué viste en el "
@@ -210,6 +217,20 @@ def _abrir(registro: Registro, args: AbrirArgs) -> ToolResult:
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
 
     ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    # ⚠ SIN OBJETIVO NO SE ABRE. CRITERIO_GESTION.md: el objetivo fijo fue la
+    # segunda mejor salida en 567.000 backtests, y la #1 —sin objetivo— se cerró
+    # donde el modelo quiso, a los 17 minutos. Va aquí y no en el registro
+    # para que las órdenes viejas y las pruebas del registro sigan valiendo.
+    if not args.take_profit or args.take_profit <= 0:
+        return ToolResult(
+            content=(
+                "no se abrió: una entrada sin objetivo no se registra. Decí adónde va "
+                "—el otro lado del rango, la media, un pool— en take_profit. Si tu tesis "
+                "no tiene destino, no es una entrada (CRITERIO_GESTION.md)."
+            ),
+            summary={"error": "sin objetivo"},
+            ok=False,
+        )
     try:
         oid = registro.abrir(
             eje=args.eje,
@@ -240,8 +261,9 @@ class CerrarArgs(BaseModel):
     operacion_id: int = Field(description="El número que devolvió abrir_operacion")
     motivo: str = Field(
         description=(
-            "stop, objetivo o manual. Cierra TODO lo que quede de la posición; "
-            "para soltar solo una parte usá salir_parcial."
+            "stop, objetivo, manual o tiempo. «tiempo» solo si estado_paper dice PLAZO "
+            "AGOTADO: la tesis tuvo su plazo y no se jugó. Cierra TODO lo que quede de la "
+            "posición; para soltar solo una parte usá salir_parcial."
         )
     )
     analisis: str = Field(
@@ -532,7 +554,10 @@ class OrdenArgs(BaseModel):
         )
     )
     stop_loss: float = Field(description="Stop, del lado correcto del precio límite")
-    take_profit: float | None = Field(default=None, description="Objetivo, opcional")
+    take_profit: float | None = Field(
+        default=None,
+        description="Objetivo. OBLIGATORIO, como en abrir_operacion: sin destino no hay entrada.",
+    )
     razon: str = Field(
         description=(
             "Qué ves que justifica entrar a ESE precio y no al de ahora. Queda sellada "
@@ -546,6 +571,16 @@ class OrdenArgs(BaseModel):
 
 
 def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolResult:
+    # Igual que en abrir_operacion: sin destino no hay entrada (CRITERIO_GESTION.md).
+    if not args.take_profit or args.take_profit <= 0:
+        return ToolResult(
+            content=(
+                "no se dejó la orden: una entrada sin objetivo no se registra. Decí adónde "
+                "va en take_profit (CRITERIO_GESTION.md)."
+            ),
+            summary={"error": "sin objetivo"},
+            ok=False,
+        )
     try:
         datos = velas(SIMBOLO_UNICO, "15m", 200)
     except MercadoNoDisponible as exc:
@@ -794,7 +829,7 @@ _MINUTOS_POR_MARCO = {"15m": 15, "1h": 60, "4h": 240}
 
 
 def _edad_y_marco(o: dict[str, Any]) -> str:
-    """« · tesis de 4h · abierta hace 17 min (0.1 velas de 4h)»."""
+    """« · tesis de 4h · lleva 17 min de 96 h (0.1 velas de 4h)», y si agotó el plazo, lo dice."""
     marco = str(o.get("temporalidad") or "")
     try:
         abierta = datetime.fromisoformat(o["abierta_en"])
@@ -803,10 +838,17 @@ def _edad_y_marco(o: dict[str, Any]) -> str:
     minutos = (datetime.now(UTC) - abierta).total_seconds() / 60
     if marco in _MINUTOS_POR_MARCO:
         velas = minutos / _MINUTOS_POR_MARCO[marco]
-        return (
-            f" · tesis de {marco} · abierta hace {minutos:.0f} min ({velas:.1f} velas de {marco})"
-        )
+        plazo = Registro.PLAZO_POR_MARCO.get(marco)
+        de = f" de {plazo:.0f} h" if plazo else ""
+        texto = f" · tesis de {marco} · lleva {minutos:.0f} min{de} ({velas:.1f} velas de {marco})"
+        if plazo and minutos / 60 >= plazo:
+            texto += " · PLAZO AGOTADO: decidí —seguir, con razón, o cerrar con motivo tiempo—"
+        return texto
     return f" · abierta hace {minutos:.0f} min"
+
+
+def _objetivo(o: dict[str, Any]) -> str:
+    return "" if o.get("take_profit") else " · SIN OBJETIVO"
 
 
 def _invalidacion(o: dict[str, Any], precio: float | None) -> str:
@@ -861,7 +903,8 @@ def _estado(registro: Registro) -> ToolResult:
             partes.append(
                 f"  #{o['id']} {o['direccion']} {o['simbolo']} a {o['precio_entrada']} "
                 f"(stop {o['stop_loss']}){como_va}{_edad_y_marco(o)}"
-                f"{_invalidacion(o, precio_ahora)} · eje '{o['eje']}' · «{o['razon'][:90]}»"
+                f"{_invalidacion(o, precio_ahora)}{_objetivo(o)} · eje '{o['eje']}' · "
+                f"«{o['razon'][:90]}»"
             )
     else:
         partes.append("No hay operaciones abiertas.")

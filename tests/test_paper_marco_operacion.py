@@ -100,7 +100,12 @@ def test_la_herramienta_pasa_el_intervalo_al_registro(
     res = _abrir(
         r,
         AbrirArgs(
-            eje="range-sweep", direccion="short", stop_loss=79867.31, razon="techo", intervalo="4h"
+            eje="range-sweep",
+            direccion="short",
+            stop_loss=79867.31,
+            take_profit=77000.0,
+            razon="techo",
+            intervalo="4h",
         ),
     )
 
@@ -129,7 +134,7 @@ def test_estado_enseña_marco_edad_en_velas_e_invalidacion(
 
     texto = _estado(r).content
 
-    assert "tesis de 4h · abierta hace 17 min (0.1 velas de 4h)" in texto
+    assert "tesis de 4h · lleva 17 min de 96 h (0.1 velas de 4h)" in texto
     assert "invalida en 79867.31 (a 1064)" in texto
     assert "+0.06R a favor" in texto
 
