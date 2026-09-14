@@ -103,10 +103,15 @@ toca.
 razonamiento):** una vuelta del modelo dura entre 25 y 40 minutos. Con la
 espera en 15m, «que cierre una vela» se cumplía siempre antes de terminar de
 pensar: la espera no esperaba nada. Y lo que el modelo relee en cada vuelta
-—el rango de 4h, los pools, el régimen de 1h— no había cambiado: la sesión 10
-pidió el mapa dos veces seguidas y obtuvo el mismo gráfico. Diez vueltas sobre
-el mismo gráfico general no son diez observaciones, que es lo que este archivo
-ya decía del 15m contra el 15m.
+—el rango de 4h, los pools, el régimen de 1h— no había cambiado entre una
+vuelta y la siguiente. Diez vueltas sobre el mismo gráfico general no son diez
+observaciones, que es lo que este archivo ya decía del 15m contra el 15m.
+
+> Corrección del mismo día: la primera versión de esta sección decía que «la
+> sesión 10 pidió el mapa dos veces seguidas». Es falso —la traza enseña una
+> sola llamada; se leyeron mal las marcas de tiempo de las velas— y se quita.
+> El argumento no dependía de eso, pero un criterio no puede apoyarse en un
+> dato que no ocurrió.
 
 **Por qué no es «da pocas vueltas»:** las vueltas no bajan por la espera —ya
 las limita el modelo—; lo que cambia es que cada una empieza con algo
