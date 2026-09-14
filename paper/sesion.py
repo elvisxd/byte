@@ -74,9 +74,13 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    minutos, ni porque en 15m no ves lo que era de 4h, ni porque «va en contra»
    sin que el stop lo diga. Medido: la #1 se abrió sobre 4h y se cerró a los 17
    minutos —0,07 velas de 4h— mirando 15m, con su invalidación intacta.
+   Si `estado_paper` dice PLAZO AGOTADO —la tesis tuvo el plazo de su marco y
+   no se jugó—, decidí: seguir, con razón escrita, o cerrar con motivo
+   `tiempo`. Es el único caso en que «pasó el tiempo» es un motivo.
 3. Si no hay ninguna abierta —o si además ves una entrada clara— mirá el mercado
    y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
-   justifica entrar ACÁ y no cinco velas después.
+   justifica entrar ACÁ y no cinco velas después, y la entrada lleva OBJETIVO:
+   una tesis de reversión tiene destino, y sin él no es una entrada.
    `mirar_mercado` SIN intervalo te da los tres gráficos del mismo instante:
    empezá por ahí, UNA vez por vuelta —el gráfico no cambia mientras pensás—,
    y pedí un marco suelto solo si te hace falta el detalle. Cada marco tiene
