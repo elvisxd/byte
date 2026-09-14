@@ -219,6 +219,7 @@ def _abrir(registro: Registro, args: AbrirArgs) -> ToolResult:
             razon=args.razon,
             stop_loss=args.stop_loss,
             take_profit=args.take_profit or None,
+            temporalidad=args.intervalo,
         )
     except ValueError as exc:
         return ToolResult(content=str(exc), summary={"error": "rechazada"}, ok=False)
@@ -789,6 +790,33 @@ def _precio_ahora() -> float | None:
     return float(ultimas[-1]["close"]) if ultimas else None
 
 
+_MINUTOS_POR_MARCO = {"15m": 15, "1h": 60, "4h": 240}
+
+
+def _edad_y_marco(o: dict[str, Any]) -> str:
+    """« · tesis de 4h · abierta hace 17 min (0.1 velas de 4h)»."""
+    marco = str(o.get("temporalidad") or "")
+    try:
+        abierta = datetime.fromisoformat(o["abierta_en"])
+    except (KeyError, TypeError, ValueError):
+        return f" · tesis de {marco}" if marco else ""
+    minutos = (datetime.now(UTC) - abierta).total_seconds() / 60
+    if marco in _MINUTOS_POR_MARCO:
+        velas = minutos / _MINUTOS_POR_MARCO[marco]
+        return (
+            f" · tesis de {marco} · abierta hace {minutos:.0f} min ({velas:.1f} velas de {marco})"
+        )
+    return f" · abierta hace {minutos:.0f} min"
+
+
+def _invalidacion(o: dict[str, Any], precio: float | None) -> str:
+    """« · invalida en 79867.31 (a 1006)»: el stop vigente y cuánto falta."""
+    stop = o["stop_actual"] if o.get("stop_actual") is not None else o["stop_loss"]
+    if precio is None:
+        return f" · invalida en {stop}"
+    return f" · invalida en {stop} (a {abs(precio - stop):.0f})"
+
+
 def _como_va(o: dict[str, Any], precio: float | None) -> str:
     """« · +0.06R a favor (precio 78803.28)», o nada si no hay precio."""
     if precio is None:
@@ -824,9 +852,16 @@ def _estado(registro: Registro) -> ToolResult:
         partes.append("Operaciones abiertas:")
         for o in abiertas:
             como_va = _como_va(o, precio_ahora)
+            # ⚠ EL MARCO, LA EDAD EN VELAS DE ESE MARCO Y LA INVALIDACIÓN. La #1
+            # (2026-09-14) se abrió sobre 4h y se cerró diecisiete minutos
+            # después mirando 15m, sin que su invalidación —escrita al entrar—
+            # hubiera ocurrido. Una tesis de 4h a los 17 minutos lleva 0,07
+            # velas: no ha tenido tiempo de jugarse. Con los tres datos delante
+            # no hay que estimarlo.
             partes.append(
                 f"  #{o['id']} {o['direccion']} {o['simbolo']} a {o['precio_entrada']} "
-                f"(stop {o['stop_loss']}){como_va} · eje '{o['eje']}' · «{o['razon'][:90]}»"
+                f"(stop {o['stop_loss']}){como_va}{_edad_y_marco(o)}"
+                f"{_invalidacion(o, precio_ahora)} · eje '{o['eje']}' · «{o['razon'][:90]}»"
             )
     else:
         partes.append("No hay operaciones abiertas.")

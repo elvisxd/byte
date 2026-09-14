@@ -87,7 +87,8 @@ def test_sin_mercado_la_lista_sale_como_antes(
 
     texto = _estado(r).content
 
-    assert "#1 short BTCUSDT a 78860.84 (stop 79867.31) · eje" in texto
+    assert "#1 short BTCUSDT a 78860.84 (stop 79867.31)" in texto
+    assert "eje 'range-sweep'" in texto
     assert "R " not in texto.split("Cómo va")[0]
 
 
