@@ -129,3 +129,54 @@ estructura —dónde está el precio en el rango, los pools y FVGs grandes, la
 tesis de fondo—; 1h es el régimen y si el impulso sigue o se agota, y el marco
 por defecto de las predicciones; 15m es solo el timing —la vela en curso, el
 barrido, la entrada—. No se busca en 15m lo que es de 4h, ni al revés.
+
+## 2026-09-14 · modo vigía: el modelo no corre 24/7, despierta por eventos
+
+**Lo que se vio:** al final de la sesión 11 había diez predicciones vivas y
+una orden puesta. Las últimas vueltas fueron chocar contra sus propios
+niveles hasta encontrar hueco: el modelo ya había dicho lo que tenía que decir
+sobre esa estructura, y el 4h —que decide la estructura— cambia cada cuatro
+horas, no cada media. Volver a leerlo antes de que cambie es la misma
+redundancia que este archivo describió para el 15m y luego para el 1h, un
+marco más arriba. Y las órdenes límite ya hacen la espera por él: «entro si
+vuelve al borde» no necesita al modelo despierto, necesita la orden puesta.
+
+**La regla:** un vigía sin modelo mira cada 15 minutos, resuelve lo mecánico
+—órdenes disparadas, stops tocados, predicciones vencidas o cumplidas— y
+despierta al modelo para UNA vuelta solo si ocurre alguna de estas tres cosas:
+
+1. **Cierra una vela de 4h.** La estructura cambió; toca releerla.
+2. **El precio se acerca a un nivel vivo** —una orden, una predicción, un
+   pool— a menos de 1 ATR de 15m. Es el timing, el único papel del 15m.
+3. **Hay una posición abierta** y el precio se acerca a su stop o a su
+   objetivo a menos de 1 ATR de 15m.
+
+Con un **tope diario de vueltas** (8) para que un día nervioso no lo vuelva
+24/7 por la puerta de atrás, y una **ventana activa**: fuera de ella el vigía
+sigue resolviendo lo mecánico, pero no despierta al modelo.
+
+**La ventana, y por qué esa:** 08:00–20:30 hora local de la máquina
+(EDT, UTC−4). Cubre los cierres de 4h de las 08, 12, 16 y 20 local —12, 16,
+20 y 00 UTC— y la sesión americana, que es cuando BTC se mueve (ver el cron
+`sesion-papel.yml`, que ya eligió las 13:30 UTC por eso). Los cierres de las
+00 y las 04 local se saltan: la orden puesta hace la guardia de noche y lo
+mecánico pone al día a las 08. El reposo garantizado es 20:35 → 07:59, y es
+un requisito y no un efecto: la máquina se usa para otras cosas, y hay que
+saber cuándo se puede.
+
+**Lo que NO cambia:** los 0,5 ATR y los marcos de la espera de arriba siguen
+valiendo para las vueltas dentro de una sesión larga lanzada a mano; el vigía
+es otra forma de lanzarlas, no otra regla de cuándo hay gráfico nuevo. Órdenes
+y predicciones se siguen resolviendo contra velas de 15m.
+
+**Por qué no es «da pocas vueltas»:** las vueltas no bajan porque el modelo
+sea lento, bajan porque el gráfico que decide no cambió. Una vuelta con un 4h
+nuevo, o con el precio encima de un nivel que él mismo eligió, vale más que
+cuatro sobre el mismo 4h. Y lo que el experimento mide —si las razones
+selladas discriminan— no gana nada con presencia.
+
+**Cuándo se revisaría:** si las órdenes o los stops se disparan con el
+modelo dormido y al despertar hay tesis que habría querido revisar antes
+—medible: cierres por `evaluar_abiertas` en horas de reposo con R que
+contradiga la tesis—. Eso sería un hallazgo sobre la ventana, no un ajuste de
+comodidad, y se anota aquí con el valor viejo y el nuevo.
