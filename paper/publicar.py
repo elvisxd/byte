@@ -66,6 +66,11 @@ def _operacion(fila: dict[str, Any], tramos: list[dict[str, Any]] | None = None)
         "takeProfit": fila["take_profit"],
         "razon": fila["razon"],
         "sello": fila["sello"],
+        # Qué modelo la hizo. Viaja porque es donde se mirará al comparar dos
+        # máquinas: el Codespace corre qwen3.6:27b y la Mac un 14B, y sin esto
+        # una racha mala no se puede atribuir al mercado o al modelo más chico.
+        # `get` y no `[...]`: las filas anteriores al cambio no tienen la clave.
+        "modelo": fila.get("modelo"),
         "contexto": _json(fila["contexto"]),
         "cerradaEn": fila["cerrada_en"],
         "precioSalida": fila["precio_salida"],
@@ -118,6 +123,11 @@ def _prediccion(fila: dict[str, Any]) -> dict[str, Any]:
         "regimenDicho": fila["regimen_dicho"],
         "razonamiento": fila["razonamiento"],
         "sello": fila["sello"],
+        # Qué modelo la hizo. Viaja porque es donde se mirará al comparar dos
+        # máquinas: el Codespace corre qwen3.6:27b y la Mac un 14B, y sin esto
+        # una racha mala no se puede atribuir al mercado o al modelo más chico.
+        # `get` y no `[...]`: las filas anteriores al cambio no tienen la clave.
+        "modelo": fila.get("modelo"),
         "contexto": _json(fila["contexto"]),
         "resueltaEn": fila["resuelta_en"],
         # None mientras está viva, 0/1 al resolverse: el panel distingue

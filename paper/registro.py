@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS operaciones (
     contexto        TEXT    NOT NULL,   -- JSON: el estado del gráfico al entrar
     razon           TEXT    NOT NULL,   -- lo que el agente escribió AL ENTRAR
     sello           TEXT    NOT NULL,   -- hash de lo de arriba
+    -- ⚠ QUÉ MODELO LA HIZO, Y NO ENTRA EN EL SELLO. El sello impide reescribir
+    -- una DECISIÓN del agente; el modelo no es una decisión suya sino un hecho
+    -- del entorno que fija el código. Meterlo ahí marcaría como adulterada toda
+    -- fila migrada, que es ruido y no fraude.
+    --
+    -- Hace falta desde que hay dos máquinas: el Codespace corre qwen3.6:27b y
+    -- la Mac un 14B. Sin esta columna, una racha mala no se puede atribuir al
+    -- mercado o al modelo más chico — y ya está medido que el 8B abre en todas
+    -- las vueltas con razones clonadas donde el 27B se abstiene.
+    modelo          TEXT,
     -- ⚠ EL STOP MOVIDO VA APARTE Y NO PISA `stop_loss`. Mover el stop a la
     -- entrada tras un parcial es gestión normal, pero el R múltiplo tiene que
     -- seguir midiéndose contra el riesgo que se asumió AL ENTRAR: recalcularlo
@@ -117,6 +127,7 @@ CREATE TABLE IF NOT EXISTS ordenes (
     contexto        TEXT    NOT NULL,   -- el gráfico AL DEJAR LA ORDEN
     razon           TEXT    NOT NULL,   -- por qué ahí, escrito AL DEJARLA
     sello           TEXT    NOT NULL,
+    modelo          TEXT,               -- cuál la dejó. Ver la tabla de arriba.
     -- Lo de abajo se escribe cuando se resuelve.
     resuelta_en     TEXT,
     resultado       TEXT,               -- disparada | vencida | cancelada
@@ -154,6 +165,7 @@ CREATE TABLE IF NOT EXISTS predicciones (
     contexto        TEXT    NOT NULL,   -- el gráfico al predecir, entero
     razonamiento    TEXT    NOT NULL,   -- por qué esa probabilidad, AL PREDECIR
     sello           TEXT    NOT NULL,
+    modelo          TEXT,               -- cuál la hizo. Ver la tabla de arriba.
     -- Lo de abajo lo escribe el código al resolver, nunca el modelo.
     resuelta_en     TEXT,
     ocurrio         INTEGER,            -- 1 si tocó el nivel, 0 si no
@@ -272,8 +284,20 @@ def _sellar_prediccion(
 class Registro:
     """Las operaciones en papel, en SQLite."""
 
-    def __init__(self, ruta: str | Path) -> None:
+    def __init__(self, ruta: str | Path, *, modelo: str = "") -> None:
         self.ruta = Path(ruta)
+        # ⚠ EL MODELO SE FIJA AL CONSTRUIR, NO EN CADA ESCRITURA. Una sesión
+        # entera corre con uno solo, así que pasarlo por `abrir`, `dejar_orden`
+        # y `predecir` sería repetir el mismo dato en tres firmas y arriesgar
+        # que alguna se olvide — y una fila sin modelo, cuando el resto lo
+        # tiene, es indistinguible de una de antes del cambio.
+        #
+        # Hace falta desde que hay DOS máquinas: el Codespace corre qwen3.6:27b
+        # y la Mac un 14B. Sin esta columna, mezclar sesiones hace la muestra
+        # inservible: una racha mala no se podría atribuir al mercado o al
+        # modelo más chico. Ya está medido que el 8B abre en todas las vueltas
+        # con razones clonadas donde el 27B se abstiene cinco veces seguidas.
+        self.modelo = modelo.strip()
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(self.ruta)
         self._con.row_factory = sqlite3.Row
@@ -301,6 +325,17 @@ class Registro:
         cols_pred = {f["name"] for f in self._con.execute("PRAGMA table_info(predicciones)")}
         if cols_pred and "temporalidad" not in cols_pred:
             self._con.execute("ALTER TABLE predicciones ADD COLUMN temporalidad TEXT")
+
+        # El modelo llegó cuando ya había operaciones y predicciones en el
+        # Codespace. Las filas viejas se quedan con NULL, que es honesto: no se
+        # sabe cuál las hizo, y rellenarlas con el de ahora sería inventarlo.
+        for tabla, cols in (
+            ("operaciones", columnas),
+            ("predicciones", cols_pred),
+            ("ordenes", {f["name"] for f in self._con.execute("PRAGMA table_info(ordenes)")}),
+        ):
+            if cols and "modelo" not in cols:
+                self._con.execute(f"ALTER TABLE {tabla} ADD COLUMN modelo TEXT")  # noqa: S608
 
     def abrir(
         self,
@@ -351,8 +386,8 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO operaciones
                (eje, simbolo, direccion, abierta_en, precio_entrada, stop_loss,
-                take_profit, contexto, razon, sello)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                take_profit, contexto, razon, sello, modelo)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 eje,
                 simbolo,
@@ -380,6 +415,7 @@ class Registro:
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                 ),
+                self.modelo or None,
             ),
         )
         self._con.commit()
@@ -601,8 +637,8 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO ordenes
                (eje, simbolo, direccion, creada_en, vence_en, precio_limite, stop_loss,
-                take_profit, contexto, razon, sello)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                take_profit, contexto, razon, sello, modelo)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 eje,
                 simbolo,
@@ -623,6 +659,7 @@ class Registro:
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                 ),
+                self.modelo or None,
             ),
         )
         self._con.commit()
@@ -705,8 +742,8 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO operaciones
                (eje, simbolo, direccion, abierta_en, precio_entrada, stop_loss,
-                take_profit, contexto, razon, sello)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                take_profit, contexto, razon, sello, modelo)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 orden["eje"],
                 orden["simbolo"],
@@ -726,6 +763,11 @@ class Registro:
                     stop_loss=orden["stop_loss"],
                     take_profit=orden["take_profit"],
                 ),
+                # El de AHORA, no el que dejó la orden. Una orden puede
+                # dispararse días después y en otra máquina: lo que importa para
+                # atribuir la operación es qué modelo estaba corriendo cuando
+                # entró de verdad. Quién la dejó está en la fila de `ordenes`.
+                self.modelo or None,
             ),
         )
         oid = int(cursor.lastrowid or 0)
@@ -1019,8 +1061,8 @@ class Registro:
             """INSERT INTO predicciones
                (simbolo, hecha_en, vence_en, nivel, hacia, probabilidad,
                 regimen_medido, regimen_dicho, contexto, razonamiento,
-                temporalidad, sello)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                temporalidad, sello, modelo)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 simbolo,
                 ahora.isoformat(),
@@ -1042,6 +1084,7 @@ class Registro:
                     probabilidad=probabilidad,
                     temporalidad=temporalidad.strip(),
                 ),
+                self.modelo or None,
             ),
         )
         self._con.commit()

@@ -130,7 +130,9 @@ async def una_sesion(
     # Solo las del experimento: sin CV, sin GitHub, sin navegador. Cada
     # herramienta de más son tokens de definiciones compitiendo con el contexto
     # del gráfico, y ya está medido que el modelo elige peor cuantas más hay.
-    herramientas = ToolRegistry(build_paper_tools(ruta_db, ajustes.max_tool_result_chars))
+    herramientas = ToolRegistry(
+        build_paper_tools(ruta_db, ajustes.max_tool_result_chars, ajustes.ollama_model)
+    )
 
     # Sin checkpointer: cada turno se arma con el estado que el agente LEE del
     # registro, no con el historial del chat. Es lo que hace que una sesión

@@ -687,9 +687,14 @@ def _publicar(registro: Registro) -> ToolResult:
     )
 
 
-def build_paper_tools(ruta_db: str, max_chars: int) -> list[Tool]:
-    """Las herramientas de paper trading, sobre un registro concreto."""
-    registro = Registro(ruta_db)
+def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[Tool]:
+    """Las herramientas de paper trading, sobre un registro concreto.
+
+    `modelo` queda grabado en todo lo que se registre en esta sesión. Desde que
+    hay dos máquinas —el Codespace con qwen3.6:27b y la Mac con un 14B— sin él
+    no se podría saber si una racha mala fue el mercado o el modelo más chico.
+    """
+    registro = Registro(ruta_db, modelo=modelo)
 
     async def mirar(args: BaseModel) -> ToolResult:
         return _mirar(args, max_chars)  # type: ignore[arg-type]
