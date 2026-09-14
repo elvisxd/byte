@@ -68,3 +68,27 @@ mismo instante no discriminan nada.
 Solo si aparece evidencia de que la espera se traga movimientos que importan:
 por ejemplo, órdenes que se disparan entre vuelta y vuelta con una tesis que el
 agente habría querido revisar. Eso sería un hallazgo, no un ajuste de comodidad.
+
+## Subir el umbral: qué lo justificaría y qué no
+
+Queda anotado que 0,5 ATR puede quedarse corto —y **subirlo** es la dirección
+que tendría sentido, no bajarlo—. Pero el motivo importa:
+
+**Sí lo justifica** que el agente siga repitiendo con gráfico nuevo. Si con 0,5
+ATR vuelve a dejar órdenes al mismo nivel o a escribir razones calcadas, es que
+medio recorrido de vela no basta para que él vea algo distinto, y el umbral está
+midiendo mal lo que pretende medir. Se comprueba mirando el registro: dos
+apuestas con el mismo nivel y distinto `hecha_en` son la prueba.
+
+**No lo justifica** que la sesión dé pocas vueltas, ni que la muestra crezca
+despacio, ni que «con más movimiento decidiría mejor». Esas tres son razones de
+comodidad, y bajar o subir un número por comodidad es exactamente el
+sobreajuste que convirtió −96R en +88R en `rangeSweepCombo.ts`.
+
+La diferencia en una frase: se sube si el umbral **no está consiguiendo** que
+cada vuelta sea una observación distinta. No si consigue menos observaciones de
+las que uno querría.
+
+Y si se sube, se anota aquí el valor viejo, el nuevo y qué se vio en el registro
+—igual que esta sección—, para que el historial distinga «se midió» de «se
+tocó».
