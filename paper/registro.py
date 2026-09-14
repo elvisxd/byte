@@ -1048,6 +1048,11 @@ class Registro:
             campo_nivel="nivel",
             campo_direccion="hacia",
             que="una predicción viva",
+            # Solo choca con las de su mismo marco: ver `_exigir_separacion`.
+            # `dejar_orden` no pasa marco a propósito —la tabla `ordenes` no lo
+            # guarda, y dos órdenes al mismo precio se disparan las dos sin
+            # importar en qué gráfico se pensaron—.
+            marco=temporalidad.strip(),
         )
 
         ahora = datetime.now(UTC)
@@ -1111,6 +1116,7 @@ class Registro:
         campo_nivel: str,
         campo_direccion: str,
         que: str,
+        marco: str = "",
     ) -> None:
         """Dos niveles a menos de 1.5 ATR son la misma apuesta contada dos veces.
 
@@ -1146,6 +1152,19 @@ class Registro:
                 f"del precio {contexto.precio}: el precio lo toca por ruido, no por tu tesis"
             )
         for viva in vivas:
+            # ⚠ SOLO CHOCA CON APUESTAS DEL MISMO MARCO. Una predicción de 4h
+            # tiene un ATR de ~650, o sea que bloquea ±980 dólares; aplicado a
+            # 15m —donde el ATR es ~180— eso veta un rango cinco veces mayor que
+            # el que su propia escala consideraría "la misma apuesta".
+            #
+            # Pasó de verdad el 2026-09-14: dos predicciones de 4h dejaron al
+            # modelo sin sitio donde apostar en ningún marco, y agotó las seis
+            # iteraciones chocando contra ellas —cuatro llamadas seguidas
+            # rechazadas, cero registros—. Un scalp de 15m y una tesis de 4h no
+            # son la misma apuesta aunque compartan nivel: se resuelven en
+            # horizontes distintos.
+            if marco and str(viva.get("temporalidad") or "") not in ("", marco):
+                continue
             if viva[campo_direccion] == direccion and abs(nivel - viva[campo_nivel]) < minimo:
                 raise ValueError(
                     f"ya hay {que} en {viva[campo_nivel]} ({direccion}, #{viva['id']}), "
