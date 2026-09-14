@@ -123,6 +123,13 @@ pensamiento sí vio el TREND de 15m (ADX 44) y por eso descartó range-sweep.
 Otra vez: la lectura correcta está en el pensamiento y la etiqueta sale de
 otro sitio.
 
+**Sesión 11 (con el mapa y los papeles por marco):** el pensamiento leyó
+los tres marcos bien y fue de 4h a 1h por su cuenta; el texto final dijo
+«el tope del rango de 4h (76370–79320)», que es el rango **de 1h** —el de 4h
+era 76077–79827—. Con el mapa diciendo de qué marco es cada número, la
+etiqueta del marco sigue saliendo mal al escribir. Es la misma familia que la
+trampa 2: la métrica llega a donde piensa, no a donde escribe.
+
 ### 7. Baja de marco para colar la misma apuesta — y el agujero era mío
 
 Sesión 8, vuelta 1, la primera con la pista de 15m. Rechazada en 4h por
