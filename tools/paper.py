@@ -382,6 +382,56 @@ class PredecirArgs(BaseModel):
     )
 
 
+def _pista_de_marco_menor(registro: Registro, marco: str, nivel: float, hacia: str) -> str:
+    """Al rechazar en un marco grande, decir CON NÚMEROS qué pasaría en 15m.
+
+    ⚠ EL MODELO SIGUE A LA HERRAMIENTA, NO AL PROMPT. Medido el 2026-09-14 con
+    `qwen3:14b` pensando: ante cada rechazo cita los números del mensaje y
+    calcula con ellos —«750.21 < 976.5, that's why it was flagged»—, y aun así
+    en cuatro intentos seguidos movió el NIVEL y nunca el MARCO, con el prompt
+    diciéndole en mayúsculas que bajara a 15m. Su primer intento, 79237.42,
+    entraba en 15m de sobra. La pista va donde él mira: en el rechazo, y con
+    cifras que pueda verificar, porque es lo que hace con todo lo demás.
+
+    Si el nivel tampoco entra en 15m se dice igual: mandarlo a un marco donde
+    volvería a chocar sería gastar otra iteración por nada.
+    """
+    if marco.strip() == "15m":
+        return ""
+    try:
+        datos = velas(SIMBOLO_UNICO, "15m", 200)
+    except MercadoNoDisponible:
+        return ""
+    ctx = _contexto_de(datos, indicadores(datos["velas"], ["atr"]))
+    atr = ctx.extra.get("indicadores", {}).get("atr")
+    if not isinstance(atr, int | float) or atr <= 0:
+        return ""
+    minimo = atr * registro.MARGEN_ATR
+    dista = abs(nivel - ctx.precio)
+    if dista < minimo:
+        return (
+            f"\nEn 15m tampoco: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y {nivel} dista "
+            f"{dista:.0f} del precio {ctx.precio}. Buscá otro nivel, no otro marco."
+        )
+    choca = [
+        v
+        for v in registro.predicciones_vivas()
+        if str(v.get("temporalidad") or "") == "15m"
+        and v["hacia"] == hacia
+        and abs(nivel - v["nivel"]) < minimo
+    ]
+    if choca:
+        return (
+            f"\nEn 15m el nivel {nivel} chocaría con la predicción viva #{choca[0]['id']} "
+            f"({choca[0]['nivel']}, {hacia}). Otro nivel en 15m sí entra."
+        )
+    return (
+        f"\nEn 15m SÍ entra: el ATR es {atr:.0f}, el mínimo {minimo:.0f}, y {nivel} dista "
+        f"{dista:.0f} del precio {ctx.precio}. Las predicciones vivas en {marco.strip()} no "
+        f'bloquean 15m. Repetí la llamada con temporalidad="15m".'
+    )
+
+
 def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolResult:
     # ⚠ LAS VELAS SON LAS DE SU TEMPORALIDAD, no siempre 15m. El contexto se
     # sella con la predicción, así que pedir 15m mientras el modelo razona sobre
@@ -407,7 +457,8 @@ def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolRes
         )
     except ValueError as exc:
         return ToolResult(
-            content=f"no se registró la predicción: {exc}",
+            content=f"no se registró la predicción: {exc}"
+            + _pista_de_marco_menor(registro, args.temporalidad, args.nivel, args.hacia),
             summary={"error": "no se registró"},
             ok=False,
         )
