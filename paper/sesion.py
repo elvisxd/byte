@@ -218,8 +218,17 @@ async def una_sesion(
     # Solo las del experimento: sin CV, sin GitHub, sin navegador. Cada
     # herramienta de más son tokens de definiciones compitiendo con el contexto
     # del gráfico, y ya está medido que el modelo elige peor cuantas más hay.
+    # ⚠ EL MODELO QUE SE REGISTRA DICE SI PENSÓ. `qwen3:14b` sin razonamiento y
+    # con él son dos agentes distintos —medido el 2026-09-14: el primero
+    # escribe la misma frase 31 veces en una sesión, el segundo tarda diez
+    # minutos por iteración—, y la columna `modelo` es lo único que permite
+    # separarlos cuando alguien mire el registro dentro de una semana. Sin la
+    # marca, las dos configuraciones caerían en el mismo eje sin que nada lo
+    # dijera, que es exactamente lo que `EJES.md` prohíbe mezclar.
+    etiqueta_modelo = ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
+
     herramientas = ToolRegistry(
-        build_paper_tools(ruta_db, ajustes.max_tool_result_chars, ajustes.ollama_model)
+        build_paper_tools(ruta_db, ajustes.max_tool_result_chars, etiqueta_modelo)
     )
 
     # Sin checkpointer: cada turno se arma con el estado que el agente LEE del
@@ -290,7 +299,7 @@ async def una_sesion(
     # se conserva; el trace dice CÓMO y caduca. Ver paper/trace.py.
     trace = TraceDeSesion(
         sesion_id=f"{int(time.time())}",
-        modelo=ajustes.ollama_model,
+        modelo=etiqueta_modelo,
         simbolo=SIMBOLO,
     )
 
