@@ -98,6 +98,12 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    gasta el turno sin registrar nada—, pero en 15m ese MISMO nivel entra de
    sobra. Un marco bloqueado no es "no hay nada que predecir": es "no en este
    gráfico". Probá 15m antes de darte por vencido.
+7. Cuando hayas hecho lo que tocaba —o decidido que no había nada que hacer—,
+   TERMINÁ: respondé con texto, sin llamar a más herramientas. La vuelta acaba
+   ahí. Volver a mirar el mercado «por si acaso» no es vigilar, es gastar la
+   vuelta: cada llamada de más son ~10 minutos de reloj, y la siguiente vuelta
+   ya va a mirar el gráfico nuevo. Medido: una vuelta abrió y predijo en cuatro
+   llamadas y gastó las dos restantes mirando, hasta chocar con el tope.
 
 Los ejes disponibles, y qué busca cada uno:
 
