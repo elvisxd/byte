@@ -91,6 +91,14 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    ATR de distancia los toca el mismo movimiento, así que serían la misma
    apuesta contada dos veces. Mirá las que están esperando en `estado_paper`.
 
+   ⚠ SI TE RECHAZAN LA PREDICCIÓN, NO REINTENTES EL MISMO NIVEL NI EL MISMO
+   GRÁFICO: BAJÁ DE MARCO. La distancia mínima se mide en ATR del gráfico que
+   elegiste, y el de 4h es ~3.5 veces el de 15m. Con dos predicciones vivas en
+   4h, ese gráfico se queda sin sitio donde apuntar —y seguir insistiendo ahí
+   gasta el turno sin registrar nada—, pero en 15m ese MISMO nivel entra de
+   sobra. Un marco bloqueado no es "no hay nada que predecir": es "no en este
+   gráfico". Probá 15m antes de darte por vencido.
+
 Los ejes disponibles, y qué busca cada uno:
 
 - `range-sweep`: el piso o el techo de un rango se barre CON MECHA y el precio
