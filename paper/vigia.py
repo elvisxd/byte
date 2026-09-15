@@ -39,9 +39,12 @@ y publica el historial. El script que lo lanza manda TERM al pararse.
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from datetime import time as hora_del_dia
@@ -65,6 +68,33 @@ TOPE_DIARIO = 8
 MARGEN_ATR_EVENTO = 1.0
 # Cada cuánto se sondea. Quince minutos: la vela de la resolución.
 CADA_S = 900
+
+
+def avisar_por_telegram(texto: str) -> bool:
+    """Manda un aviso al panel, que lo reenvía a Telegram. Best-effort: nunca lanza.
+
+    El bot vive en Railway —es el de los vigilantes— y la Mac no tiene su token
+    a propósito: un token menos en una máquina de uso diario. El panel valida
+    con PANEL_TOKEN, como el historial y la traza.
+    """
+    destino = os.environ.get("PANEL_URL", "")
+    if not destino:
+        return False
+    pedido = urllib.request.Request(  # noqa: S310 — destino fijado por entorno
+        destino.rstrip("/") + "/api/papel/aviso",
+        data=json.dumps({"texto": texto}, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('PANEL_TOKEN', '')}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(pedido, timeout=10) as r:  # noqa: S310
+            r.read()
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+    return True
 
 
 def en_ventana(ahora: datetime, ventana: tuple[hora_del_dia, hora_del_dia] = VENTANA) -> bool:
@@ -147,6 +177,7 @@ async def vigilar(
     dormir: Callable[[float], Awaitable[None]] = asyncio.sleep,
     correr_vuelta: Callable[[int], Awaitable[str | None]] | None = None,
     ticks: int | None = None,
+    avisar: Callable[[str], bool] = avisar_por_telegram,
 ) -> dict[str, Any]:
     """El bucle. Termina por señal o, en pruebas, tras `ticks` sondeos."""
     ajustes = Settings()  # type: ignore[call-arg]
@@ -187,6 +218,9 @@ async def vigilar(
     vueltas_hoy: dict[str, int] = {}
     cierre_4h_visto: int | None = None
     plazos_avisados: set[int] = set()
+    # Para avisar UNA vez cuando la ventana se cierra: «ya puedes apagar la Mac».
+    estaba_dentro: bool | None = None
+    resueltas_hoy = 0
     pendiente_arranque = primera_vuelta_al_arrancar
     ultimo_latido = 0.0
     n_ticks = 0
@@ -231,6 +265,17 @@ async def vigilar(
 
         dentro = en_ventana(momento, ventana)
         hoy = vueltas_hoy.get(dia, 0)
+        resueltas_hoy += len(cambios["predicciones"]) + len(cambios["cerradas"])
+        # ⚠ AL CERRARSE LA VENTANA, UN AVISO. Es lo que permite apagar la Mac
+        # sin mirar el reloj: el vigía dice cuándo ya no la necesita. Solo en la
+        # transición dentro → fuera, no cada sondeo del reposo.
+        if estaba_dentro and not dentro:
+            avisar(
+                f"Vigía en reposo hasta las {ventana[0]:%H:%M}: ya puedes apagar la Mac. "
+                f"Hoy: {hoy} vuelta(s), {resueltas_hoy} resolución(es)."
+            )
+            resueltas_hoy = 0
+        estaba_dentro = dentro
         if motivos and dentro and hoy < tope_diario:
             vueltas_total += 1
             vueltas_hoy[dia] = hoy + 1
