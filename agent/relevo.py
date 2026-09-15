@@ -68,6 +68,23 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
         return "dia" if ("perday" in bajo or "per day" in bajo or "daily" in bajo) else "minuto"
     if codigo in (500, 502, 503, 504) or "UNAVAILABLE" in texto or "high demand" in texto.lower():
         return "caido"
+    # ⚠ UN CORTE DE TRANSPORTE TAMBIÉN ES UNA CAÍDA. Medido el 2026-09-15 a las
+    # 08:11, primera vuelta real del brazo: 3.8 dio 503, y 3.7 «Server
+    # disconnected without sending a response» —sin código HTTP, porque no
+    # hubo respuesta—. No era de cuota ni de argumentos, así que subió y la
+    # vuelta se perdió. Un servidor que corta antes de contestar es, para
+    # quien espera, lo mismo que un 503.
+    nombre = type(exc).__name__
+    bajo = texto.lower()
+    if (
+        "Connect" in nombre
+        or "Timeout" in nombre
+        or "Protocol" in nombre
+        or "disconnected" in bajo
+        or "connection" in bajo
+        or "timed out" in bajo
+    ):
+        return "caido"
     return None
 
 
