@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     # Mismo razonamiento que `gemini_num_predict`: el pensamiento de gpt-oss
     # cuenta dentro del tope de salida.
     groq_num_predict: int = Field(default=8192, alias="BYTE_GROQ_NUM_PREDICT")
+    # ⚠ 45 SEGUNDOS, NO 12. Medido el 2026-09-15: la capa gratuita de Groq
+    # tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
+    # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
+    # llegó el 429 del minuto. Con 45 s entre llamadas entra una por minuto y
+    # la vuelta tarda 4-5 min, seis veces menos que el local. Una petición
+    # sola de más de 8K da 413 y no hay espera que la arregle: ese es el
+    # techo del prompt para este brazo, y el relevo lo anota.
+    groq_espera_s: float = Field(default=45.0, alias="BYTE_GROQ_ESPERA_S")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")

@@ -117,6 +117,33 @@ def test_armar_con_gemini_construye_un_relevo(
     assert callable(etiqueta) and etiqueta() == "gemini-3.8-flash"
 
 
+def test_con_groq_en_la_lista_la_espera_es_la_de_groq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El tope por minuto de Groq es de tokens: manda la espera más larga de la lista."""
+
+    class _Falso:
+        def bind_tools(self, _e: Any) -> "_Falso":
+            return self
+
+    monkeypatch.setattr(sesion, "build_llm", lambda ajustes, modelo="", **kw: _Falso())
+    capturado: dict[str, Any] = {}
+    original = sesion.build_graph
+    monkeypatch.setattr(
+        sesion,
+        "build_graph",
+        lambda llm, h, **kw: capturado.setdefault("llm", llm) and original(llm, h, **kw),
+    )
+    ajustes = Settings(GEMINI_API_KEY="k", GROQ_API_KEY="k", BYTE_GROQ_ESPERA_S=45)
+
+    sesion.armar(ajustes, str(tmp_path / "g.db"), ["gemini-3.8-flash", "groq/openai/gpt-oss-120b"])
+    assert capturado["llm"].espera_s == 45
+
+    capturado.clear()
+    sesion.armar(ajustes, str(tmp_path / "h.db"), ["gemini-3.8-flash"])
+    assert capturado["llm"].espera_s == ajustes.gemini_espera_s
+
+
 def test_no_se_mezclan_locales_y_remotos(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="mezcla"):
         sesion.armar(

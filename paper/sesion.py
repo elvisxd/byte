@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 from agent.graph import build_graph
-from agent.llm import build_llm, es_remoto
+from agent.llm import build_llm, es_de_groq, es_remoto
 from agent.relevo import Relevo
 from api.config import Settings
 from paper.mercado import MercadoNoDisponible, indicadores
@@ -314,11 +314,16 @@ def _armar_remoto(
     """
     if not all(es_remoto(n) for n in nombres):
         raise ValueError(f"el relevo mezcla modelos locales y remotos: {nombres}")
+    # La espera entre llamadas es la del proveedor más lento de la lista: el
+    # tope por minuto de Groq es de tokens y obliga a 45 s (ver api/config.py).
+    espera_s = ajustes.gemini_espera_s
+    if any(es_de_groq(n) for n in nombres):
+        espera_s = max(espera_s, ajustes.groq_espera_s)
     relevo = Relevo(
         # `reasoning=True`: pedir VER el pensamiento, que es lo que se audita en
         # la traza. Los modelos que piensan lo hacen igual con o sin esto.
         [(n, build_llm(ajustes, n, reasoning=True)) for n in nombres],
-        espera_s=ajustes.gemini_espera_s,
+        espera_s=espera_s,
     )
 
     def etiqueta() -> str:
