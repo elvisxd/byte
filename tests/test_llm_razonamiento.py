@@ -115,3 +115,15 @@ def test_el_razonamiento_viene_apagado_por_defecto(monkeypatch: pytest.MonkeyPat
     que sea porque alguien lo escribió, no porque se coló.
     """
     assert defaults_del_codigo(monkeypatch).paper_reasoning is False
+
+
+def test_el_agente_en_papel_usa_su_propio_contexto(espia: type[ChatOllamaEspia]) -> None:
+    """12K y no 16K: 16K dejaba una capa del 14B en CPU en un Mac de 16 GB y el
+    modelo iba a 1,9 tok/s; con 12K entra entero y va a 7,3. La API no cambia."""
+    ajustes = Settings(OLLAMA_NUM_CTX=16384, BYTE_PAPER_NUM_CTX=12288)
+
+    build_llm(ajustes, num_ctx=ajustes.paper_num_ctx)
+    assert espia.ultimo["num_ctx"] == 12288
+
+    build_llm(ajustes)
+    assert espia.ultimo["num_ctx"] == 16384
