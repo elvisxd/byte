@@ -210,10 +210,29 @@ def test_medianoche_del_pacifico_es_la_siguiente() -> None:
     assert segundos_hasta_medianoche_pacifico(ahora) == pytest.approx(30 * 60 + 60)
 
 
-async def test_si_todos_estan_agotados_lo_dice() -> None:
-    relevo = _relevo(_Modelo("a", _Error(429, "q")), _Modelo("b", _Error(503, "high demand")))
+async def test_si_todos_estan_agotados_por_mucho_tiempo_lo_dice() -> None:
+    reloj = _Reloj()
+    dia = _Error(429, "GenerateRequestsPerDayPerProjectPerModel")
+    relevo = _relevo(_Modelo("a", dia), _Modelo("b", dia), reloj=reloj)
     with pytest.raises(RelevoAgotado, match="a, b"):
         await _todo(relevo)
+    assert reloj.dormido == [], "hasta medianoche no se espera: se pierde la vuelta y se avisa"
+
+
+async def test_si_todos_estan_agotados_pero_por_segundos_espera() -> None:
+    """Medido: «todos agotados; el primero vuelve en 0 min» y la vuelta se perdía."""
+    reloj = _Reloj()
+    a = _Modelo("a", _Error(429, "Rate limit reached. Please try again in 20s."))
+    b = _Modelo("b", _Error(503, "high demand"))
+    relevo = _relevo(a, b, reloj=reloj)
+
+    # Primera llamada: los dos caen, y el primero (a) vuelve en 20 s.
+    with pytest.raises(RelevoAgotado):
+        await _todo(relevo)
+    a.fallo = None
+    # Segunda llamada: en vez de fallar, espera esos ~25 s y `a` contesta.
+    assert await _todo(relevo) == ["a:0", "a:1"]
+    assert any(20 <= d <= 30 for d in reloj.dormido), reloj.dormido
 
 
 async def test_un_error_que_no_es_de_cuota_sube_tal_cual() -> None:

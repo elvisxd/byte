@@ -48,6 +48,10 @@ from zoneinfo import ZoneInfo
 
 CUARENTENA_MINUTO_S = 60.0
 CUARENTENA_CAIDO_S = 120.0
+# Si todos están en cuarentena pero el primero vuelve en menos de esto, se
+# espera en vez de perder la vuelta. Medido el 2026-09-15: «todos agotados; el
+# primero vuelve en 0 min» y la vuelta se perdió por segundos.
+ESPERA_CORTA_S = 150.0
 # Las cuotas diarias de la API de Gemini se renuevan a medianoche del Pacífico.
 PACIFICO = ZoneInfo("America/Los_Angeles")
 
@@ -234,9 +238,23 @@ class Relevo:
             print(f"[relevo] {nombre}{peso}", flush=True)
         self._estado.actual = nombre
 
-    def _nadie(self) -> RelevoAgotado:
+    def _espera_hasta_el_primero(self) -> float:
         t = self.reloj()
-        espera = min((h - t for h in self._estado.hasta.values()), default=0.0)
+        return max(0.0, min((h - t for h in self._estado.hasta.values()), default=0.0))
+
+    async def _esperar_si_es_corto(self) -> bool:
+        """Con todos en cuarentena: si el primero vuelve pronto, se espera. True si se esperó."""
+        espera = self._espera_hasta_el_primero()
+        if espera > ESPERA_CORTA_S:
+            return False
+        print(
+            f"[relevo] todos en cuarentena; el primero vuelve en {espera:.0f} s: espero", flush=True
+        )
+        await self.dormir(espera + 1.0)
+        return True
+
+    def _nadie(self) -> RelevoAgotado:
+        espera = self._espera_hasta_el_primero()
         return RelevoAgotado(
             f"todos los modelos están agotados ({', '.join(self.nombres)}); "
             f"el primero vuelve en {espera / 60:.0f} min"
@@ -244,6 +262,8 @@ class Relevo:
 
     async def astream(self, entrada: Any, **kwargs: Any) -> AsyncIterator[Any]:
         await self._espaciar()
+        if not self._disponibles() and await self._esperar_si_es_corto():
+            pass
         for nombre, modelo in self._disponibles():
             emitio = False
             uso: Any = None
@@ -264,6 +284,8 @@ class Relevo:
 
     async def ainvoke(self, entrada: Any, **kwargs: Any) -> Any:
         await self._espaciar()
+        if not self._disponibles() and await self._esperar_si_es_corto():
+            pass
         for nombre, modelo in self._disponibles():
             try:
                 respuesta = await modelo.ainvoke(entrada, **kwargs)
