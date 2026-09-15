@@ -367,3 +367,54 @@ async def test_la_parada_cancela_la_vuelta_en_curso(mundo: _Mundo, tmp_path: Any
     )
 
     assert resumen["vueltas"] == 1  # arrancó una, se cortó, y el bucle terminó
+
+
+async def test_al_cerrarse_la_ventana_avisa_una_vez(mundo: _Mundo, tmp_path: Any) -> None:
+    """«Ya puedes apagar la Mac»: en la transición dentro → fuera, y solo ahí."""
+    avisos: list[str] = []
+    tick = {"n": 0}
+
+    def ahora() -> datetime:
+        tick["n"] += 1
+        # dos sondeos dentro (20:00, 20:15), tres fuera (20:45, 21:00, 21:15)
+        return datetime(2026, 9, 15, 20, 0).astimezone() + timedelta(
+            minutes=[0, 15, 45, 60, 75][tick["n"] - 1]
+        )
+
+    async def sin_vuelta(n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=ahora,
+        dormir=_nada,
+        correr_vuelta=sin_vuelta,
+        ticks=5,
+        primera_vuelta_al_arrancar=False,
+        avisar=lambda texto: (avisos.append(texto), True)[1],
+    )
+
+    assert len(avisos) == 1
+    assert avisos[0].startswith("Vigía en reposo hasta las 08:00: ya puedes apagar la Mac.")
+
+
+async def test_si_arranca_ya_fuera_de_la_ventana_no_avisa(mundo: _Mundo, tmp_path: Any) -> None:
+    avisos: list[str] = []
+    mundo.hora = datetime(2026, 9, 15, 22, 0).astimezone()
+
+    async def sin_vuelta(n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: mundo.hora,
+        dormir=_nada,
+        correr_vuelta=sin_vuelta,
+        ticks=3,
+        primera_vuelta_al_arrancar=False,
+        avisar=lambda texto: (avisos.append(texto), True)[1],
+    )
+
+    assert avisos == []
