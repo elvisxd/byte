@@ -36,6 +36,51 @@ CHARS_PER_TOKEN = 4
 # resultados de herramientas y a la respuesta.
 HISTORY_CONTEXT_RATIO = 0.6
 
+
+def _texto_de(contenido: Any) -> str:
+    """El texto de un mensaje, venga como cadena o como bloques.
+
+    Ollama manda `content` como str. Gemini lo manda como lista de bloques
+    —`{"type": "text", …}`, `{"type": "thinking", …}`— y `str(lista)` metería
+    en el historial el repr de un diccionario, que es lo que el modelo leería
+    en el turno siguiente. Solo los bloques de texto son la respuesta.
+    """
+    if isinstance(contenido, str):
+        return contenido
+    if not isinstance(contenido, list):
+        return ""
+    partes: list[str] = []
+    for bloque in contenido:
+        if isinstance(bloque, str):
+            partes.append(bloque)
+        elif isinstance(bloque, dict) and bloque.get("type") == "text":
+            partes.append(str(bloque.get("text", "")))
+    return "".join(partes)
+
+
+def _pensamiento_de(contenido: Any) -> str:
+    """Los bloques `thinking` de un mensaje en bloques. Vacío si no hay."""
+    if not isinstance(contenido, list):
+        return ""
+    return "".join(
+        str(b.get("thinking", ""))
+        for b in contenido
+        if isinstance(b, dict) and b.get("type") in ("thinking", "reasoning")
+    )
+
+
+def _extras_de(mensaje: Any) -> dict[str, Any]:
+    """Lo que el modelo necesita ver de vuelta en su propio mensaje.
+
+    Gemini 3 firma sus llamadas a herramientas (`thought_signature`) y quiere
+    la firma de vuelta en el turno siguiente; viaja en `additional_kwargs`.
+    El `reasoning_content` de Ollama NO vuelve: son miles de caracteres por
+    iteración que llenarían el contexto en dos vueltas (ver `agent_node`).
+    """
+    extras = getattr(mensaje, "additional_kwargs", None) or {}
+    return {k: v for k, v in extras.items() if k != "reasoning_content"}
+
+
 # Herramientas que pueden pedir confirmación humana antes de correr.
 # Las que tienen efecto fuera del chat: ejecutar código, escribir en un archivo
 # del proyecto, o cambiar algo visible en GitHub. Con el modo seguro puesto, el
@@ -331,13 +376,16 @@ def build_graph(
             # No entra al historial del chat: `reply` se arma con `content` y
             # `tool_calls` solamente, y meter 3.000 caracteres de pensamiento por
             # iteración en el contexto lo llenaría en dos vueltas.
-            pensamiento = (getattr(chunk, "additional_kwargs", None) or {}).get("reasoning_content")
+            # Y con Gemini viene como bloques `thinking` dentro de `content`.
+            pensamiento = (getattr(chunk, "additional_kwargs", None) or {}).get(
+                "reasoning_content"
+            ) or _pensamiento_de(chunk.content)
             if pensamiento:
                 emitter.emit(
                     AGUI.THINKING_TEXT_MESSAGE_CONTENT,
                     {"messageId": message_id, "delta": str(pensamiento)},
                 )
-            delta = chunk.content if isinstance(chunk.content, str) else ""
+            delta = _texto_de(chunk.content)
             if not delta:
                 continue
             if not text_open:
@@ -350,7 +398,7 @@ def build_graph(
             emitter.emit(AGUI.TEXT_MESSAGE_END, {"messageId": message_id})
 
         llamadas = list(getattr(accumulated, "tool_calls", []) or []) if accumulated else []
-        contenido = str(accumulated.content) if accumulated is not None else ""
+        contenido = _texto_de(accumulated.content) if accumulated is not None else ""
 
         # Vacío **y sin herramientas que pedir**. Chequear solo `accumulated is
         # None` no alcanzaba: hay modelos que sí mandan chunks, pero todos con
@@ -365,7 +413,12 @@ def build_graph(
         if not contenido.strip() and not llamadas:
             reply = AIMessage(content="El modelo no devolvió respuesta.", id=message_id)
         else:
-            reply = AIMessage(content=contenido, tool_calls=llamadas, id=message_id)
+            reply = AIMessage(
+                content=contenido,
+                tool_calls=llamadas,
+                id=message_id,
+                additional_kwargs=_extras_de(accumulated),
+            )
 
         for call in reply.tool_calls:
             emitter.emit(

@@ -195,7 +195,9 @@ def mundo(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> _Mundo:
         lambda r, prefijo="": {"ordenes": [], "predicciones": [], "cerradas": []},
     )
     monkeypatch.setattr(vigia, "publicar", lambda r: {"cerradas": [], "abiertas": []})
-    monkeypatch.setattr(vigia, "armar", lambda ajustes, db: (Registro(db), object(), "falso"))
+    monkeypatch.setattr(
+        vigia, "armar", lambda ajustes, db, modelos=None: (Registro(db), object(), "falso")
+    )
     monkeypatch.setattr(vigia.TraceDeSesion, "publicar", lambda self, viva=True: True)
     return m
 
@@ -418,3 +420,50 @@ async def test_si_arranca_ya_fuera_de_la_ventana_no_avisa(mundo: _Mundo, tmp_pat
     )
 
     assert avisos == []
+
+
+async def test_el_brazo_remoto_no_publica_al_panel(
+    mundo: _Mundo, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El panel enseña UN historial: el brazo remoto escribe su traza en disco y nada más."""
+    publicaciones: list[Any] = []
+    monkeypatch.setattr(vigia, "publicar", lambda r: publicaciones.append(r))
+    recibidos: list[Any] = []
+    monkeypatch.setattr(
+        vigia,
+        "armar",
+        lambda ajustes, db, modelos=None: (recibidos.append(modelos), Registro(db), object(), "g")[
+            1:
+        ],
+    )
+    archivo = tmp_path / "trazas" / "g.json"
+    # El fixture `mundo` ya reemplazó `publicar` del trace por un doble, así que
+    # lo que se mira es con qué se construyó: a qué archivo y con qué modelo.
+    construido: dict[str, Any] = {}
+
+    class _Trace(vigia.TraceDeSesion):
+        def __init__(self, **kw: Any) -> None:
+            construido.update(kw)
+            super().__init__(**kw)
+
+    monkeypatch.setattr(vigia, "TraceDeSesion", _Trace)
+
+    async def vuelta(_n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "g.db"),
+        ruta_scripts="",
+        ahora=lambda: mundo.hora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=1,
+        modelos=["gemini-3.8-flash"],
+        publicar_al_panel=False,
+        archivo_traza=str(archivo),
+    )
+
+    assert recibidos == [["gemini-3.8-flash"]]
+    assert publicaciones == []
+    assert construido["archivo"] == str(archivo)
+    assert construido["modelo"] == "g"

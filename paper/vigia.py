@@ -178,12 +178,27 @@ async def vigilar(
     correr_vuelta: Callable[[int], Awaitable[str | None]] | None = None,
     ticks: int | None = None,
     avisar: Callable[[str], bool] = avisar_por_telegram,
+    # El brazo remoto (paper/CRITERIO_COMPARACION.md): su lista de modelos, su
+    # traza en disco y NADA al panel. El panel enseña un historial y una traza.
+    modelos: list[str] | None = None,
+    publicar_al_panel: bool = True,
+    archivo_traza: str = "",
 ) -> dict[str, Any]:
     """El bucle. Termina por señal o, en pruebas, tras `ticks` sondeos."""
     ajustes = Settings()  # type: ignore[call-arg]
     os.environ.setdefault("BYTE_PAPER_SCRIPTS", ruta_scripts)
-    registro, grafo, etiqueta = armar(ajustes, ruta_db)
-    trace = TraceDeSesion(sesion_id=f"vigia-{int(time.time())}", modelo=etiqueta, simbolo=SIMBOLO)
+    registro, grafo, etiqueta = armar(ajustes, ruta_db, modelos)
+    trace = TraceDeSesion(
+        sesion_id=f"vigia-{int(time.time())}",
+        modelo=etiqueta,
+        simbolo=SIMBOLO,
+        archivo=archivo_traza,
+    )
+
+    def publicar_historial() -> None:
+        if not publicar_al_panel:
+            return
+        publicar(registro)
 
     if correr_vuelta is None:
 
@@ -315,7 +330,7 @@ async def vigilar(
 
         if hubo_cambios:
             try:
-                publicar(registro)
+                publicar_historial()
             except Exception as exc:  # noqa: BLE001 — publicar es best-effort
                 print(f"[vigía] no se publicó: {str(exc)[:100]}", flush=True)
 
@@ -328,7 +343,7 @@ async def vigilar(
 
     trace.publicar(viva=False)
     try:
-        publicar(registro)
+        publicar_historial()
     except Exception as exc:  # noqa: BLE001 — publicar es best-effort, y esto ya se está parando
         print(f"[vigía] al parar no se publicó: {str(exc)[:100]}", flush=True)
     registro.cerrar_conexion()
@@ -340,12 +355,32 @@ def main() -> None:
     parser.add_argument("--db", default=os.environ.get("BYTE_PAPER_DB", "paper/operaciones.db"))
     parser.add_argument("--scripts", default=os.environ.get("BYTE_PAPER_SCRIPTS", ""))
     parser.add_argument("--sin-vuelta-al-arrancar", action="store_true")
+    parser.add_argument(
+        "--modelo",
+        default="",
+        help="Lista de modelos remotos separados por comas (gemini-…); se turnan ante un 429. "
+        "Sin esto, el modelo local de OLLAMA_MODEL.",
+    )
+    parser.add_argument(
+        "--sin-publicar",
+        action="store_true",
+        help="Ni historial ni traza al panel: la traza va a --traza (o a paper/trazas/).",
+    )
+    parser.add_argument("--traza", default="", help="Archivo de la traza cuando no va al panel.")
     args = parser.parse_args()
+    modelos = [m for m in args.modelo.split(",") if m.strip()] if args.modelo else None
+    archivo_traza = args.traza
+    if args.sin_publicar and not archivo_traza:
+        primero = (modelos or ["local"])[0]
+        archivo_traza = f"paper/trazas/vigia-{primero}-{int(time.time())}.json"
     resumen = asyncio.run(
         vigilar(
             ruta_db=args.db,
             ruta_scripts=args.scripts,
             primera_vuelta_al_arrancar=not args.sin_vuelta_al_arrancar,
+            modelos=modelos,
+            publicar_al_panel=not args.sin_publicar,
+            archivo_traza=archivo_traza,
         )
     )
     print(

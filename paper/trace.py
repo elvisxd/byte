@@ -33,6 +33,7 @@ import threading
 import urllib.error
 import urllib.request
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -63,9 +64,17 @@ class TraceDeSesion:
     una vez cada cien sesiones y no se puede reproducir.
     """
 
-    def __init__(self, *, sesion_id: str, modelo: str, simbolo: str) -> None:
+    def __init__(
+        self, *, sesion_id: str, modelo: "str | Callable[[], str]", simbolo: str, archivo: str = ""
+    ) -> None:
         self.sesion_id = sesion_id
+        # Callable para el brazo remoto: el modelo que contesta cambia con el
+        # relevo, y la traza tiene que decir cuál es AHORA. Ver agent/relevo.py.
         self.modelo = modelo
+        # ⚠ CON `archivo`, LA TRAZA NO VA AL PANEL. El panel enseña UNA traza; el
+        # brazo remoto de la comparación escribe la suya en disco para no
+        # contar dos historias en la misma página (CRITERIO_COMPARACION.md).
+        self.archivo = archivo
         self.simbolo = simbolo
         self.empezo = datetime.now(UTC).isoformat()
         self.vuelta = 0
@@ -179,7 +188,7 @@ class TraceDeSesion:
             pasos = list(self._pasos)
         return {
             "sesionId": self.sesion_id,
-            "modelo": self.modelo,
+            "modelo": self.modelo() if callable(self.modelo) else self.modelo,
             "simbolo": self.simbolo,
             "empezo": self.empezo,
             "actualizado": datetime.now(UTC).isoformat(),
@@ -194,10 +203,12 @@ class TraceDeSesion:
         Ver la cabecera: perder la ventana para mirar no es perder el
         experimento, así que esto jamás puede abortar una sesión.
         """
+        cuerpo = json.dumps(self.instantanea(viva=viva), ensure_ascii=False).encode("utf-8")
+        if self.archivo:
+            return self._a_archivo(cuerpo)
         destino = os.environ.get("PANEL_URL", "")
         if not destino:
             return False
-        cuerpo = json.dumps(self.instantanea(viva=viva), ensure_ascii=False).encode("utf-8")
         pedido = urllib.request.Request(  # noqa: S310 — destino fijado por entorno
             destino.rstrip("/") + "/api/papel/trace",
             data=cuerpo,
@@ -211,6 +222,19 @@ class TraceDeSesion:
             with urllib.request.urlopen(pedido, timeout=10) as r:  # noqa: S310
                 r.read()
         except (OSError, urllib.error.URLError, ValueError):
+            return False
+        return True
+
+    def _a_archivo(self, cuerpo: bytes) -> bool:
+        # Escribe entero y renombra: quien lea a mitad de escritura ve el
+        # anterior completo, no medio JSON.
+        try:
+            temporal = self.archivo + ".tmp"
+            os.makedirs(os.path.dirname(self.archivo) or ".", exist_ok=True)
+            with open(temporal, "wb") as f:
+                f.write(cuerpo)
+            os.replace(temporal, self.archivo)
+        except OSError:
             return False
         return True
 

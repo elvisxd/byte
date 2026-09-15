@@ -1,4 +1,4 @@
-"""Construcción del modelo (Ollama) y chequeo de que esté vivo."""
+"""Construcción del modelo (Ollama, o Gemini por API) y chequeo de que esté vivo."""
 
 from typing import Any
 
@@ -8,6 +8,15 @@ from api.config import Settings
 from api.logging import get_logger
 
 logger = get_logger("agent.llm")
+
+
+def es_de_google(nombre: str) -> bool:
+    """Un `gemini-…` se pide a la API de Google; todo lo demás, a Ollama.
+
+    Solo `gemini`: los Gemma también corren en Ollama (`gemma3:4b`) y no se
+    quiere que un nombre local se vaya a la red por parecerse.
+    """
+    return nombre.startswith("gemini")
 
 
 def build_llm(
@@ -37,6 +46,10 @@ def build_llm(
     no dos ajustes independientes. El agente en papel lo hace en `paper/sesion.py`;
     la API no lo usa, y su latencia sigue igual que antes.
     """
+    nombre = modelo or settings.ollama_model
+    if es_de_google(nombre):
+        return _gemini(settings, nombre, reasoning=reasoning)
+
     from langchain_ollama import ChatOllama
 
     return ChatOllama(
@@ -46,6 +59,33 @@ def build_llm(
         num_predict=num_predict or settings.ollama_num_predict,
         temperature=0.2,
         reasoning=reasoning,
+    )
+
+
+def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
+    """El brazo remoto de la comparación. Ver paper/CRITERIO_COMPARACION.md.
+
+    `reasoning` acá no enciende el pensamiento —los Flash 3.x piensan solos— sino
+    que pide VERLO (`include_thoughts`): llega como bloques `thinking` en el
+    contenido, que el grafo emite igual que el `reasoning_content` de Ollama.
+
+    `max_retries=1`: un solo intento. El reintento ante 429/5xx lo hace el
+    relevo cambiando de modelo, que es más útil que insistirle al agotado.
+
+    `num_ctx` y `num_predict` no aplican: el contexto es de un millón y el tope
+    de salida tiene el suyo (`gemini_num_predict`, con la medición).
+    """
+    if not settings.gemini_api_key:
+        raise ValueError(f"GEMINI_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    return ChatGoogleGenerativeAI(
+        model=nombre,
+        google_api_key=settings.gemini_api_key,
+        temperature=0.2,
+        max_output_tokens=settings.gemini_num_predict,
+        include_thoughts=True if reasoning else None,
+        max_retries=1,
     )
 
 
