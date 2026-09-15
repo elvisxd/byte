@@ -202,7 +202,12 @@ class Relevo:
 
     def _agotar(self, nombre: str, tipo: str, exc: BaseException) -> None:
         sugerida = espera_sugerida(exc)
-        if sugerida is not None and tipo != "caido":
+        # ⚠ LA CUOTA DIARIA MANDA SOBRE LA ESPERA SUGERIDA. Medido el
+        # 2026-09-15: gemini-3.5-flash agotó sus 20 peticiones/día de la capa
+        # gratuita y el error traía «retryDelay: 36s»; con la sugerida
+        # mandando, el relevo lo reintentaba en cada vuelta y gastaba una
+        # llamada fallida antes de bajar al siguiente.
+        if tipo == "minuto" and sugerida is not None:
             # Un margen: la renovación no es al segundo.
             cuarentena = sugerida + 5.0
         elif tipo == "dia":

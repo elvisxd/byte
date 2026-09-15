@@ -185,6 +185,25 @@ async def test_el_429_con_espera_dicha_manda_sobre_la_constante() -> None:
     assert a.llamadas == 2
 
 
+async def test_la_cuota_diaria_manda_sobre_el_retry_delay() -> None:
+    """Medido: 20 peticiones/día agotadas y el error decía «retryDelay: 36s»."""
+    reloj = _Reloj()
+    ahora = datetime(2026, 9, 15, 10, 0, tzinfo=PACIFICO)
+    a = _Modelo(
+        "a", _Error(429, "GenerateRequestsPerDayPerProjectPerModel-FreeTier {'retryDelay': '36s'}")
+    )
+    b = _Modelo("b")
+    relevo = Relevo(
+        [("a", a), ("b", b)], espera_s=0, reloj=reloj, dormir=reloj.dormir, ahora=lambda: ahora
+    )
+
+    await _todo(relevo)
+    a.fallo = None
+    reloj.t += 120
+    await _todo(relevo)
+    assert a.llamadas == 1, "dos minutos después sigue en cuarentena: la cuota es del día"
+
+
 def test_medianoche_del_pacifico_es_la_siguiente() -> None:
     ahora = datetime(2026, 9, 15, 23, 30, tzinfo=PACIFICO)
     # Media hora más el margen de un minuto.
