@@ -38,3 +38,7 @@ capturas/
 # El registro de operaciones en papel: son datos, no código, y cada máquina
 # tiene los suyos.
 paper/*.db
+
+# Las trazas VIVAS de los vigías (se reescriben en cada vuelta). Las que se
+# conservan como evidencia se copian a mano con fecha: 2026-09-14-*.json.
+paper/trazas/vigia-*.json
