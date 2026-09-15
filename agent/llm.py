@@ -112,6 +112,11 @@ def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
     aparte del texto (`reasoning`), y el grafo lo emite a la traza como el de
     Ollama. Sin él vendría dentro del texto entre etiquetas.
 
+    ⚠ VA EN `extra_body`, NO EN `model_kwargs`. Medido el 2026-09-15: los
+    `model_kwargs` se pasan como argumentos al SDK de OpenAI, que rechaza los
+    que no conoce («unexpected keyword argument 'reasoning_format'»); lo que es
+    propio de un proveedor viaja en el cuerpo del pedido.
+
     `max_retries=1` por lo mismo que en Gemini: el reintento lo hace el relevo.
     """
     if not settings.groq_api_key:
@@ -128,7 +133,7 @@ def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
         temperature=0.2,
         max_tokens=settings.groq_num_predict,
         max_retries=1,
-        model_kwargs=extra,
+        extra_body=extra or None,
     )
 
 
