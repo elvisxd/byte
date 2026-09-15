@@ -85,6 +85,13 @@ def test_clasifica_los_errores() -> None:
     assert tipo_de_agotamiento(_Error(503, "high demand")) == "caido"
     assert tipo_de_agotamiento(_Error(500, "Internal error")) == "caido"
     assert tipo_de_agotamiento(_Error(400, "argumento inválido")) is None
+    # Medido: el servidor cortó sin contestar. Es una caída, no otra cosa.
+    assert (
+        tipo_de_agotamiento(RuntimeError("Server disconnected without sending a response."))
+        == "caido"
+    )
+    assert tipo_de_agotamiento(type("ConnectError", (Exception,), {})("x")) == "caido"
+    assert tipo_de_agotamiento(type("ReadTimeout", (Exception,), {})("x")) == "caido"
     assert tipo_de_agotamiento(ValueError("otra cosa")) is None
 
 

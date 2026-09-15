@@ -227,6 +227,32 @@ async def test_arranca_con_una_vuelta_y_luego_solo_por_eventos(
     assert vueltas == [1]  # el arranque; los otros tres sondeos, sin evento, no despiertan
 
 
+async def test_el_arranque_espera_a_la_ventana_en_vez_de_perderse(
+    mundo: _Mundo, tmp_path: Any
+) -> None:
+    """Lanzado de madrugada, la vuelta de lectura es la primera de la ventana."""
+    mundo.hora = datetime(2026, 9, 15, 0, 54).astimezone()
+    vueltas: list[int] = []
+
+    async def vuelta(n: int) -> str | None:
+        vueltas.append(n)
+        return None
+
+    async def dormir(_: float) -> None:
+        mundo.hora = datetime(2026, 9, 15, 8, 2).astimezone()
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: mundo.hora,
+        dormir=dormir,
+        correr_vuelta=vuelta,
+        ticks=3,
+    )
+
+    assert vueltas == [1], "una sola vuelta de lectura, y dentro de la ventana"
+
+
 async def test_un_cierre_de_4h_despierta_dentro_de_la_ventana(mundo: _Mundo, tmp_path: Any) -> None:
     vueltas: list[int] = []
     tick = {"n": 0}

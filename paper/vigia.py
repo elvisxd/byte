@@ -275,8 +275,11 @@ async def vigilar(
             precio = 0.0
 
         if pendiente_arranque:
+            # ⚠ SE APAGA CUANDO LA VUELTA OCURRE, NO CUANDO SE PROPONE. Medido
+            # el 2026-09-15: un vigía lanzado a las 00:54 «consumió» el
+            # arranque en reposo y a las 08:00 no hizo su vuelta de lectura
+            # hasta que cerró la vela de 4h.
             motivos.insert(0, "arranque: una vuelta de lectura")
-            pendiente_arranque = False
 
         dentro = en_ventana(momento, ventana)
         hoy = vueltas_hoy.get(dia, 0)
@@ -294,6 +297,7 @@ async def vigilar(
         if motivos and dentro and hoy < tope_diario:
             vueltas_total += 1
             vueltas_hoy[dia] = hoy + 1
+            pendiente_arranque = False
             print(
                 f"[vigía] {momento:%H:%M} · vuelta {vueltas_total} ({hoy + 1}/{tope_diario} hoy) · "
                 + "; ".join(motivos),
