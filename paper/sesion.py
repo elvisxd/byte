@@ -278,11 +278,14 @@ def armar(ajustes: Settings, ruta_db: str) -> tuple[Registro, Any, str]:
             ajustes,
             reasoning=ajustes.paper_reasoning,
             num_predict=ajustes.paper_num_predict,
+            # 12K, no 16K: es lo que cabe entero en la GPU de un Mac de 16 GB.
+            # Ver `paper_num_ctx` en api/config.py, con la medición.
+            num_ctx=ajustes.paper_num_ctx,
         ),
         herramientas,
         max_iterations=ajustes.max_iterations,
         max_tool_result_chars=ajustes.paper_max_tool_result_chars,
-        num_ctx=ajustes.ollama_num_ctx,
+        num_ctx=ajustes.paper_num_ctx,
     )
     return registro, grafo, etiqueta_modelo
 

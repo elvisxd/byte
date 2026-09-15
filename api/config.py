@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # La API no los lee —usa los de arriba—, así que su latencia no cambia.
     paper_reasoning: bool = Field(default=False, alias="BYTE_PAPER_REASONING")
     paper_num_predict: int = Field(default=4096, alias="BYTE_PAPER_NUM_PREDICT")
+    # ⚠ 12K Y NO 16K, PORQUE 16K NO CABE EN LA GPU DE UN MAC DE 16 GB. Medido el
+    # 2026-09-14: con 16K, Ollama dejaba una capa del 14B en CPU (40/41) y macOS
+    # tenía 12-17 GB en swap; el modelo generaba a 1,9 tok/s. Con 12K entra
+    # entero (41/41) y va a 7,3 tok/s: casi 4×. Una vuelta usa ~9-10K —prompt,
+    # herramientas, mapa y seis iteraciones—, así que 12K sobra y 8K no cabría
+    # (y 8K no fue más rápido). Solo lo usa el agente en papel.
+    paper_num_ctx: int = Field(default=12288, alias="BYTE_PAPER_NUM_CTX")
     # El mapa de `mirar_mercado` son tres gráficos en una respuesta; con los
     # 4000 de la API el de 4h se recortaba. Solo lo usa el agente en papel.
     paper_max_tool_result_chars: int = Field(default=8000, alias="BYTE_PAPER_MAX_TOOL_RESULT_CHARS")

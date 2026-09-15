@@ -16,6 +16,7 @@ def build_llm(
     *,
     reasoning: bool = False,
     num_predict: int | None = None,
+    num_ctx: int | None = None,
 ) -> Any:
     """ChatOllama con el contexto y el tope de tokens explícitos.
 
@@ -41,7 +42,7 @@ def build_llm(
     return ChatOllama(
         base_url=settings.ollama_base_url,
         model=modelo or settings.ollama_model,
-        num_ctx=settings.ollama_num_ctx,
+        num_ctx=num_ctx or settings.ollama_num_ctx,
         num_predict=num_predict or settings.ollama_num_predict,
         temperature=0.2,
         reasoning=reasoning,
