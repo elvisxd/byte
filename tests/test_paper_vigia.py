@@ -92,6 +92,41 @@ def test_el_precio_cerca_de_un_nivel_vivo_es_motivo(registro: Registro) -> None:
     assert any("orden #1" in m for m in cerca_orden)
 
 
+def test_un_nivel_despierta_una_vez_mientras_el_precio_siga_cerca(registro: Registro) -> None:
+    """Medido: tres vueltas en 40 min por la misma predicción. Histéresis."""
+    # A 2,5 ATR del precio: el registro rechaza niveles a menos de 1,5.
+    registro.predecir(
+        simbolo="BTCUSDT",
+        contexto=_ctx(79000),
+        nivel=79500,
+        hacia="arriba",
+        probabilidad=0.5,
+        razonamiento="x",
+        horas_vigencia=6,
+        temporalidad="1h",
+    )
+    avisadas: set[str] = set()
+
+    def motivos(precio: float) -> list[str]:
+        return eventos(
+            registro,
+            precio=precio,
+            atr_15m=200,
+            pools=[],
+            cierre_4h=1,
+            cierre_4h_visto=1,
+            cercanias_avisadas=avisadas,
+        )
+
+    assert motivos(79450), "al entrar en el margen (1 ATR = 200), avisa"
+    assert motivos(79480) == [], "sigue cerca: no vuelve a avisar"
+    assert motivos(79490) == [], "y tampoco al siguiente sondeo"
+    assert motivos(78500) == [], "se alejó: nada que avisar, pero se rearma"
+    assert motivos(79520), "volvió: avisa otra vez"
+    # Sin el conjunto, el comportamiento de siempre (los tests viejos).
+    assert eventos(registro, precio=79450, atr_15m=200, pools=[], cierre_4h=1, cierre_4h_visto=1)
+
+
 def test_un_pool_con_fuerza_cuenta_y_uno_suelto_no(registro: Registro) -> None:
     pools = [{"precio": 79100, "fuerza": 1}, {"precio": 79150, "fuerza": 2}]
     m = eventos(registro, precio=79000, atr_15m=200, pools=pools, cierre_4h=1, cierre_4h_visto=1)
