@@ -155,6 +155,12 @@ def test_los_errores_de_openai_traen_status_code() -> None:
     assert tipo_de_agotamiento(RateLimitError("Rate limit reached")) == "minuto"
     assert tipo_de_agotamiento(InternalServerError("Service Unavailable")) == "caido"
 
+    class BadRequest(Exception):
+        status_code = 413
+
+    # Medido en Groq: «Request too large … TPM: Limit 8000, Requested 9252».
+    assert tipo_de_agotamiento(BadRequest("Request too large for model")) == "caido"
+
 
 def test_la_espera_la_dice_el_error_cuando_la_dice() -> None:
     assert espera_sugerida(RuntimeError("Please try again in 1h2m3.5s.")) == 3600 + 120 + 3.5

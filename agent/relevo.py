@@ -70,6 +70,11 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
         return "dia" if ("perday" in bajo or "per day" in bajo or "daily" in bajo) else "minuto"
     if codigo in (500, 502, 503, 504) or "UNAVAILABLE" in texto or "high demand" in texto.lower():
         return "caido"
+    # 413 «Request too large»: el prompt supera el tope POR PETICIÓN del modelo
+    # (Groq gratuito: 8.000 tokens). Ninguna espera lo arregla; se prueba con
+    # el siguiente de la lista, que puede tener otro tope, y se anota.
+    if codigo == 413 or "too large" in texto.lower():
+        return "caido"
     # ⚠ UN CORTE DE TRANSPORTE TAMBIÉN ES UNA CAÍDA. Medido el 2026-09-15 a las
     # 08:11, primera vuelta real del brazo: 3.8 dio 503, y 3.7 «Server
     # disconnected without sending a response» —sin código HTTP, porque no
@@ -213,9 +218,15 @@ class Relevo:
             flush=True,
         )
 
-    def _contesto(self, nombre: str) -> None:
+    def _contesto(self, nombre: str, uso: Any = None) -> None:
+        # Los tokens de entrada de cada llamada, para saber a qué distancia del
+        # tope por petición va este brazo (Groq gratuito: 8.000).
+        entrada = (uso or {}).get("input_tokens") if isinstance(uso, dict) else None
+        peso = f" · {entrada} tokens de entrada" if entrada else ""
         if self._estado.actual != nombre:
-            print(f"[relevo] contesta {nombre}", flush=True)
+            print(f"[relevo] contesta {nombre}{peso}", flush=True)
+        elif peso:
+            print(f"[relevo] {nombre}{peso}", flush=True)
         self._estado.actual = nombre
 
     def _nadie(self) -> RelevoAgotado:
@@ -230,9 +241,11 @@ class Relevo:
         await self._espaciar()
         for nombre, modelo in self._disponibles():
             emitio = False
+            uso: Any = None
             try:
                 async for trozo in modelo.astream(entrada, **kwargs):
                     emitio = emitio or _es_respuesta(trozo)
+                    uso = getattr(trozo, "usage_metadata", None) or uso
                     yield trozo
             except Exception as exc:
                 tipo = tipo_de_agotamiento(exc)
@@ -240,7 +253,7 @@ class Relevo:
                     raise
                 self._agotar(nombre, tipo, exc)
                 continue
-            self._contesto(nombre)
+            self._contesto(nombre, uso)
             return
         raise self._nadie()
 

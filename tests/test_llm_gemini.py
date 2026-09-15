@@ -70,17 +70,51 @@ def test_un_gemini_se_arma_con_la_clave_y_su_tope(espias: None) -> None:
 def test_un_groq_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> None:
     ajustes = Settings(GROQ_API_KEY="clave-groq", BYTE_GROQ_NUM_PREDICT=8192)
 
-    build_llm(ajustes, "groq/openai/gpt-oss-120b", reasoning=True)
+    llm = build_llm(ajustes, "groq/openai/gpt-oss-120b", reasoning=True)
 
-    assert OpenAIEspia.ultimo["base_url"] == GROQ_BASE_URL
-    assert OpenAIEspia.ultimo["api_key"] == "clave-groq"
-    assert OpenAIEspia.ultimo["model"] == "openai/gpt-oss-120b"
-    assert OpenAIEspia.ultimo["max_tokens"] == 8192
-    assert OpenAIEspia.ultimo["max_retries"] == 1
+    # Con razonamiento se construye una SUBCLASE (la que rescata `reasoning`):
+    # el espía guarda los argumentos en la clase de la instancia.
+    assert isinstance(llm, OpenAIEspia) and type(llm) is not OpenAIEspia
+    ultimo = type(llm).ultimo
+    assert ultimo["base_url"] == GROQ_BASE_URL
+    assert ultimo["api_key"] == "clave-groq"
+    assert ultimo["model"] == "openai/gpt-oss-120b"
+    assert ultimo["max_tokens"] == 8192
+    assert ultimo["max_retries"] == 1
     # En el cuerpo del pedido: como argumento del SDK lo rechaza (medido).
-    assert OpenAIEspia.ultimo["extra_body"] == {"reasoning_format": "parsed"}
-    assert "model_kwargs" not in OpenAIEspia.ultimo
+    assert ultimo["extra_body"] == {"reasoning_format": "parsed"}
+    assert "model_kwargs" not in ultimo
+
+    sin = build_llm(ajustes, "groq/openai/gpt-oss-20b")
+    assert type(sin) is OpenAIEspia and OpenAIEspia.ultimo["extra_body"] is None
     assert GeminiEspia.ultimo == {} and OllamaEspia.ultimo == {}
+
+
+def test_la_subclase_de_groq_rescata_el_reasoning_del_delta() -> None:
+    """Groq manda el pensamiento en `delta.reasoning`; langchain-openai lo tiraba."""
+    from langchain_core.messages import AIMessageChunk
+    from langchain_core.outputs import ChatGenerationChunk
+
+    from agent.llm import _con_razonamiento_de_groq
+
+    class _Base:
+        def _convert_chunk_to_generation_chunk(
+            self, chunk: dict, default_chunk_class: type, base_generation_info: dict | None
+        ) -> ChatGenerationChunk:
+            return ChatGenerationChunk(message=AIMessageChunk(content=""))
+
+    clase = _con_razonamiento_de_groq(_Base)
+    trozo = {"choices": [{"delta": {"content": None, "reasoning": "miro el rango"}}]}
+    generado = clase()._convert_chunk_to_generation_chunk(trozo, AIMessageChunk, None)
+    assert generado.message.additional_kwargs["reasoning"] == "miro el rango"
+
+    sin = {"choices": [{"delta": {"content": "hola"}}]}
+    assert (
+        "reasoning"
+        not in clase()
+        ._convert_chunk_to_generation_chunk(sin, AIMessageChunk, None)
+        .message.additional_kwargs
+    )
 
 
 def test_es_remoto_solo_con_prefijo_o_gemini() -> None:

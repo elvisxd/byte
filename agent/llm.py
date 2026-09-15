@@ -105,6 +105,35 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
+def _con_razonamiento_de_groq(base: Any) -> Any:
+    """Una subclase de ChatOpenAI que conserva el `reasoning` del delta de Groq.
+
+    `langchain-openai` no extrae campos de razonamiento propios de un
+    proveedor —lo dice su propia cabecera: «use a provider-specific
+    subclass»—. Groq, con `reasoning_format="parsed"`, manda el pensamiento
+    de gpt-oss en `delta.reasoning`; sin esto se perdía y la traza enseñaba
+    las llamadas sin el razonamiento que las precedió. Se crea sobre la clase
+    real en tiempo de ejecución para que el import de `langchain_openai` siga
+    siendo perezoso (la API no lo paga).
+    """
+
+    class ChatOpenAIConRazonamiento(base):  # type: ignore[misc, valid-type]
+        def _convert_chunk_to_generation_chunk(
+            self, chunk: dict, default_chunk_class: type, base_generation_info: dict | None
+        ) -> Any:
+            generado = super()._convert_chunk_to_generation_chunk(
+                chunk, default_chunk_class, base_generation_info
+            )
+            elecciones = chunk.get("choices") or []
+            delta = (elecciones[0] or {}).get("delta") if elecciones else None
+            pensamiento = (delta or {}).get("reasoning") if isinstance(delta, dict) else None
+            if generado is not None and pensamiento:
+                generado.message.additional_kwargs["reasoning"] = str(pensamiento)
+            return generado
+
+    return ChatOpenAIConRazonamiento
+
+
 def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
     """Groq por el protocolo de OpenAI: una dependencia que sirve para varios proveedores.
 
@@ -124,9 +153,11 @@ def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
     from langchain_openai import ChatOpenAI
 
     extra: dict[str, Any] = {}
+    clase: Any = ChatOpenAI
     if reasoning:
         extra["reasoning_format"] = "parsed"
-    return ChatOpenAI(
+        clase = _con_razonamiento_de_groq(ChatOpenAI)
+    return clase(
         base_url=GROQ_BASE_URL,
         api_key=settings.groq_api_key,
         model=nombre.removeprefix("groq/"),
