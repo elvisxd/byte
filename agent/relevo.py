@@ -178,8 +178,37 @@ class Relevo:
         return self._estado.actual or self.modelos[0][0]
 
     @property
+    def contesto_alguien(self) -> bool:
+        """Si algún modelo de la lista llegó a contestar.
+
+        `actual` cae al primero de la lista mientras nadie haya contestado —es
+        lo que necesita el prompt, y está probado—, pero eso NO sirve para
+        SELLAR: una vuelta que murió con todos agotados quedaría atribuida al
+        primero, que no escribió nada. Ver paper/trace.py.
+        """
+        return self._estado.actual is not None
+
+    @property
     def nombres(self) -> list[str]:
         return [n for n, _ in self.modelos]
+
+    def estado_modelos(self) -> dict[str, dict[str, Any]]:
+        """Qué modelo está disponible y cuál en cuarentena, y por cuánto.
+
+        Para vigilar la API desde fuera: un brazo remoto con TODA su lista
+        agotada sigue vivo y sigue sondeando, pero no puede hacer una sola
+        vuelta —y lo único que lo delata hoy es una línea de log. En orden
+        alfabético, nunca por disponibilidad: es un parte, no un ranking.
+        """
+        t = self.reloj()
+        return {
+            nombre: {
+                "disponible": self._estado.hasta.get(nombre, float("-inf")) <= t,
+                "vuelve_en_min": max(0, round((self._estado.hasta.get(nombre, t) - t) / 60)),
+                "contesto": self._estado.actual == nombre,
+            }
+            for nombre in sorted(self.nombres)
+        }
 
     def bind_tools(self, *args: Any, **kwargs: Any) -> "Relevo":
         # La copia con herramientas comparte estado con la original: el grafo usa

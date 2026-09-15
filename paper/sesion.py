@@ -205,8 +205,27 @@ def _armar_remoto(
         espera_s=espera_s,
     )
 
+    # ⚠ LA ETIQUETA DEL REGISTRO ES SIEMPRE `relevo.actual`, TAMBIÉN ANTES DE
+    # LA PRIMERA RESPUESTA. `_contesto()` se marca al TERMINAR el stream, y las
+    # llamadas a herramientas llegan DENTRO de ese stream: la primera escritura
+    # de una sesión remota ocurre con `actual` todavía en el primero de la
+    # lista. Devolver "" acá dejaría esa fila con `modelo` NULL —el registro
+    # hace `self.modelo or None`—, que es peor que el nombre aproximado: una
+    # fila sin modelo es indistinguible de una de antes de que existiera la
+    # columna. Quien no puede sellar a ciegas es la TRAZA, y eso se resuelve
+    # abajo con `contesto_alguien`.
     def etiqueta() -> str:
         return relevo.actual
+
+    # Para la traza: si nadie contestó, no hay a quién atribuirle la vuelta.
+    # Ver paper/trace.py y el ⚠ de CRITERIO_COMPARACION.md sobre no sellar con
+    # el primero de la lista.
+    etiqueta.contesto_alguien = lambda: relevo.contesto_alguien  # type: ignore[attr-defined]
+    # Para el parte de las APIs (paper/publicar.py): qué modelos de la lista
+    # están vivos y cuáles en cuarentena. Un brazo con TODA su lista agotada
+    # sigue sondeando y no puede hacer una sola vuelta; hoy solo lo dice una
+    # línea de log que nadie mira de madrugada.
+    etiqueta.estado_modelos = relevo.estado_modelos  # type: ignore[attr-defined]
 
     herramientas = ToolRegistry(
         build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta)

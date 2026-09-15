@@ -230,7 +230,7 @@ def mundo(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> _Mundo:
         lambda r, prefijo="": {"ordenes": [], "predicciones": [], "cerradas": []},
     )
     monkeypatch.setattr(vigia, "publicar", lambda r: {"cerradas": [], "abiertas": []})
-    monkeypatch.setattr(vigia, "publicar_resumen", lambda ruta, brazo: True)
+    monkeypatch.setattr(vigia, "publicar_resumen", lambda ruta, brazo, **_: True)
     monkeypatch.setattr(
         vigia, "armar", lambda ajustes, db, modelos=None: (Registro(db), object(), "falso")
     )
@@ -519,8 +519,14 @@ async def test_el_brazo_remoto_no_publica_al_panel(
     publicaciones: list[Any] = []
     monkeypatch.setattr(vigia, "publicar", lambda r: publicaciones.append(r))
     resumenes: list[tuple[str, str]] = []
+    partes: list[Any] = []
     monkeypatch.setattr(
-        vigia, "publicar_resumen", lambda ruta, brazo: resumenes.append((ruta, brazo))
+        vigia,
+        "publicar_resumen",
+        lambda ruta, brazo, estado_modelos=None, **_: (
+            resumenes.append((ruta, brazo)),
+            partes.append(estado_modelos),
+        ),
     )
     recibidos: list[Any] = []
     monkeypatch.setattr(
@@ -562,6 +568,10 @@ async def test_el_brazo_remoto_no_publica_al_panel(
     assert publicaciones == []
     # El resumen sí se publica, con el nombre del brazo: es lo que compara la página.
     assert resumenes and all(b == "gemini" for _, b in resumenes)
+    # Y con él viaja el parte de las APIs, que cuelga de la etiqueta del relevo
+    # (paper/sesion.py). Acá `armar` está doblado y devuelve una cadena, así que
+    # no hay parte que mandar: lo que se prueba es que se pida sin reventar.
+    assert partes and all(p is None for p in partes)
     assert construido["archivo"] == str(archivo)
     assert construido["modelo"] == "g"
 

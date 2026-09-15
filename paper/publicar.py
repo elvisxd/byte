@@ -24,6 +24,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -219,19 +220,46 @@ def publicar(registro: Registro, url: str = "", token: str = "") -> dict[str, An
 # no releyendo cada operación de cada brazo.
 
 
-def publicar_resumen(ruta_db: str, brazo: str, url: str = "", token: str = "") -> bool:
+def publicar_resumen(
+    ruta_db: str,
+    brazo: str,
+    url: str = "",
+    token: str = "",
+    estado_modelos: Callable[[], dict[str, Any]] | None = None,
+) -> bool:
     """Empuja el resumen del brazo al panel. Devuelve si se pudo; nunca lanza.
 
     Best-effort como la traza: perder una foto del resumen no es perder el
     experimento, y el siguiente cambio vuelve a publicarla.
+
+    `estado_modelos` es el parte del relevo en un brazo remoto (agent/relevo.py).
+    Va junto con el de las fuentes de velas porque son la misma pregunta —¿las
+    APIs de las que depende este brazo están respondiendo?— y porque así llega
+    al panel sin una ruta nueva: esta foto ya viaja en cada cambio.
     """
     from paper.comparar import resumen
+    from paper.mercado import estado_fuentes
 
     destino = url or os.environ.get("PANEL_URL", "")
     if not destino:
         return False
     try:
-        foto = {"brazo": brazo, **resumen(ruta_db), "actualizado": datetime.now(UTC).isoformat()}
+        apis: dict[str, Any] = {"fuentes": estado_fuentes()}
+        if estado_modelos is not None:
+            # Un fallo acá no puede costar la foto entera: el parte es lo
+            # accesorio, y las cifras del brazo son lo que se está midiendo.
+            # Pero se dice: un parte que desaparece en silencio es justo el
+            # modo degradado invisible que este vigilante existe para evitar.
+            try:
+                apis["modelos"] = estado_modelos()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[resumen] el parte de los modelos falló: {str(exc)[:100]}", flush=True)
+        foto = {
+            "brazo": brazo,
+            **resumen(ruta_db),
+            "apis": apis,
+            "actualizado": datetime.now(UTC).isoformat(),
+        }
         cuerpo = json.dumps(foto, ensure_ascii=False).encode("utf-8")
     except Exception:  # noqa: BLE001 — una base rara no tumba al vigía
         return False

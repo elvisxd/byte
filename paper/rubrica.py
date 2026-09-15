@@ -37,6 +37,29 @@ _NIVEL = re.compile(r'"nivel":\s*([\d.]+)')
 _MARCO = re.compile(r'"temporalidad":\s*"(\w+)"')
 
 
+# ⚠ EL NOMBRE DE LA TRAZA ES `vigia-<brazo>-<sello>.json`, Y EL BRAZO NO LLEVA
+# GUIONES. Un `glob("vigia-gemini*")` a secas recoge también las trazas del
+# formato viejo —`vigia-gemini-3.8-flash-…`, `vigia-groq-openai-gpt-oss-120b-…`,
+# de cuando el nombre llevaba el MODELO en vez del brazo—, y entonces el brazo
+# remoto cuenta vueltas de sesiones anteriores contra un local que no tiene
+# trazas viejas. Medido el 2026-09-15: 4 de las 10 «vueltas» de Gemini y 2 de
+# las 7 de Groq eran de otro día.
+def trazas_del_brazo(trazas: Path, brazo: str) -> list[Path]:
+    """Las trazas de ESTE brazo en el formato actual, en orden.
+
+    ⚠ SE COMPARA EL NOMBRE ENTERO, NO QUE EL FINAL SEAN DÍGITOS. El formato
+    viejo `vigia-gemini-3.8-flash-1789480313` TAMBIÉN termina en dígitos: mirar
+    solo la cola lo deja pasar. Lo que distingue a una traza de este brazo es
+    que entre `vigia-` y el sello no haya nada más que su nombre.
+    """
+    return sorted(p for p in trazas.glob(f"vigia-{brazo}-*.json") if _es_del_brazo(p.stem, brazo))
+
+
+def _es_del_brazo(nombre: str, brazo: str) -> bool:
+    resto = nombre.removeprefix(f"vigia-{brazo}-")
+    return resto != nombre and resto.isdigit()
+
+
 def _vueltas(pasos: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
     por: dict[int, list[dict[str, Any]]] = {}
     for p in pasos:
@@ -139,7 +162,7 @@ def _linea(etiqueta: str, valores: list[str]) -> str:
 
 def imprimir(brazos: dict[str, str], trazas: Path) -> None:
     nombres = sorted(brazos)
-    t = {n: rubrica_de_trazas(sorted(trazas.glob(f"vigia-{n}*.json"))) for n in nombres}
+    t = {n: rubrica_de_trazas(trazas_del_brazo(trazas, n)) for n in nombres}
     r = {n: rubrica_de_registro(brazos[n]) for n in nombres}
     print(_linea("", nombres))
     print(_linea("vueltas en las trazas", [str(t[n]["vueltas"]) for n in nombres]))

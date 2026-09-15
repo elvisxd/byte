@@ -297,3 +297,50 @@ async def test_la_copia_con_herramientas_comparte_el_estado() -> None:
 
 def test_antes_de_la_primera_llamada_el_actual_es_el_primero() -> None:
     assert _relevo(_Modelo("a"), _Modelo("b")).actual == "a"
+
+
+async def test_contesto_alguien_separa_el_actual_del_que_de_verdad_contesto() -> None:
+    """`actual` sirve para ESCRIBIR; `contesto_alguien`, para SELLAR.
+
+    La primera escritura de una sesión remota ocurre con `actual` todavía en el
+    primero de la lista —las llamadas a herramientas llegan dentro del stream,
+    y `_contesto` se marca al terminarlo—, así que el registro necesita ese
+    nombre aproximado. La traza no: una vuelta que muere con todos agotados no
+    la hizo nadie, y sellarla con el primero es la atribución falsa que
+    CRITERIO_COMPARACION.md prohíbe en mayúsculas.
+    """
+    relevo = _relevo(_Modelo("a"), _Modelo("b"))
+    assert relevo.actual == "a" and not relevo.contesto_alguien
+
+    await relevo.ainvoke("hola")
+    assert relevo.actual == "a" and relevo.contesto_alguien
+
+
+async def test_si_no_contesta_nadie_no_hay_a_quien_atribuirle_la_vuelta() -> None:
+    """Todos agotados: la vuelta se pierde y NADIE la firmó."""
+    relevo = _relevo(_Modelo("a", _Error(429, "quota")), _Modelo("b", _Error(429, "quota")))
+    with pytest.raises(RelevoAgotado):
+        await relevo.ainvoke("hola")
+    assert relevo.actual == "a" and not relevo.contesto_alguien
+
+
+async def test_el_parte_de_modelos_dice_quien_esta_en_cuarentena() -> None:
+    """Para vigilar la API desde fuera.
+
+    Un brazo con toda su lista agotada sigue vivo y sigue sondeando, pero no
+    puede hacer una sola vuelta: hoy eso solo lo dice una línea de log que
+    nadie mira de madrugada.
+    """
+    reloj = _Reloj()
+    relevo = _relevo(_Modelo("a", _Error(429, "quota")), _Modelo("b"), reloj=reloj)
+
+    await relevo.ainvoke("hola")
+    parte = relevo.estado_modelos()
+    assert list(parte) == ["a", "b"], "en orden alfabético, nunca por disponibilidad"
+    assert parte["a"]["disponible"] is False and parte["a"]["vuelve_en_min"] >= 1
+    assert parte["b"]["disponible"] is True and parte["b"]["contesto"] is True
+    assert parte["a"]["contesto"] is False
+
+    # Pasada la cuarentena, el agotado vuelve a estar disponible.
+    reloj.t += CUARENTENA_MINUTO_S + 1
+    assert relevo.estado_modelos()["a"]["disponible"] is True
