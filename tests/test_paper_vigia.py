@@ -529,3 +529,28 @@ async def test_el_brazo_remoto_no_publica_al_panel(
     assert resumenes and all(b == "gemini" for _, b in resumenes)
     assert construido["archivo"] == str(archivo)
     assert construido["modelo"] == "g"
+
+
+def test_un_brazo_sin_publicar_no_avisa_por_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tres vigías, un solo «la Mac se duerme»: el aviso es del brazo que publica."""
+    import sys
+
+    recibido: dict[str, Any] = {}
+
+    async def vigilar_falso(**kw: Any) -> dict[str, Any]:
+        recibido.update(kw)
+        return {"vueltas": 0, "por_dia": {}}
+
+    monkeypatch.setattr(vigia, "vigilar", vigilar_falso)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["vigia", "--modelo", "gemini-3.8-flash", "--sin-publicar", "--brazo", "gemini"],
+    )
+    vigia.main()
+    assert recibido["brazo"] == "gemini" and recibido["publicar_al_panel"] is False
+    assert recibido["avisar"]("x") is False
+
+    monkeypatch.setattr(sys, "argv", ["vigia"])
+    vigia.main()
+    assert recibido["brazo"] == "local" and recibido["avisar"] is vigia.avisar_por_telegram

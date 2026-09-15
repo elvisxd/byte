@@ -442,6 +442,10 @@ def main() -> None:
             publicar_al_panel=not args.sin_publicar,
             archivo_traza=archivo_traza,
             brazo=args.brazo,
+            # ⚠ EL AVISO DE TELEGRAM LO MANDA UN SOLO BRAZO. Los remotos tienen
+            # PANEL_URL desde que publican su resumen, y sin esto los tres
+            # vigías dirían «la Mac se duerme» a las 20:35, uno detrás de otro.
+            avisar=(lambda _texto: False) if args.sin_publicar else avisar_por_telegram,
         )
     )
     print(
