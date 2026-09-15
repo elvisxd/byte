@@ -68,7 +68,11 @@ def test_la_traza_a_archivo_no_toca_el_panel(
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: llamadas.append(a))
     archivo = tmp_path / "trazas" / "gemini.json"
     trace = TraceDeSesion(
-        sesion_id="g1", modelo=lambda: "gemini-3.7-flash", simbolo="BTCUSDT", archivo=str(archivo)
+        sesion_id="g1",
+        modelo=lambda: "gemini-3.7-flash",
+        simbolo="BTCUSDT",
+        archivo=str(archivo),
+        sin_panel=True,
     )
     trace.emit("TEXT_MESSAGE_CONTENT", {"delta": "hola"})
 
@@ -190,3 +194,32 @@ def test_el_resumen_del_brazo_viaja_con_su_nombre(
 
     monkeypatch.delenv("PANEL_URL", raising=False)
     assert publicar_resumen(str(tmp_path / "g.db"), "gemini") is False
+
+
+def test_el_local_escribe_la_traza_en_disco_y_ademas_la_publica(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sin `sin_panel`, archivo Y panel: la rúbrica lee el disco, /vivo lee el panel."""
+    monkeypatch.setenv("PANEL_URL", "http://panel.invalido")
+    pedidos: list[Any] = []
+
+    class _Resp:
+        def __enter__(self) -> "_Resp":
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda p, timeout=0: (pedidos.append(p), _Resp())[1]
+    )
+    archivo = tmp_path / "trazas" / "local.json"
+    trace = TraceDeSesion(
+        sesion_id="l1", modelo="qwen3:14b", simbolo="BTCUSDT", archivo=str(archivo)
+    )
+
+    assert trace.publicar(viva=True) is True
+    assert archivo.exists() and len(pedidos) == 1
