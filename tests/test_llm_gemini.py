@@ -64,6 +64,8 @@ def test_un_gemini_se_arma_con_la_clave_y_su_tope(espias: None) -> None:
     assert GeminiEspia.ultimo["include_thoughts"] is True
     # Un solo intento: el reintento lo hace el relevo cambiando de modelo.
     assert GeminiEspia.ultimo["max_retries"] == 1
+    # Y con tope: una llamada colgada paró el brazo una hora (medido).
+    assert GeminiEspia.ultimo["timeout"] == 120.0
     assert OllamaEspia.ultimo == {}
 
 
@@ -81,6 +83,7 @@ def test_un_groq_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> N
     assert ultimo["model"] == "openai/gpt-oss-120b"
     assert ultimo["max_tokens"] == 8192
     assert ultimo["max_retries"] == 1
+    assert ultimo["timeout"] == 120.0
     # En el cuerpo del pedido: como argumento del SDK lo rechaza (medido).
     assert ultimo["extra_body"] == {"reasoning_format": "parsed"}
     assert "model_kwargs" not in ultimo
