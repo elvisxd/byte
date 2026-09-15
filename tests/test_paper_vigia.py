@@ -334,3 +334,36 @@ async def test_el_tope_es_por_dia_local(mundo: _Mundo, tmp_path: Any) -> None:
     )
 
     assert vueltas == [1, 2, 3, 4]
+
+
+async def test_la_parada_cancela_la_vuelta_en_curso(mundo: _Mundo, tmp_path: Any) -> None:
+    """Un TERM en mitad de una vuelta no espera a que el modelo termine: la corta.
+    Medido el 2026-09-14: esperar dejó Ollama ocupado y el relevo no arrancó."""
+    import asyncio
+    import os
+    import signal
+
+    empezo = asyncio.Event()
+
+    async def vuelta_larga(n: int) -> str | None:
+        empezo.set()
+        await asyncio.sleep(3600)  # el modelo «pensando»
+        return None
+
+    async def mandar_term() -> None:
+        await empezo.wait()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(mandar_term()))
+    resumen = await asyncio.wait_for(
+        vigilar(
+            ruta_db=str(tmp_path / "op.db"),
+            ruta_scripts="",
+            ahora=lambda: mundo.hora,
+            dormir=_nada,
+            correr_vuelta=vuelta_larga,
+        ),
+        timeout=10,
+    )
+
+    assert resumen["vueltas"] == 1  # arrancó una, se cortó, y el bucle terminó

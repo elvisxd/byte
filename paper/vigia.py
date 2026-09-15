@@ -160,10 +160,21 @@ async def vigilar(
             return await una_vuelta(grafo, trace, n)
 
     parando = False
+    vuelta_en_curso: asyncio.Task[str | None] | None = None
 
     def _parar(*_: Any) -> None:
+        # ⚠ CANCELA LA VUELTA EN CURSO, NO LA ESPERA. La primera versión solo
+        # ponía la bandera, que se mira entre sondeos: un TERM en mitad de una
+        # vuelta —el modelo pensando— esperaba hasta 40 minutos. Medido el
+        # 2026-09-14 en el relevo de las 20:40: el vigía viejo siguió pensando,
+        # Ollama quedó ocupado, la comprobación del modelo del vigía nuevo
+        # falló con «fetch failed» y no arrancó ninguno. Cancelar es seguro: cada
+        # herramienta escribe en una transacción, y una vuelta cortada no deja
+        # media operación registrada.
         nonlocal parando
         parando = True
+        if vuelta_en_curso is not None and not vuelta_en_curso.done():
+            vuelta_en_curso.cancel()
 
     try:
         loop = asyncio.get_running_loop()
@@ -232,7 +243,13 @@ async def vigilar(
             plazos_avisados.update(
                 op["id"] for op in registro.abiertas() if registro.agoto_plazo(op)
             )
-            error = await correr_vuelta(vueltas_total)
+            vuelta_en_curso = asyncio.ensure_future(correr_vuelta(vueltas_total))
+            try:
+                error = await vuelta_en_curso
+            except asyncio.CancelledError:
+                error = "cancelada por la parada"
+            finally:
+                vuelta_en_curso = None
             if error:
                 print(f"[vigía] la vuelta {vueltas_total} falló: {error[:120]}", flush=True)
             hubo_cambios = True
