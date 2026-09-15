@@ -232,6 +232,7 @@ async def vigilar(
         modelo=etiqueta,
         simbolo=SIMBOLO,
         archivo=archivo_traza,
+        sin_panel=not publicar_al_panel,
     )
 
     def publicar_historial() -> None:
@@ -429,10 +430,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     modelos = [m for m in args.modelo.split(",") if m.strip()] if args.modelo else None
-    archivo_traza = args.traza
-    if args.sin_publicar and not archivo_traza:
-        primero = (modelos or ["local"])[0].replace("/", "-")
-        archivo_traza = f"paper/trazas/vigia-{primero}-{int(time.time())}.json"
+    # Siempre a disco, por brazo: es lo que lee paper/rubrica.py. Al panel,
+    # solo el brazo que publica.
+    archivo_traza = args.traza or f"paper/trazas/vigia-{args.brazo}-{int(time.time())}.json"
     resumen = asyncio.run(
         vigilar(
             ruta_db=args.db,

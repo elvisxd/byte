@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.logging import get_logger
 from paper.mercado import MercadoNoDisponible, indicadores, velas
+from paper.prompt import VERSION_PROMPT
 from paper.publicar import publicar
 from paper.registro import Contexto, Registro
 from paper.sesiones import describir as describir_sesion
@@ -88,6 +89,8 @@ def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
             "rango_techo": techo,
             "rango_piso": piso,
             "indicadores": ind,
+            # Con qué prompt se escribió: ver paper/prompt.py.
+            "prompt": VERSION_PROMPT,
         },
     )
 
