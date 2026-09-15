@@ -195,6 +195,7 @@ def mundo(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> _Mundo:
         lambda r, prefijo="": {"ordenes": [], "predicciones": [], "cerradas": []},
     )
     monkeypatch.setattr(vigia, "publicar", lambda r: {"cerradas": [], "abiertas": []})
+    monkeypatch.setattr(vigia, "publicar_resumen", lambda ruta, brazo: True)
     monkeypatch.setattr(
         vigia, "armar", lambda ajustes, db, modelos=None: (Registro(db), object(), "falso")
     )
@@ -482,6 +483,10 @@ async def test_el_brazo_remoto_no_publica_al_panel(
     """El panel enseña UN historial: el brazo remoto escribe su traza en disco y nada más."""
     publicaciones: list[Any] = []
     monkeypatch.setattr(vigia, "publicar", lambda r: publicaciones.append(r))
+    resumenes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vigia, "publicar_resumen", lambda ruta, brazo: resumenes.append((ruta, brazo))
+    )
     recibidos: list[Any] = []
     monkeypatch.setattr(
         vigia,
@@ -515,9 +520,12 @@ async def test_el_brazo_remoto_no_publica_al_panel(
         modelos=["gemini-3.8-flash"],
         publicar_al_panel=False,
         archivo_traza=str(archivo),
+        brazo="gemini",
     )
 
     assert recibidos == [["gemini-3.8-flash"]]
     assert publicaciones == []
+    # El resumen sí se publica, con el nombre del brazo: es lo que compara la página.
+    assert resumenes and all(b == "gemini" for _, b in resumenes)
     assert construido["archivo"] == str(archivo)
     assert construido["modelo"] == "g"

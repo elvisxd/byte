@@ -149,3 +149,44 @@ def test_no_se_mezclan_locales_y_remotos(tmp_path: Path) -> None:
         sesion.armar(
             Settings(GEMINI_API_KEY="k"), str(tmp_path / "x.db"), ["gemini-3.8-flash", "qwen3:14b"]
         )
+
+
+def test_el_resumen_del_brazo_viaja_con_su_nombre(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lo que la página de comparación pone en columnas: el resumen, bajo el brazo."""
+    from paper.publicar import publicar_resumen
+
+    Registro(tmp_path / "g.db").cerrar_conexion()
+    enviado: dict[str, Any] = {}
+
+    class _Resp:
+        def __enter__(self) -> "_Resp":
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def urlopen_falso(pedido: Any, timeout: float = 0) -> _Resp:
+        enviado["url"] = pedido.full_url
+        enviado["auth"] = pedido.get_header("Authorization")
+        enviado["cuerpo"] = json.loads(pedido.data.decode("utf-8"))
+        return _Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen_falso)
+
+    assert publicar_resumen(str(tmp_path / "g.db"), "gemini", url="http://panel", token="t") is True
+    assert enviado["url"] == "http://panel/api/papel/brazo"
+    assert enviado["auth"] == "Bearer t"
+    cuerpo = enviado["cuerpo"]
+    assert cuerpo["brazo"] == "gemini"
+    assert cuerpo["predicciones"]["resueltas"] == 0 and "por_sesion" in cuerpo["predicciones"]
+    assert "cierres" in cuerpo and "razones" in cuerpo and cuerpo["actualizado"]
+    # Sin operaciones dentro: es una foto pequeña, no el historial.
+    assert "cerradas" not in cuerpo and "abiertas" not in cuerpo
+
+    monkeypatch.delenv("PANEL_URL", raising=False)
+    assert publicar_resumen(str(tmp_path / "g.db"), "gemini") is False
