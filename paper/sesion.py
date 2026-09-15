@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 from agent.graph import build_graph
-from agent.llm import build_llm, es_de_google
+from agent.llm import build_llm, es_remoto
 from agent.relevo import Relevo
 from api.config import Settings
 from paper.mercado import MercadoNoDisponible, indicadores
@@ -306,17 +306,17 @@ def armar(
 def _armar_remoto(
     ajustes: Settings, ruta_db: str, nombres: list[str], registro: Registro
 ) -> tuple[Registro, Any, Any]:
-    """El brazo remoto: un relevo de modelos de Google, mismo prompt, mismas herramientas.
+    """Un brazo remoto: un relevo de modelos por API, mismo prompt, mismas herramientas.
 
     Todo lo que NO cambia respecto al local es a propósito: el tope de
     iteraciones, el recorte de los resultados, el presupuesto de historial.
     Ver «Qué se compara, y qué se mantiene igual» en el criterio.
     """
-    if not all(es_de_google(n) for n in nombres):
+    if not all(es_remoto(n) for n in nombres):
         raise ValueError(f"el relevo mezcla modelos locales y remotos: {nombres}")
     relevo = Relevo(
         # `reasoning=True`: pedir VER el pensamiento, que es lo que se audita en
-        # la traza. Los Flash piensan igual con o sin esto.
+        # la traza. Los modelos que piensan lo hacen igual con o sin esto.
         [(n, build_llm(ajustes, n, reasoning=True)) for n in nombres],
         espera_s=ajustes.gemini_espera_s,
     )

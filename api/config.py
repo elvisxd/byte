@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # Segundos entre llamadas: la capa gratuita tiene tope por minuto, y una
     # vuelta son hasta seis llamadas seguidas. Ver agent/relevo.py.
     gemini_espera_s: float = Field(default=12.0, alias="BYTE_GEMINI_ESPERA_S")
+    # --- Groq: otro brazo remoto, capa gratuita, protocolo de OpenAI ---
+    # Modelos `groq/<id>` (p. ej. `groq/openai/gpt-oss-120b`). Sin tarjeta: 30
+    # peticiones/min y 1.000/día por modelo, medido en la doc el 2026-09-15.
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    # Mismo razonamiento que `gemini_num_predict`: el pensamiento de gpt-oss
+    # cuenta dentro del tope de salida.
+    groq_num_predict: int = Field(default=8192, alias="BYTE_GROQ_NUM_PREDICT")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")

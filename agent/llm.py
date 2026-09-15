@@ -11,12 +11,23 @@ logger = get_logger("agent.llm")
 
 
 def es_de_google(nombre: str) -> bool:
-    """Un `gemini-…` se pide a la API de Google; todo lo demás, a Ollama.
+    """Un `gemini-…` se pide a la API de Google.
 
     Solo `gemini`: los Gemma también corren en Ollama (`gemma3:4b`) y no se
     quiere que un nombre local se vaya a la red por parecerse.
     """
     return nombre.startswith("gemini")
+
+
+def es_de_groq(nombre: str) -> bool:
+    """`groq/<id>` se pide a Groq por el protocolo de OpenAI; el prefijo se quita."""
+    return nombre.startswith("groq/")
+
+
+def es_remoto(nombre: str) -> bool:
+    """Todo lo que no es Ollama. Un brazo remoto puede mezclar proveedores: cada
+    escritura queda sellada con el modelo que la hizo (paper/CRITERIO_COMPARACION.md)."""
+    return es_de_google(nombre) or es_de_groq(nombre)
 
 
 def build_llm(
@@ -49,6 +60,8 @@ def build_llm(
     nombre = modelo or settings.ollama_model
     if es_de_google(nombre):
         return _gemini(settings, nombre, reasoning=reasoning)
+    if es_de_groq(nombre):
+        return _groq(settings, nombre, reasoning=reasoning)
 
     from langchain_ollama import ChatOllama
 
@@ -86,6 +99,36 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
         max_output_tokens=settings.gemini_num_predict,
         include_thoughts=True if reasoning else None,
         max_retries=1,
+    )
+
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+
+def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
+    """Groq por el protocolo de OpenAI: una dependencia que sirve para varios proveedores.
+
+    `reasoning_format="parsed"` es de Groq: el pensamiento de gpt-oss viaja
+    aparte del texto (`reasoning`), y el grafo lo emite a la traza como el de
+    Ollama. Sin él vendría dentro del texto entre etiquetas.
+
+    `max_retries=1` por lo mismo que en Gemini: el reintento lo hace el relevo.
+    """
+    if not settings.groq_api_key:
+        raise ValueError(f"GROQ_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_openai import ChatOpenAI
+
+    extra: dict[str, Any] = {}
+    if reasoning:
+        extra["reasoning_format"] = "parsed"
+    return ChatOpenAI(
+        base_url=GROQ_BASE_URL,
+        api_key=settings.groq_api_key,
+        model=nombre.removeprefix("groq/"),
+        temperature=0.2,
+        max_tokens=settings.groq_num_predict,
+        max_retries=1,
+        model_kwargs=extra,
     )
 
 
