@@ -146,13 +146,36 @@ def eventos(
     cierre_4h: int | None,
     cierre_4h_visto: int | None,
     plazos_avisados: set[int] | None = None,
+    cercanias_avisadas: set[str] | None = None,
 ) -> list[str]:
     """Qué justifica despertar al modelo ahora. Vacío si nada.
 
     Solo hechos comparables: un tiempo de vela que cambió, una distancia en
     ATR. Nada de «parece que va a romper».
+
+    ⚠ UN NIVEL DESPIERTA UNA VEZ MIENTRAS EL PRECIO SIGA CERCA. Medido el
+    2026-09-15: el brazo Gemini hizo tres vueltas en 40 minutos (11:44, 12:07,
+    12:25) por la misma predicción #4, porque el precio rondaba el nivel y
+    cada sondeo lo veía «a menos de un ATR». Releer el mismo nivel cada cuarto
+    de hora gasta el tope diario y la cuota en lo mismo. Con
+    `cercanias_avisadas` (mutado acá), un nivel avisa al entrar en el margen y
+    se rearma solo cuando el precio se aleja y vuelve.
     """
     motivos: list[str] = []
+
+    def cerca(clave: str, distancia: float, margen: float) -> bool:
+        """True si hay que avisar por este nivel ahora; lleva la histéresis."""
+        if distancia > margen:
+            if cercanias_avisadas is not None:
+                cercanias_avisadas.discard(clave)
+            return False
+        if cercanias_avisadas is None:
+            return True
+        if clave in cercanias_avisadas:
+            return False
+        cercanias_avisadas.add(clave)
+        return True
+
     if cierre_4h is not None and cierre_4h_visto is not None and cierre_4h != cierre_4h_visto:
         cuando = datetime.fromtimestamp(cierre_4h).astimezone().strftime("%H:%M")
         motivos.append(f"cerró la vela de 4h de las {cuando}")
@@ -160,19 +183,21 @@ def eventos(
         return motivos
     margen = atr_15m * MARGEN_ATR_EVENTO
     for o in registro.ordenes_vivas():
-        if abs(precio - o["precio_limite"]) <= margen:
+        if cerca(f"orden:{o['id']}", abs(precio - o["precio_limite"]), margen):
             motivos.append(
                 f"el precio está a {abs(precio - o['precio_limite']):.0f} de la orden "
                 f"#{o['id']} ({o['precio_limite']})"
             )
     for p in registro.predicciones_vivas():
-        if abs(precio - p["nivel"]) <= margen:
+        if cerca(f"prediccion:{p['id']}", abs(precio - p["nivel"]), margen):
             motivos.append(
                 f"el precio está a {abs(precio - p['nivel']):.0f} de la predicción "
                 f"#{p['id']} ({p['nivel']})"
             )
     for pool in pools:
-        if pool.get("fuerza", 0) >= 2 and abs(precio - pool["precio"]) <= margen:
+        if pool.get("fuerza", 0) >= 2 and cerca(
+            f"pool:{round(pool['precio'], 2)}", abs(precio - pool["precio"]), margen
+        ):
             motivos.append(
                 f"el precio está a {abs(precio - pool['precio']):.0f} del pool "
                 f"{pool['precio']} (f{pool['fuerza']})"
@@ -188,11 +213,13 @@ def eventos(
             plazo = registro.plazo_de(op)
             motivos.append(f"la operación #{op['id']} agotó su plazo de {plazo:.0f} h: decidí")
         stop = op["stop_actual"] if op["stop_actual"] is not None else op["stop_loss"]
-        if abs(precio - stop) <= margen:
+        if cerca(f"stop:{op['id']}", abs(precio - stop), margen):
             motivos.append(
                 f"la operación #{op['id']} está a {abs(precio - stop):.0f} de su stop ({stop})"
             )
-        if op["take_profit"] and abs(precio - op["take_profit"]) <= margen:
+        if op["take_profit"] and cerca(
+            f"objetivo:{op['id']}", abs(precio - op["take_profit"]), margen
+        ):
             motivos.append(
                 f"la operación #{op['id']} está a {abs(precio - op['take_profit']):.0f} "
                 "de su objetivo"
@@ -279,6 +306,7 @@ async def vigilar(
     vueltas_hoy: dict[str, int] = {}
     cierre_4h_visto: int | None = None
     plazos_avisados: set[int] = set()
+    cercanias_avisadas: set[str] = set()
     # Para avisar UNA vez cuando la ventana se cierra: «ya puedes apagar la Mac».
     estaba_dentro: bool | None = None
     resueltas_hoy = 0
@@ -311,6 +339,7 @@ async def vigilar(
                 cierre_4h=cierre_4h,
                 cierre_4h_visto=cierre_4h_visto,
                 plazos_avisados=plazos_avisados,
+                cercanias_avisadas=cercanias_avisadas,
             )
             # Se anota SIEMPRE, dentro o fuera de la ventana: si no, el cierre de
             # las 04 dispararía la vuelta de las 08, y la de las 08 tiene que
