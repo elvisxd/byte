@@ -42,6 +42,7 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -95,6 +96,41 @@ def avisar_por_telegram(texto: str) -> bool:
     except (OSError, urllib.error.URLError, ValueError):
         return False
     return True
+
+
+class Despertador:
+    """Mantiene la Mac despierta SOLO dentro de la ventana. Fuera, que se duerma.
+
+    Antes el lanzador envolvía al vigía entero en `caffeinate -i`, así que la
+    Mac no se dormía nunca —tampoco de noche, en reposo, cuando no hace nada
+    más que sondear—. Ahora es el vigía quien pide estar despierto mientras
+    trabaja y lo suelta al cerrarse la ventana: la Mac se duerme sola en un
+    minuto (`pmset sleep 1`) y un horario del sistema la despierta a las
+    07:55. Con FileVault no hay inicio de sesión automático, así que dormir
+    —no apagar— es lo único que deja a los vigías vivos sin contraseña.
+
+    `-w <pid>`: el caffeinate muere solo si muere el vigía. Ningún proceso
+    huérfano manteniendo la Mac despierta por un vigía que ya no existe.
+    """
+
+    def __init__(self) -> None:
+        self._proceso: subprocess.Popen[bytes] | None = None
+
+    def __call__(self, despierta: bool) -> None:
+        if despierta and self._proceso is None:
+            try:
+                self._proceso = subprocess.Popen(  # noqa: S603 — argumentos fijos
+                    ["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                # Sin caffeinate (otra plataforma) el vigía sigue igual.
+                self._proceso = None
+        elif not despierta and self._proceso is not None:
+            self._proceso.terminate()
+            self._proceso = None
 
 
 def en_ventana(ahora: datetime, ventana: tuple[hora_del_dia, hora_del_dia] = VENTANA) -> bool:
@@ -183,6 +219,7 @@ async def vigilar(
     modelos: list[str] | None = None,
     publicar_al_panel: bool = True,
     archivo_traza: str = "",
+    mantener_despierta: Callable[[bool], None] | None = None,
 ) -> dict[str, Any]:
     """El bucle. Termina por señal o, en pruebas, tras `ticks` sondeos."""
     ajustes = Settings()  # type: ignore[call-arg]
@@ -205,6 +242,8 @@ async def vigilar(
         async def correr_vuelta(n: int) -> str | None:
             return await una_vuelta(grafo, trace, n)
 
+    if mantener_despierta is None:
+        mantener_despierta = Despertador()
     parando = False
     vuelta_en_curso: asyncio.Task[str | None] | None = None
 
@@ -282,6 +321,8 @@ async def vigilar(
             motivos.insert(0, "arranque: una vuelta de lectura")
 
         dentro = en_ventana(momento, ventana)
+        # Despierta dentro de la ventana, dormida fuera. Ver `Despertador`.
+        mantener_despierta(dentro)
         hoy = vueltas_hoy.get(dia, 0)
         resueltas_hoy += len(cambios["predicciones"]) + len(cambios["cerradas"])
         # ⚠ AL CERRARSE LA VENTANA, UN AVISO. Es lo que permite apagar la Mac
@@ -289,7 +330,8 @@ async def vigilar(
         # transición dentro → fuera, no cada sondeo del reposo.
         if estaba_dentro and not dentro:
             avisar(
-                f"Vigía en reposo hasta las {ventana[0]:%H:%M}: ya puedes apagar la Mac. "
+                f"Vigía en reposo hasta las {ventana[0]:%H:%M}: la Mac se duerme sola y se "
+                f"despierta a las 07:55; no hay que hacer nada. "
                 f"Hoy: {hoy} vuelta(s), {resueltas_hoy} resolución(es)."
             )
             resueltas_hoy = 0
@@ -345,6 +387,8 @@ async def vigilar(
             await dormir(paso)
             restante -= paso
 
+    # Al parar se suelta siempre: un vigía que ya no existe no pide nada.
+    mantener_despierta(False)
     trace.publicar(viva=False)
     try:
         publicar_historial()

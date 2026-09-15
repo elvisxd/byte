@@ -424,7 +424,35 @@ async def test_al_cerrarse_la_ventana_avisa_una_vez(mundo: _Mundo, tmp_path: Any
     )
 
     assert len(avisos) == 1
-    assert avisos[0].startswith("Vigía en reposo hasta las 08:00: ya puedes apagar la Mac.")
+    assert avisos[0].startswith("Vigía en reposo hasta las 08:00: la Mac se duerme sola")
+
+
+async def test_pide_estar_despierta_solo_dentro_de_la_ventana(mundo: _Mundo, tmp_path: Any) -> None:
+    """Dentro de la ventana la Mac no se duerme; fuera, sí; y al parar se suelta siempre."""
+    pedidos: list[bool] = []
+    horas = iter(
+        [
+            datetime(2026, 9, 15, 9, 0).astimezone(),
+            datetime(2026, 9, 15, 20, 45).astimezone(),
+            datetime(2026, 9, 15, 20, 50).astimezone(),
+        ]
+    )
+
+    async def sin_vuelta(_n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: next(horas),
+        dormir=_nada,
+        correr_vuelta=sin_vuelta,
+        ticks=3,
+        avisar=lambda _t: True,
+        mantener_despierta=pedidos.append,
+    )
+
+    assert pedidos == [True, False, False, False], "tres sondeos y la soltada final"
 
 
 async def test_si_arranca_ya_fuera_de_la_ventana_no_avisa(mundo: _Mundo, tmp_path: Any) -> None:
