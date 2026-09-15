@@ -1,0 +1,110 @@
+# Criterio de la comparación entre modelos
+
+Escrito el 2026-09-15, ANTES del código que lo aplica y en su propio commit.
+Igual que `CRITERIO_ABORTO.md`, `CRITERIO_CADENCIA.md` y `CRITERIO_GESTION.md`:
+si el criterio se escribe después de ver los resultados, no es un criterio, es
+una justificación.
+
+## Por qué comparar
+
+Todo lo medido hasta hoy se midió con UN modelo, `qwen3:14b` con razonamiento,
+en una Mac de 16 GB donde no cabe nada más grande. Cuando el agente insiste en
+un nivel ya ocupado, mezcla marcos o cierra una tesis de 4h a los 17 minutos,
+no hay forma de saber si el techo es el modelo o es lo que le damos a mirar.
+Las dos explicaciones piden trabajos distintos —cambiar de modelo, o preparar
+mejor el gráfico— y hasta ahora se elegía a ciegas.
+
+Un segundo modelo con EL MISMO prompt, LAS MISMAS herramientas y LOS MISMOS
+eventos separa las dos cosas: lo que falla en los dos es del gráfico o del
+prompt; lo que falla en uno solo es del modelo.
+
+## Qué se compara, y qué se mantiene igual
+
+- **Mismo prompt** (`INSTRUCCION` de `paper/sesion.py`), sin adaptaciones por
+  modelo. Adaptar el prompt a cada uno mediría dos prompts, no dos modelos.
+- **Mismas herramientas** y mismos números: el mapa, las métricas, los
+  rechazos. El modelo elige cuándo y por qué; el resto es aritmética.
+- **Mismos eventos**: los dos brazos corren en modo vigía sobre el mismo
+  mercado, con la misma ventana y el mismo tope diario. Se despiertan por los
+  mismos cierres de 4h y las mismas cercanías a niveles vivos. Las cercanías
+  a SUS PROPIAS órdenes y predicciones difieren por construcción, y eso es
+  parte del modelo, no un sesgo.
+- **Registro propio por brazo**: `operaciones.db` para el local,
+  `operaciones-gemini.db` para el remoto. Dos modelos sobre un mismo registro
+  se pisan las predicciones —«ya hay una viva a 1 ATR»— y ninguno de los dos
+  lee el estado que él mismo dejó.
+- **Columna `modelo`** sellada en cada operación y predicción, como ya se hace
+  con `+razona`. Es lo único que permite separar los brazos si alguien junta
+  las bases dentro de un mes.
+
+## El brazo remoto y la rotación de modelos
+
+El brazo remoto usa la capa gratuita de la API de Gemini. Esa capa tiene
+límites por minuto y por día que Google no publica por modelo, y que además
+cambian: un modelo puede contestar a las 08:00 y devolver 429 a las 14:00, y
+`gemini-3.8-flash` devolvió 503 «high demand» en la primera sonda.
+
+Por eso el brazo no es UN modelo sino una LISTA ordenada, y ante un 429 o un
+503 se pasa al siguiente en la misma vuelta, sin perderla. El orden lo fija
+quien lanza, de más a menos capaz según las sondas del 2026-09-15:
+
+    gemini-3.8-flash › 3.7-flash › 3.5-flash › 3-flash-preview ›
+    3.5-flash-lite › 3.1-flash-lite
+
+`3.6-flash` va fuera: filtró borradores de su pensamiento a la respuesta
+(«Check Draft 1/…»). `gemma-4-26b` también: contesta con ecuaciones a una
+pregunta que pedía una línea. Los Pro no entran en la capa gratuita.
+
+⚠ CADA OPERACIÓN LLEVA EL MODELO QUE LA ESCRIBIÓ, NO EL PRIMERO DE LA LISTA.
+Si el 3.8 se agotó a media mañana y el 3.5-lite abrió la operación de la
+tarde, decir que la abrió «el brazo Gemini» mezcla dos modelos de calidad
+distinta bajo un nombre. Es la misma razón por la que `+razona` va en la
+etiqueta del local.
+
+⚠ ENTRE LLAMADAS, UNA ESPERA MÍNIMA. Una vuelta son hasta seis llamadas en
+segundos; la capa gratuita tiene un tope por minuto. Se espacian a propósito
+—unos segundos entre una y otra— para no rotar de modelo por un tope de
+minuto que no dice nada del modelo.
+
+## Qué se mide, y cómo
+
+Lo mismo que ya mide el experimento, brazo por brazo, con la tabla de
+`predicciones` y `por_eje()`:
+
+1. **Brier por marco** y cuántas predicciones resolvió cada uno. Es el
+   criterio principal: la predicción se hace en TODAS las vueltas y no depende
+   de que haya entrada.
+2. **R por motivo de cierre** (`stop`, `objetivo`, `manual`, `tiempo`), sin
+   promediar ejes entre sí.
+3. **Rúbrica sobre las trazas**, a mano y con las dos trazas delante:
+   - ¿reacciona a un rechazo bajando de marco, o insiste?
+   - ¿las razones recorren los ejes o son una plantilla? (razones distintas
+     sobre razones totales)
+   - ¿cuántas vueltas chocan con el tope de iteraciones sin registrar nada?
+   - ¿juzga una abierta en su marco, o la cierra mirando 15m?
+
+## Qué NO se hace
+
+- **No se elige el brazo mirando la tabla.** Con veinte predicciones el mejor
+  por azar parece bueno. La decisión se toma con **50 predicciones resueltas
+  por brazo**, y hasta entonces los dos corren.
+- **No se ordena por resultado** en ningún sitio: ni los ejes, ni los brazos.
+- **El brazo remoto no publica al panel.** El panel enseña UN historial y UNA
+  traza; dos brazos publicando alternados dejarían la página contando una
+  historia con dos narradores. Su traza va a archivo local
+  (`paper/trazas/`), y el historial vive en su base. Cuando haya algo que
+  enseñar, será una página que sepa que hay dos.
+- **No se le adapta nada al modelo remoto** por el camino. Si el prompt cambia,
+  cambia para los dos y en el mismo commit.
+
+## Qué decide
+
+Tres desenlaces posibles a las 50 predicciones por brazo:
+
+- **Los dos fallan en lo mismo** (insisten, mezclan marcos, cierran antes de
+  tiempo): el problema es lo que se les da a mirar. El trabajo siguiente es el
+  gráfico —FVGs, liquidez, estructura preparada— y no el modelo.
+- **Uno falla y el otro no**: el problema es el modelo, y ya se sabe cuál
+  sirve. Si es el remoto, se decide si pagar por él con números delante.
+- **Ninguno resuelve mejor que el otro pero los dos resuelven**: la
+  diferencia es coste y velocidad, y la Mac gana por ser gratis y local.
