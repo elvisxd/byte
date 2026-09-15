@@ -12,8 +12,11 @@ trazas delante — no este script.
 import sqlite3
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from paper.sesiones import SESIONES, sesion_de
 
 # Umbral del criterio: antes de esto, lo que se ve es ruido.
 PREDICCIONES_PARA_DECIDIR = 50
@@ -60,11 +63,29 @@ def _predicciones(con: sqlite3.Connection) -> dict[str, Any]:
         "SELECT COUNT(*) n, ROUND(AVG(brier), 3) brier FROM predicciones "
         "WHERE resuelta_en IS NOT NULL"
     ).fetchone()
+    # Por la sesión en que se HIZO, derivada de `hecha_en`: es lo que dice si
+    # una lectura de Londres vale lo mismo que una de Nueva York.
+    acumulado: dict[str, list[float]] = {}
+    for fila in con.execute(
+        "SELECT hecha_en, brier FROM predicciones "
+        "WHERE resuelta_en IS NOT NULL AND brier IS NOT NULL"
+    ):
+        try:
+            sesion = sesion_de(datetime.fromisoformat(str(fila["hecha_en"])))
+        except ValueError:
+            sesion = "?"
+        acumulado.setdefault(sesion, []).append(float(fila["brier"]))
+    por_sesion = {
+        nombre: {"n": len(v), "brier": round(sum(v) / len(v), 3)}
+        for nombre, _, _ in SESIONES
+        if (v := acumulado.get(nombre))
+    }
     return {
         "vivas": vivas,
         "resueltas": total["n"],
         "brier": total["brier"],
         "por_marco": por_marco,
+        "por_sesion": por_sesion,
     }
 
 
@@ -145,6 +166,20 @@ def imprimir(rutas: list[str]) -> None:
                 ],
             )
         )
+    # En el orden del día UTC, nunca por Brier.
+    for nombre, _, _ in SESIONES:
+        if any(nombre in r["predicciones"]["por_sesion"] for r in resumenes):
+            print(
+                _linea(
+                    f"  {nombre}: n · Brier",
+                    [
+                        f"{d['n']} · {d['brier']}"
+                        if (d := r["predicciones"]["por_sesion"].get(nombre))
+                        else "—"
+                        for r in resumenes
+                    ],
+                )
+            )
     print()
     print("  operaciones (R por motivo, en orden alfabético)")
     print(_linea("  abiertas ahora", [str(r["cierres"]["abiertas"]) for r in resumenes]))

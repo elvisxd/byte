@@ -23,6 +23,7 @@ from api.logging import get_logger
 from paper.mercado import MercadoNoDisponible, indicadores, velas
 from paper.publicar import publicar
 from paper.registro import Contexto, Registro
+from paper.sesiones import describir as describir_sesion
 from tools.base import Tool, ToolResult, wrap_untrusted
 
 logger = get_logger("tools.paper")
@@ -785,7 +786,7 @@ def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     return "\n".join(lineas)
 
 
-def _mapa(simbolo: str, max_chars: int) -> ToolResult:
+def _mapa(simbolo: str, max_chars: int, ahora: datetime | None = None) -> ToolResult:
     """Los tres gráficos del mismo instante, compactos.
 
     ⚠ POR QUÉ EXISTE. Medido el 2026-09-14 con qwen3:14b pensando: pedía 4h,
@@ -820,7 +821,15 @@ def _mapa(simbolo: str, max_chars: int) -> ToolResult:
         "rango, SU ATR y SU régimen: no mezcles los de uno con los de otro. El % del rango "
         "y la EMA son de ese marco; una predicción en 15m se mide con el ATR de 15m."
     )
-    cuerpo = cabecera + "\n\n" + "\n\n".join(bloques)
+    # La sesión y cuánto falta para el cierre de 4h, como hecho y nada más:
+    # ver paper/sesiones.py. `ahora` se inyecta en los tests.
+    cuerpo = (
+        cabecera
+        + "\n"
+        + describir_sesion(ahora or datetime.now(UTC))
+        + "\n\n"
+        + "\n\n".join(bloques)
+    )
     if fallos:
         cuerpo += "\n\n(sin " + "; ".join(fallos) + ")"
     if sin_cvd:

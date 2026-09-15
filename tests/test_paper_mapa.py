@@ -95,6 +95,16 @@ async def test_sin_intervalo_vienen_los_tres_marcos(mercado: None, tmp_path: Any
     )
 
 
+async def test_el_mapa_dice_en_que_sesion_se_lee(mercado: None, tmp_path: Any) -> None:
+    """Un hecho más de la cabecera: sesión, horas UTC y cierre de 4h. Sin veredicto."""
+    from datetime import UTC, datetime
+
+    from tools.paper import _mapa
+
+    res = _mapa("BTCUSDT", 8000, ahora=datetime(2026, 9, 15, 18, 5, tzinfo=UTC))
+    assert "sesión: Nueva York (16:30–21:00 UTC) · la vela de 4h cierra en 1 h 55" in res.content
+
+
 async def test_la_vela_en_curso_se_describe_como_hecho(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
