@@ -39,6 +39,7 @@ siguiente; la traza enseña los dos pensamientos, que es lo que pasó.
 """
 
 import asyncio
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta
@@ -61,7 +62,8 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
     Un error de argumentos o de red no es agotamiento y no se tapa cambiando
     de modelo: subiría igual con el siguiente.
     """
-    codigo = getattr(exc, "code", None)
+    # Google pone el HTTP en `code`; el SDK de OpenAI (Groq) en `status_code`.
+    codigo = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     texto = str(exc)
     if codigo == 429 or "RateLimit" in type(exc).__name__ or "RESOURCE_EXHAUSTED" in texto:
         bajo = texto.lower()
@@ -85,6 +87,25 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
         or "timed out" in bajo
     ):
         return "caido"
+    return None
+
+
+# «Please try again in 1h23m45.6s» (Groq) y «'retryDelay': '23s'» (Google): el
+# servicio dice cuánto esperar, y es mejor dato que cualquier constante.
+_TRY_AGAIN = re.compile(r"try again in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?", re.I)
+_RETRY_DELAY = re.compile(r"retryDelay'?\"?\s*:\s*'?\"?([\d.]+)s")
+
+
+def espera_sugerida(exc: BaseException) -> float | None:
+    """Segundos que el propio error pide esperar, si los dice. None si no."""
+    texto = str(exc)
+    m = _TRY_AGAIN.search(texto)
+    if m and any(m.groups()):
+        h, mi, s = m.groups()
+        return float(h or 0) * 3600 + float(mi or 0) * 60 + float(s or 0)
+    m = _RETRY_DELAY.search(texto)
+    if m:
+        return float(m.group(1))
     return None
 
 
@@ -175,7 +196,11 @@ class Relevo:
         self._estado.ultima_llamada = self.reloj()
 
     def _agotar(self, nombre: str, tipo: str, exc: BaseException) -> None:
-        if tipo == "dia":
+        sugerida = espera_sugerida(exc)
+        if sugerida is not None and tipo != "caido":
+            # Un margen: la renovación no es al segundo.
+            cuarentena = sugerida + 5.0
+        elif tipo == "dia":
             cuarentena = segundos_hasta_medianoche_pacifico(self.ahora() if self.ahora else None)
         elif tipo == "minuto":
             cuarentena = CUARENTENA_MINUTO_S

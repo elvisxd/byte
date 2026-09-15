@@ -419,7 +419,7 @@ def main() -> None:
     modelos = [m for m in args.modelo.split(",") if m.strip()] if args.modelo else None
     archivo_traza = args.traza
     if args.sin_publicar and not archivo_traza:
-        primero = (modelos or ["local"])[0]
+        primero = (modelos or ["local"])[0].replace("/", "-")
         archivo_traza = f"paper/trazas/vigia-{primero}-{int(time.time())}.json"
     resumen = asyncio.run(
         vigilar(

@@ -78,7 +78,7 @@ def _extras_de(mensaje: Any) -> dict[str, Any]:
     iteración que llenarían el contexto en dos vueltas (ver `agent_node`).
     """
     extras = getattr(mensaje, "additional_kwargs", None) or {}
-    return {k: v for k, v in extras.items() if k != "reasoning_content"}
+    return {k: v for k, v in extras.items() if k not in ("reasoning_content", "reasoning")}
 
 
 # Herramientas que pueden pedir confirmación humana antes de correr.
@@ -377,9 +377,13 @@ def build_graph(
             # `tool_calls` solamente, y meter 3.000 caracteres de pensamiento por
             # iteración en el contexto lo llenaría en dos vueltas.
             # Y con Gemini viene como bloques `thinking` dentro de `content`.
-            pensamiento = (getattr(chunk, "additional_kwargs", None) or {}).get(
-                "reasoning_content"
-            ) or _pensamiento_de(chunk.content)
+            # Groq (gpt-oss, `reasoning_format="parsed"`) lo manda en `reasoning`.
+            extras_chunk = getattr(chunk, "additional_kwargs", None) or {}
+            pensamiento = (
+                extras_chunk.get("reasoning_content")
+                or extras_chunk.get("reasoning")
+                or _pensamiento_de(chunk.content)
+            )
             if pensamiento:
                 emitter.emit(
                     AGUI.THINKING_TEXT_MESSAGE_CONTENT,

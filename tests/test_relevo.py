@@ -17,6 +17,7 @@ from agent.relevo import (
     PACIFICO,
     Relevo,
     RelevoAgotado,
+    espera_sugerida,
     segundos_hasta_medianoche_pacifico,
     tipo_de_agotamiento,
 )
@@ -138,6 +139,42 @@ async def test_el_tope_diario_lo_aparta_hasta_medianoche_del_pacifico() -> None:
     assert a.llamadas == 1, "a las 13:00 del Pacífico la cuota diaria no se renovó"
 
     reloj.t += segundos_hasta_medianoche_pacifico(ahora)
+    await _todo(relevo)
+    assert a.llamadas == 2
+
+
+def test_los_errores_de_openai_traen_status_code() -> None:
+    """Groq va por el SDK de OpenAI: el HTTP está en `status_code`, no en `code`."""
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class InternalServerError(Exception):
+        status_code = 503
+
+    assert tipo_de_agotamiento(RateLimitError("Rate limit reached")) == "minuto"
+    assert tipo_de_agotamiento(InternalServerError("Service Unavailable")) == "caido"
+
+
+def test_la_espera_la_dice_el_error_cuando_la_dice() -> None:
+    assert espera_sugerida(RuntimeError("Please try again in 1h2m3.5s.")) == 3600 + 120 + 3.5
+    assert espera_sugerida(RuntimeError("Please try again in 12.4s.")) == 12.4
+    assert espera_sugerida(RuntimeError("{'retryDelay': '23s'}")) == 23.0
+    assert espera_sugerida(RuntimeError("quota exceeded")) is None
+
+
+async def test_el_429_con_espera_dicha_manda_sobre_la_constante() -> None:
+    reloj = _Reloj()
+    a = _Modelo("a", _Error(429, "Rate limit reached ... Please try again in 3m0s."))
+    b = _Modelo("b")
+    relevo = _relevo(a, b, reloj=reloj)
+
+    await _todo(relevo)
+    a.fallo = None
+    reloj.t += CUARENTENA_MINUTO_S + 1
+    await _todo(relevo)
+    assert a.llamadas == 1, "un minuto no basta: el error pidió tres"
+    reloj.t += 2 * 60 + 10
     await _todo(relevo)
     assert a.llamadas == 2
 
