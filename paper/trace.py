@@ -65,16 +65,23 @@ class TraceDeSesion:
     """
 
     def __init__(
-        self, *, sesion_id: str, modelo: "str | Callable[[], str]", simbolo: str, archivo: str = ""
+        self,
+        *,
+        sesion_id: str,
+        modelo: "str | Callable[[], str]",
+        simbolo: str,
+        archivo: str = "",
+        sin_panel: bool = False,
     ) -> None:
         self.sesion_id = sesion_id
         # Callable para el brazo remoto: el modelo que contesta cambia con el
         # relevo, y la traza tiene que decir cuál es AHORA. Ver agent/relevo.py.
         self.modelo = modelo
-        # ⚠ CON `archivo`, LA TRAZA NO VA AL PANEL. El panel enseña UNA traza; el
-        # brazo remoto de la comparación escribe la suya en disco para no
-        # contar dos historias en la misma página (CRITERIO_COMPARACION.md).
+        # `archivo`: además de publicar, se escribe en disco —es lo que lee
+        # paper/rubrica.py—. `sin_panel`: el panel enseña UNA traza, y los
+        # brazos remotos no cuentan la suya ahí (CRITERIO_COMPARACION.md).
         self.archivo = archivo
+        self.sin_panel = sin_panel
         self.simbolo = simbolo
         self.empezo = datetime.now(UTC).isoformat()
         self.vuelta = 0
@@ -204,11 +211,10 @@ class TraceDeSesion:
         experimento, así que esto jamás puede abortar una sesión.
         """
         cuerpo = json.dumps(self.instantanea(viva=viva), ensure_ascii=False).encode("utf-8")
-        if self.archivo:
-            return self._a_archivo(cuerpo)
+        en_disco = self._a_archivo(cuerpo) if self.archivo else False
         destino = os.environ.get("PANEL_URL", "")
-        if not destino:
-            return False
+        if self.sin_panel or not destino:
+            return en_disco
         pedido = urllib.request.Request(  # noqa: S310 — destino fijado por entorno
             destino.rstrip("/") + "/api/papel/trace",
             data=cuerpo,

@@ -95,7 +95,10 @@ Lo mismo que ya mide el experimento, brazo por brazo, con la tabla de
   (`paper/trazas/`), y el historial vive en su base. Cuando haya algo que
   enseñar, será una página que sepa que hay dos.
 - **No se le adapta nada al modelo remoto** por el camino. Si el prompt cambia,
-  cambia para los dos y en el mismo commit.
+  cambia para todos y en el mismo commit, y sube `VERSION_PROMPT`
+  (`paper/prompt.py`): cada escritura la lleva sellada en su contexto, así
+  que las muestras de antes y de después se pueden separar. Lo que no se
+  hace es comparar un brazo con el prompt 1 contra otro con el 2.
 
 ## Qué decide
 
