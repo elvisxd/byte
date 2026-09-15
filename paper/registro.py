@@ -19,6 +19,7 @@ es ruido. El modelo elige **cuándo y por qué**; el código calcula **qué pas�
 import hashlib
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -290,7 +291,12 @@ def _sellar_prediccion(
 class Registro:
     """Las operaciones en papel, en SQLite."""
 
-    def __init__(self, ruta: str | Path, *, modelo: str = "") -> None:
+    @property
+    def modelo(self) -> str:
+        m = self._modelo() if callable(self._modelo) else self._modelo
+        return str(m).strip()
+
+    def __init__(self, ruta: str | Path, *, modelo: "str | Callable[[], str]" = "") -> None:
         self.ruta = Path(ruta)
         # ⚠ EL MODELO SE FIJA AL CONSTRUIR, NO EN CADA ESCRITURA. Una sesión
         # entera corre con uno solo, así que pasarlo por `abrir`, `dejar_orden`
@@ -303,7 +309,11 @@ class Registro:
         # inservible: una racha mala no se podría atribuir al mercado o al
         # modelo más chico. Ya está medido que el 8B abre en todas las vueltas
         # con razones clonadas donde el 27B se abstiene cinco veces seguidas.
-        self.modelo = modelo.strip()
+        # ⚠ PUEDE SER UN CALLABLE, Y SE RESUELVE AL ESCRIBIR. El brazo remoto es
+        # un relevo de modelos (agent/relevo.py): el que contesta a las 09:00
+        # no es el que contesta a las 15:00, y cada operación tiene que llevar
+        # el que la escribió. Ver paper/CRITERIO_COMPARACION.md.
+        self._modelo = modelo
         self.ruta.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(self.ruta)
         self._con.row_factory = sqlite3.Row

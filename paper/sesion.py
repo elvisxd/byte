@@ -39,7 +39,8 @@ import time
 from typing import Any
 
 from agent.graph import build_graph
-from agent.llm import build_llm
+from agent.llm import build_llm, es_de_google
+from agent.relevo import Relevo
 from api.config import Settings
 from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
@@ -236,9 +237,21 @@ async def _esperar_algo_nuevo(limite: float, marco: str = "15m") -> None:
             return
 
 
-def armar(ajustes: Settings, ruta_db: str) -> tuple[Registro, Any, str]:
-    """El registro, el grafo y la etiqueta del modelo. Lo comparten la sesión y el vigía."""
+def armar(
+    ajustes: Settings, ruta_db: str, modelos: list[str] | None = None
+) -> tuple[Registro, Any, Any]:
+    """El registro, el grafo y la etiqueta del modelo. Lo comparten la sesión y el vigía.
+
+    `modelos` es la lista del brazo remoto (paper/CRITERIO_COMPARACION.md): varios
+    `gemini-…` que se turnan ante un 429. Sin ella, el modelo local de siempre.
+    La etiqueta que devuelve es un str para el local y un CALLABLE para el
+    remoto —el modelo que contesta cambia con el relevo—, y tanto el registro
+    como la traza lo resuelven al escribir.
+    """
     registro = Registro(ruta_db)
+    nombres = [n.strip() for n in (modelos or []) if n.strip()]
+    if nombres:
+        return _armar_remoto(ajustes, ruta_db, nombres, registro)
     # ⚠ EL MODELO QUE SE REGISTRA DICE SI PENSÓ. `qwen3:14b` sin razonamiento y
     # con él son dos agentes distintos —medido el 2026-09-14: el primero
     # escribe la misma frase 31 veces en una sesión, el segundo tarda diez
@@ -288,6 +301,40 @@ def armar(ajustes: Settings, ruta_db: str) -> tuple[Registro, Any, str]:
         num_ctx=ajustes.paper_num_ctx,
     )
     return registro, grafo, etiqueta_modelo
+
+
+def _armar_remoto(
+    ajustes: Settings, ruta_db: str, nombres: list[str], registro: Registro
+) -> tuple[Registro, Any, Any]:
+    """El brazo remoto: un relevo de modelos de Google, mismo prompt, mismas herramientas.
+
+    Todo lo que NO cambia respecto al local es a propósito: el tope de
+    iteraciones, el recorte de los resultados, el presupuesto de historial.
+    Ver «Qué se compara, y qué se mantiene igual» en el criterio.
+    """
+    if not all(es_de_google(n) for n in nombres):
+        raise ValueError(f"el relevo mezcla modelos locales y remotos: {nombres}")
+    relevo = Relevo(
+        # `reasoning=True`: pedir VER el pensamiento, que es lo que se audita en
+        # la traza. Los Flash piensan igual con o sin esto.
+        [(n, build_llm(ajustes, n, reasoning=True)) for n in nombres],
+        espera_s=ajustes.gemini_espera_s,
+    )
+
+    def etiqueta() -> str:
+        return relevo.actual
+
+    herramientas = ToolRegistry(
+        build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta)
+    )
+    grafo = build_graph(
+        relevo,
+        herramientas,
+        max_iterations=ajustes.max_iterations,
+        max_tool_result_chars=ajustes.paper_max_tool_result_chars,
+        num_ctx=ajustes.paper_num_ctx,
+    )
+    return registro, grafo, etiqueta
 
 
 def poner_al_dia(registro: Registro, prefijo: str = "[sesión]") -> dict[str, list[dict[str, Any]]]:
@@ -368,12 +415,14 @@ async def una_sesion(
     ruta_db: str,
     ruta_scripts: str,
     publicar_al_final: bool = True,
+    modelos: list[str] | None = None,
+    archivo_traza: str = "",
 ) -> dict[str, Any]:
     """Corre una sesión y devuelve qué pasó."""
     ajustes = Settings()  # type: ignore[call-arg]
     os.environ.setdefault("BYTE_PAPER_SCRIPTS", ruta_scripts)
 
-    registro, grafo, etiqueta_modelo = armar(ajustes, ruta_db)
+    registro, grafo, etiqueta_modelo = armar(ajustes, ruta_db, modelos)
 
     # Lo primero: qué pasó mientras no estábamos. Ver `poner_al_dia`.
     disparadas = poner_al_dia(registro)["ordenes"]
@@ -389,6 +438,7 @@ async def una_sesion(
         sesion_id=f"{int(time.time())}",
         modelo=etiqueta_modelo,
         simbolo=SIMBOLO,
+        archivo=archivo_traza,
     )
 
     while time.monotonic() < limite:
@@ -465,6 +515,15 @@ def main() -> None:
         action="store_true",
         help="No empuja al panel. Para probar sin tocar el historial de verdad.",
     )
+    parser.add_argument(
+        "--modelo",
+        default="",
+        help="Lista de modelos remotos separados por comas (gemini-…); se turnan ante un 429. "
+        "Sin esto, el modelo local de OLLAMA_MODEL.",
+    )
+    parser.add_argument(
+        "--traza", default="", help="Escribe la traza en este archivo, no al panel."
+    )
     args = parser.parse_args()
 
     resumen = asyncio.run(
@@ -473,6 +532,8 @@ def main() -> None:
             ruta_db=args.db,
             ruta_scripts=args.scripts,
             publicar_al_final=not args.sin_publicar,
+            modelos=args.modelo.split(",") if args.modelo else None,
+            archivo_traza=args.traza,
         )
     )
 

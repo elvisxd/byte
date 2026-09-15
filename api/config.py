@@ -78,6 +78,21 @@ class Settings(BaseSettings):
     # El mapa de `mirar_mercado` son tres gráficos en una respuesta; con los
     # 4000 de la API el de 4h se recortaba. Solo lo usa el agente en papel.
     paper_max_tool_result_chars: int = Field(default=8000, alias="BYTE_PAPER_MAX_TOOL_RESULT_CHARS")
+    # --- Gemini: SOLO el brazo remoto de la comparación (paper/CRITERIO_COMPARACION.md) ---
+    # Capa gratuita. Vacía, `build_llm` se niega a armar un modelo de Google.
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    # ⚠ EL PENSAMIENTO CUENTA DENTRO DEL TOPE, Y GEMINI PIENSA LARGO. Medido el
+    # 2026-09-15 con tope 512: 3.8-flash devolvió 20 tokens de respuesta y 488
+    # de pensamiento —508, al borde—, y 3.7 y 3.5 quedaron igual de justos. Con
+    # los 4096 del local, una vuelta que piense largo se quedaría sin sitio
+    # para la llamada a la herramienta y fallaría en silencio: el mismo bug
+    # medido con qwen3:14b y 1024 (ver `paper_num_predict`). No es adaptar el
+    # experimento al modelo —el prompt y las herramientas son los mismos—, es
+    # no cortarle la respuesta.
+    gemini_num_predict: int = Field(default=8192, alias="BYTE_GEMINI_NUM_PREDICT")
+    # Segundos entre llamadas: la capa gratuita tiene tope por minuto, y una
+    # vuelta son hasta seis llamadas seguidas. Ver agent/relevo.py.
+    gemini_espera_s: float = Field(default=12.0, alias="BYTE_GEMINI_ESPERA_S")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")
