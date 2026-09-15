@@ -77,7 +77,9 @@ def test_un_groq_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> N
     assert OpenAIEspia.ultimo["model"] == "openai/gpt-oss-120b"
     assert OpenAIEspia.ultimo["max_tokens"] == 8192
     assert OpenAIEspia.ultimo["max_retries"] == 1
-    assert OpenAIEspia.ultimo["model_kwargs"] == {"reasoning_format": "parsed"}
+    # En el cuerpo del pedido: como argumento del SDK lo rechaza (medido).
+    assert OpenAIEspia.ultimo["extra_body"] == {"reasoning_format": "parsed"}
+    assert "model_kwargs" not in OpenAIEspia.ultimo
     assert GeminiEspia.ultimo == {} and OllamaEspia.ultimo == {}
 
 
