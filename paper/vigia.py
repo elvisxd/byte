@@ -54,7 +54,7 @@ from typing import Any
 from api.config import Settings
 from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
-from paper.publicar import publicar
+from paper.publicar import publicar, publicar_resumen
 from paper.registro import Registro
 from paper.sesion import SIMBOLO, armar, poner_al_dia, una_vuelta
 from paper.trace import TraceDeSesion
@@ -220,6 +220,8 @@ async def vigilar(
     publicar_al_panel: bool = True,
     archivo_traza: str = "",
     mantener_despierta: Callable[[bool], None] | None = None,
+    # El nombre con el que este brazo publica su resumen para /comparacion.
+    brazo: str = "local",
 ) -> dict[str, Any]:
     """El bucle. Termina por señal o, en pruebas, tras `ticks` sondeos."""
     ajustes = Settings()  # type: ignore[call-arg]
@@ -233,6 +235,10 @@ async def vigilar(
     )
 
     def publicar_historial() -> None:
+        # El resumen va SIEMPRE que haya panel, sea el brazo que sea: es lo
+        # que la página de comparación pone en columnas. El historial y la
+        # traza, solo el brazo que publica (el local).
+        publicar_resumen(ruta_db, brazo)
         if not publicar_al_panel:
             return
         publicar(registro)
@@ -415,6 +421,12 @@ def main() -> None:
         help="Ni historial ni traza al panel: la traza va a --traza (o a paper/trazas/).",
     )
     parser.add_argument("--traza", default="", help="Archivo de la traza cuando no va al panel.")
+    parser.add_argument(
+        "--brazo",
+        default="local",
+        help="Nombre con el que este brazo publica su resumen a /comparacion "
+        "(local, gemini, groq…).",
+    )
     args = parser.parse_args()
     modelos = [m for m in args.modelo.split(",") if m.strip()] if args.modelo else None
     archivo_traza = args.traza
@@ -429,6 +441,7 @@ def main() -> None:
             modelos=modelos,
             publicar_al_panel=not args.sin_publicar,
             archivo_traza=archivo_traza,
+            brazo=args.brazo,
         )
     )
     print(

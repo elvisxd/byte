@@ -205,3 +205,48 @@ def publicar(registro: Registro, url: str = "", token: str = "") -> dict[str, An
     with urllib.request.urlopen(pedido, timeout=20) as r:  # noqa: S310
         r.read()
     return foto
+
+
+# ── el resumen por brazo, para /comparacion ─────────────────────────────────
+#
+# Los brazos remotos NO publican su historial ni su traza: el panel enseña UN
+# historial (paper/CRITERIO_COMPARACION.md). Lo que sí publica cada brazo,
+# el local incluido, es su RESUMEN —lo mismo que imprime `paper.comparar`:
+# predicciones resueltas y vivas, Brier por marco y por sesión, R por motivo,
+# razones repetidas— bajo su nombre, para que la página de comparación los
+# ponga en columnas. Es una foto pequeña (unos cientos de bytes) y sin
+# operaciones dentro: la decisión se toma con estas cifras y con las trazas,
+# no releyendo cada operación de cada brazo.
+
+
+def publicar_resumen(ruta_db: str, brazo: str, url: str = "", token: str = "") -> bool:
+    """Empuja el resumen del brazo al panel. Devuelve si se pudo; nunca lanza.
+
+    Best-effort como la traza: perder una foto del resumen no es perder el
+    experimento, y el siguiente cambio vuelve a publicarla.
+    """
+    from paper.comparar import resumen
+
+    destino = url or os.environ.get("PANEL_URL", "")
+    if not destino:
+        return False
+    try:
+        foto = {"brazo": brazo, **resumen(ruta_db), "actualizado": datetime.now(UTC).isoformat()}
+        cuerpo = json.dumps(foto, ensure_ascii=False).encode("utf-8")
+    except Exception:  # noqa: BLE001 — una base rara no tumba al vigía
+        return False
+    pedido = urllib.request.Request(  # noqa: S310 — destino fijado por entorno
+        destino.rstrip("/") + "/api/papel/brazo",
+        data=cuerpo,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token or os.environ.get('PANEL_TOKEN', '')}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(pedido, timeout=10) as r:  # noqa: S310
+            r.read()
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+    return True
