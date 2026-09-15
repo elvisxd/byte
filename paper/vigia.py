@@ -266,7 +266,11 @@ async def vigilar(
         # El resumen va SIEMPRE que haya panel, sea el brazo que sea: es lo
         # que la página de comparación pone en columnas. El historial y la
         # traza, solo el brazo que publica (el local).
-        publicar_resumen(ruta_db, brazo)
+        #
+        # Con el resumen viaja el parte de las APIs: las fuentes de velas
+        # (todos los brazos) y, en uno remoto, la cuarentena de cada modelo de
+        # su lista — `estado_modelos` cuelga de la etiqueta en paper/sesion.py.
+        publicar_resumen(ruta_db, brazo, estado_modelos=getattr(etiqueta, "estado_modelos", None))
         if not publicar_al_panel:
             return
         publicar(registro)

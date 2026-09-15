@@ -5,13 +5,38 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from paper.registro import Contexto, Registro
-from paper.rubrica import rubrica_de_registro, rubrica_de_trazas
+from paper.rubrica import rubrica_de_registro, rubrica_de_trazas, trazas_del_brazo
 
 
 def _traza(tmp_path: Path, nombre: str, pasos: list[dict]) -> Path:
     p = tmp_path / f"vigia-{nombre}-1.json"
     p.write_text(json.dumps({"modelo": nombre, "pasos": pasos}))
     return p
+
+
+def test_las_trazas_del_brazo_no_recogen_las_del_formato_viejo(tmp_path: Path) -> None:
+    """El nombre es `vigia-<brazo>-<sello>`; antes llevaba el MODELO.
+
+    Un glob a secas le sumaba al brazo remoto las vueltas de sesiones
+    anteriores —`vigia-gemini-3.8-flash-…`— contra un local que no tiene
+    trazas viejas: 4 de las 10 «vueltas» de Gemini el 2026-09-15.
+    """
+    for nombre in (
+        "vigia-gemini-1789497956.json",  # la de ahora
+        "vigia-gemini-1789495331.json",  # la de ahora
+        "vigia-gemini-3.8-flash-1789480313.json",  # formato viejo: el modelo
+        "vigia-groq-openai-gpt-oss-120b-1789483455.json",  # formato viejo
+        "vigia-groq-1789495331.json",
+        "vigia-local-1789497993.json",
+    ):
+        (tmp_path / nombre).write_text("{}")
+
+    assert [p.name for p in trazas_del_brazo(tmp_path, "gemini")] == [
+        "vigia-gemini-1789495331.json",
+        "vigia-gemini-1789497956.json",
+    ]
+    assert [p.name for p in trazas_del_brazo(tmp_path, "groq")] == ["vigia-groq-1789495331.json"]
+    assert [p.name for p in trazas_del_brazo(tmp_path, "local")] == ["vigia-local-1789497993.json"]
 
 
 def test_reaccion_al_rechazo_y_tope_sin_registrar(tmp_path: Path) -> None:

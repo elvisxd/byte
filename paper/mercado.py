@@ -30,6 +30,45 @@ class MercadoNoDisponible(RuntimeError):
     """Falta Node, faltan los scripts, o ningún exchange respondió."""
 
 
+# ═══ EL ESTADO DE LAS FUENTES DE VELAS ═══
+#
+# ⚠ LA CASCADA TAPA LAS AVERÍAS, Y ESO ES LO QUE SE VIGILA. `velas.mjs` prueba
+# MEXC → Binance → Bybit y devuelve la primera que conteste, así que con MEXC
+# caído todo sigue funcionando y NADIE se entera: el vigía registra la fuente
+# que sirvió y tira la lista de las que fallaron. Es el mismo modo degradado
+# invisible que este proyecto ya se comió dos veces (el traspaso de tramos, el
+# contador de suelos), y la lección escrita es que un degradado que no se ve
+# desde fuera dura meses.
+#
+# ⚠ Y NO ES COSMÉTICO PARA EL EXPERIMENTO: Binance da `takerBuyVolume` y los
+# demás no, así que con Binance caído el agente pierde el CVD —uno de los cinco
+# ejes— sin que el registro diga por qué se quedó sin operar ese eje.
+#
+# Es un contador en memoria y muere con el proceso, a propósito: lo que se
+# quiere saber es si las fuentes están respondiendo AHORA, y el vigía publica
+# su foto en cada cambio. Persistirlo obligaría a decidir cuándo caduca.
+_FUENTES: dict[str, dict[str, Any]] = {}
+
+
+def _anotar_fuentes(fuente: str, fallos: list[str]) -> None:
+    for entrada in fallos:
+        nombre, _, motivo = str(entrada).partition(":")
+        est = _FUENTES.setdefault(nombre.strip(), {"sirvio": 0, "fallo": 0, "ultimo_error": None})
+        est["fallo"] += 1
+        est["ultimo_error"] = motivo.strip()[:80] or "sin detalle"
+    if fuente:
+        est = _FUENTES.setdefault(fuente, {"sirvio": 0, "fallo": 0, "ultimo_error": None})
+        est["sirvio"] += 1
+
+
+def estado_fuentes() -> dict[str, dict[str, Any]]:
+    """Qué fuente de velas sirvió y cuál falló, desde que arrancó el vigía.
+
+    En orden alfabético y NUNCA por fiabilidad: es un parte, no un ranking.
+    """
+    return {nombre: dict(est) for nombre, est in sorted(_FUENTES.items())}
+
+
 def _carpeta() -> Path:
     """Dónde viven los scripts. Configurable porque el repo de trading es otro."""
     ruta = os.environ.get("BYTE_PAPER_SCRIPTS", "")
@@ -74,8 +113,20 @@ def velas(simbolo: str, intervalo: str = "15m", cuantas: int = 200) -> dict[str,
     """
     datos = _node("velas.mjs", simbolo, intervalo, str(cuantas))
     if "error" in datos:
+        # Ninguna fuente respondió: el mensaje trae la lista entera de fallos
+        # («mexc: HTTP 400; binance: …»), que es justo lo que hay que anotar.
+        _anotar_fuentes("", str(datos["error"]).split("—")[-1].split(";"))
         raise MercadoNoDisponible(str(datos["error"]))
-    logger.info("velas", simbolo=simbolo, fuente=datos.get("fuente"), cuantas=len(datos["velas"]))
+    _anotar_fuentes(str(datos.get("fuente") or ""), list(datos.get("fallos") or []))
+    logger.info(
+        "velas",
+        simbolo=simbolo,
+        fuente=datos.get("fuente"),
+        cuantas=len(datos["velas"]),
+        # Los que fallaron ANTES del que sirvió. Sin esto, una fuente caída es
+        # invisible mientras la siguiente de la cascada conteste.
+        fallos=datos.get("fallos") or None,
+    )
     return datos
 
 

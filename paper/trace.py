@@ -190,12 +190,31 @@ class TraceDeSesion:
         return None
 
     # ── lo que se publica ─────────────────────────────────────────────────
+    def _sellar_modelo(self) -> str | None:
+        """El modelo que contestó, o `None` si todavía no contestó ninguno.
+
+        ⚠ NO SE SELLA CON EL PRIMERO DE LA LISTA. En el brazo remoto la
+        etiqueta es `relevo.actual`, que antes de la primera respuesta cae al
+        primero —lo necesita el registro, ver paper/sesion.py—. Para la traza
+        eso es una atribución falsa: una vuelta que muere con todos los modelos
+        agotados se archiva SIN PASOS y con el nombre del más capaz. Medido el
+        2026-09-15: dos trazas archivadas con `gemini-3.8-flash`, cero pasos,
+        una de 48 minutos, con ese modelo agotado por cuota desde la mañana.
+        Es lo que CRITERIO_COMPARACION.md prohíbe en mayúsculas.
+        """
+        if not callable(self.modelo):
+            return self.modelo or None
+        contesto = getattr(self.modelo, "contesto_alguien", None)
+        if contesto is not None and not contesto():
+            return None
+        return self.modelo() or None
+
     def instantanea(self, *, viva: bool = True) -> dict[str, Any]:
         with self._lock:
             pasos = list(self._pasos)
         return {
             "sesionId": self.sesion_id,
-            "modelo": self.modelo() if callable(self.modelo) else self.modelo,
+            "modelo": self._sellar_modelo(),
             "simbolo": self.simbolo,
             "empezo": self.empezo,
             "actualizado": datetime.now(UTC).isoformat(),
