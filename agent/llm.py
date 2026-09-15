@@ -99,10 +99,18 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
         max_output_tokens=settings.gemini_num_predict,
         include_thoughts=True if reasoning else None,
         max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
     )
 
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# ⚠ SIN ESTO UNA LLAMADA COLGADA PARA EL BRAZO ENTERO. Medido el 2026-09-15:
+# tras dos 503, la llamada siguiente de Gemini se quedó esperando UNA HORA sin
+# respuesta —los clientes no traen tope— y el vigía no sondeó ni resolvió nada
+# hasta que lo pararon. Dos minutos sobra para una respuesta (las reales tardan
+# segundos); pasado eso el relevo lo trata como caída y pasa al siguiente.
+TIMEOUT_REMOTO_S = 120.0
 
 
 def _con_razonamiento_de_groq(base: Any) -> Any:
@@ -164,6 +172,7 @@ def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
         temperature=0.2,
         max_tokens=settings.groq_num_predict,
         max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
         extra_body=extra or None,
     )
 
