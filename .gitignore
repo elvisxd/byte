@@ -35,6 +35,11 @@ capturas/
 # El CV lleva teléfono y correo: queda fuera del repo hasta que se decida
 # publicarlo. `perfil/cv.md` se versiona aparte o se mantiene local.
 
+# Lo que Byte tiene que saber y nadie más: fechas de visado, números de
+# documento, lo que se está negociando. Este repo es PÚBLICO — cualquier cosa
+# acá adentro la lee un reclutador que haga clic. La plantilla sí se versiona.
+perfil/privado.md
+
 # El registro de operaciones en papel: son datos, no código, y cada máquina
 # tiene los suyos.
 paper/*.db

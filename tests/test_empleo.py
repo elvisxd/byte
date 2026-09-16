@@ -324,3 +324,15 @@ def test_la_oferta_pegada_llega_al_prompt_marcada_como_no_confiable() -> None:
     assert "NO CONFIABLE" in resultado.content
     assert resultado.content.index("Puntaje:") < resultado.content.index("NO CONFIABLE")
     assert resultado.summary["puntaje"] > 0
+
+
+def test_una_worldwide_le_gana_a_una_solo_us_con_el_mismo_stack() -> None:
+    """Lo que se busca es un puesto que sobreviva a una mudanza. Con el mismo stack,
+    la que exige estar en un país deja de competir de igual a igual con la que no —
+    sin desaparecer, que es lo que haría un filtro."""
+    stack = "Senior engineer. Python, FastAPI, React."
+    solo_us = _oferta(descripcion=f"{stack} US only, must reside in the United States.")
+    global_ = _oferta(descripcion=f"{stack} Work from anywhere, we hire across Latin America.")
+    puntaje_us = puntuar(solo_us, CRITERIO)
+    assert puntaje_us.total < puntuar(global_, CRITERIO).total
+    assert "solo_us" in puntaje_us.senales  # sigue en la lista, con la señal a la vista
