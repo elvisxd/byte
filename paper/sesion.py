@@ -49,7 +49,21 @@ from paper.publicar import publicar
 from paper.registro import Registro
 from paper.trace import TraceDeSesion
 from tools.base import ToolRegistry
-from tools.paper import build_paper_tools
+from tools.paper import build_paper_tools, precarga
+
+
+def precarga_segura(registro: Registro, ajustes: Settings) -> str:
+    """La precarga de la vuelta, o vacío si no se pudo calcular.
+
+    Un fallo acá —el registro raro, el mercado caído— no puede costar la
+    vuelta: sin precarga el modelo pide el estado y el mapa como antes.
+    """
+    try:
+        return precarga(registro, ajustes.paper_max_tool_result_chars)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[vuelta] sin precarga: {str(exc)[:100]}", flush=True)
+        return ""
+
 
 # Cuánto se espera entre vueltas. Ver paper/CRITERIO_CADENCIA.md, que se
 # escribió antes que este código y en su propio commit.
@@ -289,20 +303,36 @@ def poner_al_dia(registro: Registro, prefijo: str = "[sesión]") -> dict[str, li
     return cambios
 
 
-async def una_vuelta(grafo: Any, trace: TraceDeSesion, numero: int) -> str | None:
-    """Una pregunta al modelo. Devuelve el error si falló; None si fue bien."""
+async def una_vuelta(
+    grafo: Any, trace: TraceDeSesion, numero: int, precarga: str = ""
+) -> str | None:
+    """Una pregunta al modelo. Devuelve el error si falló; None si fue bien.
+
+    `precarga` es el estado del registro y el mapa de los tres marcos, YA
+    CALCULADOS, que van al final del mensaje (prompt v3). Medido sobre 31
+    vueltas: 28 empezaban pidiéndolos con dos llamadas al modelo —un tercio
+    de los tokens de la vuelta— para cargar lo que el vigía ya tenía. Va
+    DESPUÉS de `INSTRUCCION` para que el prefijo fijo sea cacheable.
+    """
     trace.vuelta = numero
     # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
     # cuatro minutos, quien mira tiene que ver que empezó, no una página
     # quieta que no distingue "pensando" de "colgado".
     trace.publicar(viva=True)
+    contenido = INSTRUCCION
+    if precarga:
+        contenido = f"{INSTRUCCION}\n\n{precarga}"
+        # En la traza, como si fuera una llamada: quien mira /vivo y la rúbrica
+        # tienen que seguir viendo QUÉ recibió el modelo, aunque no lo pidiera.
+        trace.emit("TOOL_CALL_START", {"toolCallName": "precarga"})
+        trace.emit("TOOL_CALL_RESULT", {"ok": True, "precargado": "estado_paper + mirar_mercado"})
     try:
         # El estado va COMPLETO: `iterations` y los acumuladores no tienen
         # default en el grafo, y sin ellos el primer nodo revienta con un
         # KeyError que parece un fallo del modelo.
         await grafo.ainvoke(
             {
-                "messages": [{"role": "user", "content": INSTRUCCION}],
+                "messages": [{"role": "user", "content": contenido}],
                 "iterations": 0,
                 "sources": [],
                 "tools_used": [],
@@ -355,7 +385,7 @@ async def una_sesion(
         # En cada vuelta y no solo al arrancar: la espera entre vueltas puede
         # ser de una hora, y en ese rato una orden se dispara o un stop se toca.
         poner_al_dia(registro)
-        error = await una_vuelta(grafo, trace, vueltas)
+        error = await una_vuelta(grafo, trace, vueltas, precarga=precarga_segura(registro, ajustes))
         if error is not None:
             errores.append(error)
             print(f"[sesión] vuelta {vueltas} falló: {error[:120]}", flush=True)

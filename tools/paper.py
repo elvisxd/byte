@@ -1101,6 +1101,35 @@ def _publicar(registro: Registro) -> ToolResult:
     )
 
 
+def precarga(registro: Registro, max_chars: int) -> str:
+    """El estado del registro y el mapa de los tres marcos, para ir al final del
+    mensaje de la vuelta en vez de pedirse con dos llamadas (prompt v3).
+
+    ⚠ SON LAS MISMAS FUNCIONES QUE LAS HERRAMIENTAS, no una copia: `_estado`
+    y `_mapa`. Lo que el modelo lee precargado es byte a byte lo que leería
+    si lo pidiera, así que las muestras de antes y de después del cambio
+    difieren solo en cuántas llamadas costó, y eso es lo que se quería.
+
+    Si el mercado no responde, el bloque lo dice y el modelo puede pedir
+    `mirar_mercado` como antes: la precarga nunca es motivo para perder la
+    vuelta.
+    """
+    estado = _estado(registro)
+    mapa = _mapa(SIMBOLO_UNICO, max_chars)
+    mercado = (
+        mapa.content
+        if mapa.ok
+        else f"SIN MERCADO en este instante ({mapa.content}). Pedí `mirar_mercado` si lo necesitás."
+    )
+    return (
+        "═══ ESTADO DEL REGISTRO (ya consultado; no llames a `estado_paper`) ═══\n"
+        f"{estado.content}\n\n"
+        "═══ MAPA DEL MERCADO, los tres gráficos de este instante (ya consultado; "
+        "no llames a `mirar_mercado` sin intervalo) ═══\n"
+        f"{mercado}"
+    )
+
+
 def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[Tool]:
     """Las herramientas de paper trading, sobre un registro concreto.
 
@@ -1151,8 +1180,9 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
                 "El mercado. Sin `intervalo` te da los TRES gráficos del mismo instante "
                 "(15m, 1h, 4h): precio, dónde está en su rango, régimen medido, ATR, "
                 "ADX, RSI, MACD, de qué lado de la EMA, la vela en curso, pools de "
-                "liquidez y FVGs. Empezá SIEMPRE por ahí. Con `intervalo` te da uno solo "
-                "con más detalle. Usala ANTES de decidir cualquier entrada."
+                "liquidez y FVGs — ese mapa YA VIENE en tu mensaje, no lo repitas. Con "
+                "`intervalo` (15m, 1h o 4h) te da UN gráfico con más detalle: pedilo "
+                "solo si te hace falta."
             ),
             args_model=MirarArgs,
             run=mirar,

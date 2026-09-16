@@ -20,9 +20,17 @@ versiones:
   (Raschke: el extremo fresco y el stop más allá del extremo; los del
   campeonato: acierto bajo con recorrido) y de las investigaciones de salidas
   y de velas del 2026-09-14. Ni parciales ni break-even: medidos, empeoran.
+- 3 (2026-09-16): el estado del registro y el mapa de los tres marcos van
+  PRECARGADOS al final del mensaje, en vez de pedirse con dos llamadas al
+  empezar. Medido sobre 31 vueltas de los tres brazos: 28 empezaban con
+  `estado_paper` + `mirar_mercado`, dos idas y vueltas al modelo (~9k tokens
+  de entrada de ~27k por vuelta) para cargar lo que el vigía ya tenía
+  calculado. Mismas herramientas, mismos números; solo cambia CUÁNDO los ve.
+  La precarga va DESPUÉS de este texto para que el prefijo fijo sea cacheable
+  por el proveedor.
 """
 
-VERSION_PROMPT = "2"
+VERSION_PROMPT = "3"
 
 # ⚠ SOLO BTCUSDT, Y ES UNA DECISIÓN. El símbolo era un argumento libre con un
 # default, así que el modelo pedía el par que se le ocurriera: dos sesiones
@@ -38,9 +46,10 @@ INSTRUCCION = f"""Estás operando en papel sobre {SIMBOLO}, sin dinero real.
 
 Esto es lo que tenés que hacer AHORA, en este turno:
 
-1. Mirá el estado del registro con `estado_paper`: qué quedó abierto de antes y
-   cómo va cada eje.
-2. Si hay operaciones abiertas, mirá el mercado y decidí sobre CADA una: dejarla
+1. El estado del registro y el mapa del mercado —los tres gráficos del mismo
+   instante— vienen YA CARGADOS al final de este mensaje: no los pidas otra
+   vez. Leé el estado: qué quedó abierto de antes y cómo va cada eje.
+2. Si hay operaciones abiertas, decidí sobre CADA una con el mapa: dejarla
    correr, tomar un parcial, mover el stop o cerrarla. Usá las herramientas.
    Juzgala en el MARCO en que la abriste y contra la INVALIDACIÓN que escribiste
    al entrar —`estado_paper` te da los dos, y cuántas velas de su marco lleva—.
@@ -52,14 +61,14 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    Si `estado_paper` dice PLAZO AGOTADO —la tesis tuvo el plazo de su marco y
    no se jugó—, decidí: seguir, con razón escrita, o cerrar con motivo
    `tiempo`. Es el único caso en que «pasó el tiempo» es un motivo.
-3. Si no hay ninguna abierta —o si además ves una entrada clara— mirá el mercado
-   y decidí si entrar. Si entrás, la razón tiene que decir qué viste que
+3. Si no hay ninguna abierta —o si además ves una entrada clara— decidí con el
+   mapa si entrar. Si entrás, la razón tiene que decir qué viste que
    justifica entrar ACÁ y no cinco velas después, y la entrada lleva OBJETIVO:
    una tesis de reversión tiene destino, y sin él no es una entrada.
-   `mirar_mercado` SIN intervalo te da los tres gráficos del mismo instante:
-   empezá por ahí, UNA vez por vuelta —el gráfico no cambia mientras pensás—,
-   y pedí un marco suelto solo si te hace falta el detalle. Cada marco tiene
-   su rango y su ATR: no mezcles los de uno con los de otro.
+   El mapa que tenés abajo es el de este instante y no cambia mientras
+   pensás: no lo vuelvas a pedir. `mirar_mercado` CON intervalo (15m, 1h o
+   4h) te da un gráfico con todo el detalle; pedilo solo si te hace falta.
+   Cada marco tiene su rango y su ATR: no mezcles los de uno con los de otro.
 4. Si el precio de ahora no te sirve pero SÍ sabrías a qué precio entrarías,
    dejá una orden con `dejar_orden` en vez de no hacer nada. Entre esta sesión y
    la siguiente pasan ~23 horas sin nadie mirando: una orden es la única forma
@@ -87,7 +96,7 @@ Esto es lo que tenés que hacer AHORA, en este turno:
 
    Y si ya hay una predicción viva, apuntá a OTRA cosa: dos niveles a un par de
    ATR de distancia los toca el mismo movimiento, así que serían la misma
-   apuesta contada dos veces. Mirá las que están esperando en `estado_paper`.
+   apuesta contada dos veces. Las que están esperando vienen en el estado.
 
    ⚠ SI TE RECHAZAN LA PREDICCIÓN, NO REINTENTES EL MISMO NIVEL NI EL MISMO
    GRÁFICO: BAJÁ DE MARCO. La distancia mínima se mide en ATR del gráfico que
