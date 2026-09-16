@@ -42,7 +42,29 @@ logger = get_logger("tools.paper")
 # Medido el 2026-09-13, sesión de qwen3.6:27b: en cinco vueltas describió "rango
 # estrecho, precio cerca del tope" —el escenario exacto de una orden límite— y
 # no dejó ni una.
-SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime", "divergencias"]
+SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime", "divergencias", "cvd"]
+
+# ═══ LO QUE SE SELLA DE LA VUELTA, ADEMÁS DEL GRÁFICO ═══
+#
+# Dos variables del experimento que hasta el 2026-09-16 no quedaban en ninguna
+# fila: POR QUÉ despertó el modelo (cierre de 4h, nivel cercano, stop cercano,
+# plazo, arranque) y CÓMO piensa (con razonamiento o sin él en el local; en los
+# remotos, el esfuerzo que decida el proveedor mientras no se fije). Sin lo
+# primero no se puede responder lo que paper/CRITERIO_HORARIOS.md pregunta
+# —¿valen igual las lecturas de estructura que las de gestión?— salvo cruzando
+# logs a mano. Van en `extra`, como `fuente` y `prompt`: entran al sello y no
+# rompen las filas de antes. Es estado de módulo porque las herramientas
+# construyen su propio `Registro` y el vigía no llega a él.
+_VUELTA: dict[str, str | None] = {"motivo": None, "pensamiento": None}
+
+
+def fijar_vuelta(*, motivo: str | None = None, pensamiento: str | None = None) -> None:
+    """Lo que la siguiente escritura sella sobre la vuelta. `None` deja lo que había."""
+    if motivo is not None:
+        _VUELTA["motivo"] = motivo[:200]
+    if pensamiento is not None:
+        _VUELTA["pensamiento"] = pensamiento[:80]
+
 
 # El par del experimento. Ver la cabecera de paper/sesion.py: con un solo par la
 # diferencia entre operaciones es la hipótesis y no el activo.
@@ -54,9 +76,8 @@ class MirarArgs(BaseModel):
     intervalo: str = Field(
         default="",
         description=(
-            "Dejalo VACÍO (lo normal) y recibís el mapa: 15m, 1h y 4h del mismo instante, "
-            "compactos, cada uno con su rango, su ATR y su régimen. Poné 15m, 1h o 4h solo "
-            "si necesitás UN gráfico con todo el detalle."
+            "15m, 1h o 4h: UN gráfico con todo el detalle, solo si te hace falta. Vacío "
+            "repite el mapa de los tres marcos que YA tenés en tu mensaje: no lo pidas."
         ),
     )
 
@@ -72,10 +93,37 @@ def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
     techo = max(v["high"] for v in ventana)
     piso = min(v["low"] for v in ventana)
     ancho_pct = (techo - piso) / piso * 100 if piso else None
-    # Volumen contra la media: un barrido con volumen normal y uno con el triple
-    # no son la misma señal.
-    medias = [v["volume"] for v in ultimas[-50:-1]]
+    # ⚠ HACE CUÁNTAS VELAS SE HIZO CADA EXTREMO. La pregunta b del prompt
+    # («¿es fresco el extremo? decí cuántas velas tiene») no tenía con qué
+    # contestarse: el mapa daba el techo y el piso pero no su edad. La ÚLTIMA
+    # vez que se tocó, contando desde la vela en curso (0 = esta vela).
+    techo_hace = len(ventana) - 1 - max(i for i, v in enumerate(ventana) if v["high"] == techo)
+    piso_hace = len(ventana) - 1 - max(i for i, v in enumerate(ventana) if v["low"] == piso)
+    # ⚠ EL VOLUMEN RELATIVO SE MIDE SOBRE LA ÚLTIMA VELA CERRADA, NO LA EN
+    # CURSO. Medido: una vela de 4h con 78 minutos de vida contra la media de
+    # 49 cerradas daba «0,13x», y siempre parece bajo al empezar el período
+    # —es lo que frenó al 27B cuatro vueltas seguidas (TRAMPAS.md §5)—. La en
+    # curso se da aparte, prorrateada por el tiempo transcurrido y diciendo a
+    # qué minuto de cuántos va, para que el modelo sepa lo que está mirando.
+    cerradas = ultimas[:-1]
+    medias = [v["volume"] for v in cerradas[-50:-1]]
     promedio = sum(medias) / len(medias) if medias else 0
+    vol_cerrada = round(cerradas[-1]["volume"] / promedio, 2) if promedio and cerradas else None
+    periodo_s = ultimas[-1]["time"] - ultimas[-2]["time"] if len(ultimas) > 1 else 0
+    transcurrido_s = max(0, int(datetime.now(UTC).timestamp()) - ahora["time"])
+    fraccion = min(1.0, transcurrido_s / periodo_s) if periodo_s > 0 else 1.0
+    en_curso = (
+        {
+            "x": round(ahora["volume"] / promedio, 2),
+            "x_prorrateado": round(ahora["volume"] / promedio / fraccion, 2)
+            if fraccion > 0
+            else None,
+            "minuto": min(transcurrido_s, periodo_s) // 60,
+            "de": periodo_s // 60,
+        }
+        if promedio and periodo_s > 0
+        else None
+    )
     return Contexto(
         precio=ahora["close"],
         timestamp=momento.isoformat(),
@@ -83,14 +131,20 @@ def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
         hora_utc=momento.hour,
         ancho_rango_pct=round(ancho_pct, 3) if ancho_pct is not None else None,
         velas_en_rango=len(ventana),
-        volumen_relativo=round(ahora["volume"] / promedio, 2) if promedio else None,
+        volumen_relativo=vol_cerrada,
         extra={
             "fuente": datos.get("fuente"),
             "rango_techo": techo,
             "rango_piso": piso,
+            "techo_hace_velas": techo_hace,
+            "piso_hace_velas": piso_hace,
+            "volumen_en_curso": en_curso,
             "indicadores": ind,
             # Con qué prompt se escribió: ver paper/prompt.py.
             "prompt": VERSION_PROMPT,
+            # Por qué despertó y cómo piensa. Ver `fijar_vuelta`.
+            "motivo": _VUELTA["motivo"],
+            "pensamiento": _VUELTA["pensamiento"],
         },
     )
 
@@ -180,7 +234,10 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
         for d in divs:
             lineas.append(f"  {d['precio']} ({d['tipo']}, hace {d['hace_velas']} velas)")
 
-    if not datos["velas"][-1].get("takerBuyVolume"):
+    # Se decide por el indicador y no por la vela: desde el 2026-09-16 el CVD
+    # se calcula en calcular.mjs y devuelve null cuando la fuente no trae
+    # volumen comprador (MEXC, Kraken); con binance-spot sí lo hay.
+    if ind.get("cvd") is None:
         lineas.append("")
         lineas.append("(sin CVD: esta fuente no expone el volumen comprador)")
 
@@ -742,18 +799,36 @@ def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     piso, techo = ctx.extra["rango_piso"], ctx.extra["rango_techo"]
     cabecera = (
         f"── {marco} ── precio {ctx.precio} · al {_posicion_en_rango(ctx):.0f}% del rango "
-        f"{piso}–{techo} ({ctx.ancho_rango_pct}% de ancho)"
+        f"{piso}–{techo} ({ctx.ancho_rango_pct}% de ancho; techo hace "
+        f"{ctx.extra['techo_hace_velas']} velas, piso hace {ctx.extra['piso_hace_velas']})"
     )
     if reg.get("regimen"):
         cabecera += f" · régimen medido: {reg['regimen']} (chop {_n(reg.get('chop'))})"
+    vc = ctx.extra.get("volumen_en_curso")
+    volumen = f"   volumen {ctx.volumen_relativo}x de la media (última cerrada)"
+    if vc:
+        volumen += f" · en curso {vc['x']}x al minuto {vc['minuto']} de {vc['de']}" + (
+            f" (≈{vc['x_prorrateado']}x prorrateado)" if vc.get("x_prorrateado") else ""
+        )
     lineas = [
         cabecera,
         f"   ATR {_n(ind.get('atr'))} · ADX {_n(adx.get('adx'))} · RSI {_n(ind.get('rsi'))} · "
         f"MACD {_n(macd.get('macd'))} sobre señal {_n(macd.get('signal'))} · "
         f"EMA20 {_n(ind.get('ema'))}{_respecto_a_ema(ctx.precio, ind.get('ema'))}",
-        f"   volumen {ctx.volumen_relativo}x de la media · "
-        f"{_hechos_de_la_vela(datos['velas'], ind.get('atr'))}",
+        f"{volumen} · {_hechos_de_la_vela(datos['velas'], ind.get('atr'))}",
     ]
+    cvd = ind.get("cvd")
+    if cvd:
+        div = cvd.get("divergencia")
+        lineas.append(
+            f"   CVD 20 velas: {cvd.get('cvd_20')} · {round(100 * cvd.get('ratio_comprador', 0))}% "
+            "del volumen fue comprador agresivo · "
+            + (
+                f"divergencia {div['tipo']} hace {div['hace_velas']} velas"
+                if div
+                else "sin divergencia: el CVD acompaña al precio"
+            )
+        )
     cerrada = _anatomia_de_la_vela_cerrada(datos["velas"], ind.get("atr"))
     if cerrada:
         lineas.append(f"   {cerrada}")
@@ -816,7 +891,8 @@ def _mapa(simbolo: str, max_chars: int, ahora: datetime | None = None) -> ToolRe
         bloques.append(_bloque(marco, datos, ind))
         ultima = datos["velas"][-1]
         precio, fuente = ultima["close"], datos["fuente"]
-        sin_cvd = sin_cvd or not ultima.get("takerBuyVolume")
+        # Por el indicador, no por la vela (ver `_mirar`).
+        sin_cvd = sin_cvd or ind.get("cvd") is None
     if not bloques:
         return ToolResult(content="; ".join(fallos), summary={"error": "sin datos"}, ok=False)
     cabecera = (

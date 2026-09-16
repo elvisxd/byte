@@ -49,7 +49,7 @@ from paper.publicar import publicar
 from paper.registro import Registro
 from paper.trace import TraceDeSesion
 from tools.base import ToolRegistry
-from tools.paper import build_paper_tools, precarga
+from tools.paper import build_paper_tools, fijar_vuelta, precarga
 
 
 def precarga_segura(registro: Registro, ajustes: Settings) -> str:
@@ -153,6 +153,8 @@ def armar(
     # marca, las dos configuraciones caerían en el mismo eje sin que nada lo
     # dijera, que es exactamente lo que `EJES.md` prohíbe mezclar.
     etiqueta_modelo = ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
+    # Cómo piensa este brazo, sellado en cada escritura (ver `fijar_vuelta`).
+    fijar_vuelta(pensamiento="razona" if ajustes.paper_reasoning else "sin razonar")
 
     # Solo las del experimento: sin CV, sin GitHub, sin navegador. Cada
     # herramienta de más son tokens de definiciones compitiendo con el contexto
@@ -230,6 +232,11 @@ def _armar_remoto(
     # abajo con `contesto_alguien`.
     def etiqueta() -> str:
         return relevo.actual
+
+    # El esfuerzo de pensamiento de los remotos NO está fijado: lo decide el
+    # proveedor y puede cambiar sin avisar. Se sella tal cual —«proveedor»—
+    # para que, si un día se fija, las muestras se puedan separar.
+    fijar_vuelta(pensamiento="proveedor (sin fijar)")
 
     # Para la traza: si nadie contestó, no hay a quién atribuirle la vuelta.
     # Ver paper/trace.py y el ⚠ de CRITERIO_COMPARACION.md sobre no sellar con
