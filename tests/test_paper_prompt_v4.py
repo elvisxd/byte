@@ -76,6 +76,30 @@ def test_la_tasa_base_es_cero_en_un_mercado_plano_y_cien_en_una_tendencia() -> N
     assert t and t["1_atr"] == 50 and t["2_atr"] == 50
 
 
+def test_la_tasa_base_usa_el_atr_de_cada_vela_si_tiene_la_serie() -> None:
+    """Con el ATR actual (2) la tendencia toca el nivel de 1 ATR en dos velas; con
+    la serie diciendo que el ATR de aquellas velas era 100, no lo toca nunca."""
+    tendencia = _velas([100.0 + i for i in range(120)])
+    serie = [[v["time"], 100.0] for v in tendencia]
+
+    exacto = _tasa_base(tendencia, atr=2.0, atr_serie=serie)
+    assert exacto and exacto["1_atr"] == 0 and exacto["2_atr"] == 0
+    assert exacto["aproximado"] is False
+
+    aproximado = _tasa_base(tendencia, atr=2.0)
+    assert aproximado and aproximado["1_atr"] == 50 and aproximado["aproximado"] is True
+
+    # Serie incompleta (el ATR de producción empieza en la vela 14): se
+    # muestrean SOLO las velas con su ATR —menos muestras, todas exactas—, y
+    # no se marca como aproximado.
+    parcial = _tasa_base(tendencia, atr=2.0, atr_serie=serie[14:])
+    assert parcial and parcial["aproximado"] is False
+    assert parcial["velas"] == exacto["velas"] - 14
+
+    # Basura en la serie no la tumba: se ignora y se cae al actual.
+    assert _tasa_base(tendencia, atr=2.0, atr_serie={"error": "x"}) == aproximado  # type: ignore[arg-type]
+
+
 def test_la_tasa_base_no_se_inventa_con_pocas_velas_ni_sin_atr() -> None:
     assert _tasa_base(_velas([100.0] * 40), atr=2.0) is None, "menos de 30 muestras"
     assert _tasa_base(_velas([100.0] * 120), atr=None) is None
