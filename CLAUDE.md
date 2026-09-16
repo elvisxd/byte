@@ -7,6 +7,30 @@
 - `uv run pytest -q` antes de cada commit. `uv run ruff check .` también.
 - Nada de `--force` en git, y `main` no se reescribe.
 
+## Este repo es público
+
+Lo que se commitea acá lo lee cualquiera, incluido el reclutador al que se le
+manda el link del agente. **La información personal del usuario va oculta**, y
+eso no es caso por caso: es cómo se maneja siempre.
+
+- Lo que puede leer un tercero va versionado: el stack, los proyectos, que la
+  autorización para trabajar está **vigente**.
+- Lo que no, va a `perfil/privado.md`, que está en `.gitignore` y tiene
+  plantilla en `privado.ejemplo.md`: fechas de visado, países y fechas de
+  mudanzas, documentos, lo que se esté negociando. Byte lo usa para razonar,
+  **no para decir**.
+- Ante la duda, va a `privado.md`. Sacarlo después no lo borra del historial de
+  git ni de lo que alguien ya clonó.
+
+La regla operativa —qué se dice afuera y qué no— está en `perfil/quien-soy.md`,
+que entra en el prompt de cada conversación. Antes de agregar un dato personal a
+cualquier archivo versionado, mirar ahí. Y si algo tiene que salir en un texto
+que va a otra persona, sale como lo diga ese archivo, nunca con el dato crudo.
+
+Aparte de esto, `api/redaccion.py` limpia claves, JWT, correos y teléfonos de lo
+que sale hacia Langfuse: son dos capas distintas, una para lo que se commitea y
+otra para lo que se manda a un tercero en runtime.
+
 ## El agente que opera en papel
 
 `paper/` y `tools/paper.py` son el motor de un experimento de trading **en
