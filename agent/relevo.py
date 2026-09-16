@@ -60,6 +60,21 @@ class RelevoAgotado(RuntimeError):
     """Todos los modelos de la lista están en cuarentena."""
 
 
+def _sumar_uso(acumulado: Any, trozo: Any) -> Any:
+    """Suma los contadores de `usage_metadata` de dos trozos. Ver `astream`."""
+    if not isinstance(trozo, dict):
+        return acumulado
+    if not isinstance(acumulado, dict):
+        return dict(trozo)
+    junto = dict(acumulado)
+    for clave, valor in trozo.items():
+        previo = junto.get(clave)
+        junto[clave] = (
+            previo + valor if isinstance(previo, int) and isinstance(valor, int) else valor
+        )
+    return junto
+
+
 def _hora() -> str:
     """La hora local en cada línea del relevo.
 
@@ -290,7 +305,13 @@ class Relevo:
         # Los tokens de entrada de cada llamada, para saber a qué distancia del
         # tope por petición va este brazo (Groq gratuito: 8.000).
         entrada = (uso or {}).get("input_tokens") if isinstance(uso, dict) else None
+        # Lo que el proveedor sirvió de su caché: es lo único que dice si el
+        # prefijo fijo (rol + instrucción + esquemas) se está reutilizando.
+        detalle = (uso or {}).get("input_token_details") if isinstance(uso, dict) else None
+        cache = detalle.get("cache_read") if isinstance(detalle, dict) else None
         peso = f" · {entrada} tokens de entrada" if entrada else ""
+        if cache:
+            peso += f" ({cache} de caché)"
         if self._estado.actual != nombre:
             print(f"[relevo] {_hora()} contesta {nombre}{peso}", flush=True)
         elif peso:
@@ -338,7 +359,13 @@ class Relevo:
                 try:
                     async for trozo in modelo.astream(entrada, **kwargs):
                         emitio = emitio or _es_respuesta(trozo)
-                        uso = getattr(trozo, "usage_metadata", None) or uso
+                        # ⚠ SE ACUMULA, NO SE PISA. Gemini manda `usage_metadata`
+                        # como DELTA por trozo (langchain_google_genai resta el
+                        # uso previo en streaming), así que quedarse con el
+                        # último daba «32 tokens de entrada» en el log para una
+                        # llamada de miles. Groq manda totales, y sumar deltas
+                        # que solo llegan una vez da lo mismo.
+                        uso = _sumar_uso(uso, getattr(trozo, "usage_metadata", None))
                         yield trozo
                 except Exception as exc:
                     tipo = tipo_de_agotamiento(exc)

@@ -37,6 +37,7 @@ def build_llm(
     reasoning: bool = False,
     num_predict: int | None = None,
     num_ctx: int | None = None,
+    keep_alive: str | None = None,
 ) -> Any:
     """ChatOllama con el contexto y el tope de tokens explícitos.
 
@@ -65,6 +66,13 @@ def build_llm(
 
     from langchain_ollama import ChatOllama
 
+    # ⚠ `keep_alive` LO PONE QUIEN SABE CUÁNTO VA A TARDAR EN VOLVER. El
+    # default de Ollama son 5 minutos y las vueltas del vigía distan horas: el
+    # 14B se descargaba entre vueltas y cada una pagaba la carga en frío más la
+    # evaluación completa del prefijo (~5k tokens a ~90 tok/s ≈ 1 min, medido
+    # el 2026-09-16 en el log de Ollama). El vigía lo sube dentro de su
+    # ventana; la API no lo toca y sigue soltando el modelo como siempre.
+    extra = {"keep_alive": keep_alive} if keep_alive else {}
     return ChatOllama(
         base_url=settings.ollama_base_url,
         model=modelo or settings.ollama_model,
@@ -72,6 +80,7 @@ def build_llm(
         num_predict=num_predict or settings.ollama_num_predict,
         temperature=0.2,
         reasoning=reasoning,
+        **extra,
     )
 
 

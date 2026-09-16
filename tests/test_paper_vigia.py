@@ -227,7 +227,7 @@ def mundo(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> _Mundo:
     monkeypatch.setattr(
         vigia,
         "poner_al_dia",
-        lambda r, prefijo="": {"ordenes": [], "predicciones": [], "cerradas": []},
+        lambda r, prefijo="", velas15=None: {"ordenes": [], "predicciones": [], "cerradas": []},
     )
     monkeypatch.setattr(vigia, "publicar", lambda r: {"cerradas": [], "abiertas": []})
     monkeypatch.setattr(vigia, "publicar_resumen", lambda ruta, brazo, **_: True)
@@ -314,6 +314,122 @@ async def test_un_cierre_de_4h_despierta_dentro_de_la_ventana(mundo: _Mundo, tmp
     )
 
     assert vueltas == [1]
+
+
+async def test_una_vuelta_perdida_por_cuota_corta_se_reintenta_y_no_gasta_tope(
+    mundo: _Mundo, tmp_path: Any
+) -> None:
+    """Medido el 2026-09-15 a las 20:05: Groq perdió el cierre de 4h por «todos
+    agotados… vuelve en 1 min» y el motivo no volvió, porque `cierre_4h_visto`
+    ya se había anotado."""
+    tick = {"n": 0}
+
+    async def vuelta(n: int) -> str | None:
+        # La primera falla por cuota corta; la siguiente va bien.
+        if n == 1:
+            return "todos los modelos están agotados (a, b); el primero vuelve en 1 min"
+        return None
+
+    def ahora() -> datetime:
+        tick["n"] += 1
+        if tick["n"] == 2:
+            mundo.cierre_4h += 14400
+        return mundo.hora
+
+    resultado = await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=ahora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=4,
+        primera_vuelta_al_arrancar=False,
+    )
+
+    # Dos vueltas: la que falló por cuota y su reintento en el tick siguiente.
+    assert resultado["vueltas"] == 2
+    # Y el día cuenta UNA, no dos: la perdida no gasta tope.
+    assert list(resultado["por_dia"].values()) == [1]
+
+
+async def test_el_arranque_solo_no_gasta_tope_diario(mundo: _Mundo, tmp_path: Any) -> None:
+    """Medido: 6 de 13 vueltas de un día fueron arranques por relanzar el
+    proceso, y cada una se cobraba contra las ocho del día."""
+
+    async def vuelta(_n: int) -> str | None:
+        return None
+
+    resultado = await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: mundo.hora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=1,
+        primera_vuelta_al_arrancar=True,
+    )
+
+    assert resultado["vueltas"] == 1, "el arranque hace su vuelta"
+    assert resultado["por_dia"] == {}, "pero no cuenta contra el tope"
+
+
+def test_el_sondeo_se_alinea_a_la_rejilla_del_cuarto_de_hora() -> None:
+    """Medido: los cierres de 16:00 y 20:00 se vieron a las 16:04 y 20:08."""
+    from paper.vigia import MARGEN_REJILLA_S, _hasta_la_rejilla
+
+    # 12:07:00 → faltan 8 min para las 12:15, más el margen.
+    t = datetime(2026, 9, 16, 12, 7, 0, tzinfo=UTC).timestamp()
+    assert _hasta_la_rejilla(t, 900) == 8 * 60 + MARGEN_REJILLA_S
+    # Justo en la rejilla: se espera la vuelta entera, no cero.
+    t = datetime(2026, 9, 16, 12, 15, 0, tzinfo=UTC).timestamp()
+    assert _hasta_la_rejilla(t, 900) == 900 + MARGEN_REJILLA_S
+
+
+def test_los_minutos_del_relevo_se_leen_del_error_y_solo_de_ese_error() -> None:
+    from paper.vigia import _minutos_hasta_que_vuelva
+
+    assert _minutos_hasta_que_vuelva("todos los modelos están agotados (a); vuelve en 1 min") == 1
+    assert (
+        _minutos_hasta_que_vuelva("todos ... agotados (a, b); el primero vuelve en 566 min") == 566
+    )
+    assert _minutos_hasta_que_vuelva("fetch failed") is None, "un fallo de red no es cuota"
+    assert _minutos_hasta_que_vuelva("agotados pero sin minutos") is None
+
+
+async def test_sin_vuelta_de_arranque_si_el_registro_acaba_de_escribir(
+    mundo: _Mundo, tmp_path: Any
+) -> None:
+    """Relanzar por un cambio de código no debe releer lo que se acaba de leer."""
+    ruta = str(tmp_path / "op.db")
+    registro = Registro(ruta)
+    registro.predecir(
+        simbolo="BTCUSDT",
+        contexto=_ctx(79000),
+        nivel=79500,
+        hacia="arriba",
+        probabilidad=0.5,
+        razonamiento="x",
+        horas_vigencia=6,
+        temporalidad="1h",
+    )
+    registro.cerrar_conexion()
+    vueltas: list[int] = []
+
+    async def vuelta(n: int) -> str | None:
+        vueltas.append(n)
+        return None
+
+    await vigilar(
+        ruta_db=ruta,
+        ruta_scripts="",
+        ahora=lambda: datetime.now().astimezone().replace(hour=9, minute=0),
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=1,
+        primera_vuelta_al_arrancar=True,
+    )
+
+    assert vueltas == [], "la predicción es de hace un momento: el arranque sobra"
 
 
 async def test_el_primero_de_la_lista_se_reserva_para_los_cierres_de_4h(
@@ -609,8 +725,9 @@ async def test_al_despertar_la_mac_pide_caffeinate_en_segundos_y_no_al_tick_sigu
     # Tick 1 fuera → False. Salto → True en el acto. Tick 2 a las 07:55 → True.
     # Al parar → False.
     assert pedidos == [False, True, True, False], pedidos
-    # El tick 2 llegó tras UN trozo de 5 s, no tras los 180 del sueño entero.
-    assert saltos["n"] == 1 + 180, "un trozo con salto, y el sueño completo del tick 2"
+    # El tick 2 llegó tras UN trozo de 5 s, no tras el sueño entero (que con la
+    # rejilla son hasta 180 trozos): el salto lo cortó en el primero.
+    assert saltos["n"] < 1 + 180, f"el salto tenía que cortar el sueño: {saltos['n']} trozos"
 
 
 async def test_si_arranca_ya_fuera_de_la_ventana_no_avisa(mundo: _Mundo, tmp_path: Any) -> None:

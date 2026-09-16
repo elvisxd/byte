@@ -189,6 +189,8 @@ def armar(
             # 12K, no 16K: es lo que cabe entero en la GPU de un Mac de 16 GB.
             # Ver `paper_num_ctx` en api/config.py, con la medición.
             num_ctx=ajustes.paper_num_ctx,
+            # Que no se descargue entre vueltas: son horas. Ver `build_llm`.
+            keep_alive=ajustes.paper_keep_alive,
         ),
         herramientas,
         max_iterations=ajustes.max_iterations,
@@ -265,7 +267,11 @@ def _armar_remoto(
     return registro, grafo, etiqueta
 
 
-def poner_al_dia(registro: Registro, prefijo: str = "[sesión]") -> dict[str, list[dict[str, Any]]]:
+def poner_al_dia(
+    registro: Registro,
+    prefijo: str = "[sesión]",
+    velas15: list[dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     """Lo que pasó mientras nadie miraba. Con código, sin modelo.
 
     ⚠ VA ANTES DE QUE EL MODELO MIRE. Las órdenes límite existen justamente
@@ -280,14 +286,18 @@ def poner_al_dia(registro: Registro, prefijo: str = "[sesión]") -> dict[str, li
     una decisión. Pedírselo al modelo sería dejarle puntuarse a sí mismo.
     """
     cambios: dict[str, list[dict[str, Any]]] = {"ordenes": [], "predicciones": [], "cerradas": []}
-    try:
-        historico = velas_del_mercado(SIMBOLO, "15m", 200)
-    except MercadoNoDisponible as exc:
-        # Sin datos no se puede saber qué pasó. Se avisa y se sigue: el modelo
-        # verá lo que haya vivo y decidirá.
-        print(f"{prefijo} no se pudo poner al día: {exc}", flush=True)
-        return cambios
-    velas = historico["velas"]
+    # `velas15` las pasa quien ya las pidió —el vigía las necesita también para
+    # sus eventos—: eran las mismas 200 dos veces por tick, en cada brazo.
+    if velas15 is not None:
+        velas = velas15
+    else:
+        try:
+            velas = velas_del_mercado(SIMBOLO, "15m", 200)["velas"]
+        except MercadoNoDisponible as exc:
+            # Sin datos no se puede saber qué pasó. Se avisa y se sigue: el
+            # modelo verá lo que haya vivo y decidirá.
+            print(f"{prefijo} no se pudo poner al día: {exc}", flush=True)
+            return cambios
     cambios["ordenes"] = registro.evaluar_ordenes(velas)
     for d in cambios["ordenes"]:
         print(f"{prefijo} orden #{d['id']}: {d['resultado']}", flush=True)
@@ -372,8 +382,11 @@ async def una_sesion(
 
     registro, grafo, etiqueta_modelo = armar(ajustes, ruta_db, modelos)
 
-    # Lo primero: qué pasó mientras no estábamos. Ver `poner_al_dia`.
+    # Lo primero: qué pasó mientras no estábamos. Ver `poner_al_dia`. La
+    # primera vuelta del bucle NO lo repite —lo hacía, y eran dos ejecuciones
+    # de Node seguidas para leer las mismas 200 velas—.
     disparadas = poner_al_dia(registro)["ordenes"]
+    recien_puesto_al_dia = True
 
     limite = time.monotonic() + minutos * 60
     vueltas, errores, seguidos = 0, [], 0
@@ -395,7 +408,10 @@ async def una_sesion(
         print(f"[sesión] vuelta {vueltas} · quedan {restante:.0f} min", flush=True)
         # En cada vuelta y no solo al arrancar: la espera entre vueltas puede
         # ser de una hora, y en ese rato una orden se dispara o un stop se toca.
-        poner_al_dia(registro)
+        # La primera no, porque se acaba de hacer antes del bucle.
+        if not recien_puesto_al_dia:
+            poner_al_dia(registro)
+        recien_puesto_al_dia = False
         error = await una_vuelta(grafo, trace, vueltas, precarga=precarga_segura(registro, ajustes))
         if error is not None:
             errores.append(error)

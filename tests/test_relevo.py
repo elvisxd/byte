@@ -272,6 +272,33 @@ async def test_si_el_ultimo_cae_a_mitad_de_llamada_espera_si_es_corto() -> None:
     assert a.llamadas == 1, "el agotado del día ni se intenta"
 
 
+async def test_los_tokens_de_entrada_se_suman_y_no_se_pisan() -> None:
+    """Gemini manda `usage_metadata` como DELTA por trozo: quedarse con el
+    último daba «32 tokens de entrada» para una llamada de miles."""
+    from agent.relevo import _sumar_uso
+
+    class _ConUso:
+        def __init__(self, uso: dict[str, Any] | None) -> None:
+            self.usage_metadata = uso
+            self.content = "x"
+
+    class _ModeloConDeltas(_Modelo):
+        async def astream(self, entrada: Any, **_: Any) -> Any:
+            self.llamadas += 1
+            yield _ConUso({"input_tokens": 32, "output_tokens": 1})
+            yield _ConUso({"input_tokens": 1300, "output_tokens": 10})
+            yield _ConUso(None)
+
+    relevo = _relevo(_ModeloConDeltas("a"))
+    await _todo(relevo)
+
+    assert _sumar_uso({"input_tokens": 32}, {"input_tokens": 1300}) == {"input_tokens": 1332}
+    assert _sumar_uso(None, {"input_tokens": 5}) == {"input_tokens": 5}
+    assert _sumar_uso({"input_tokens": 5}, None) == {"input_tokens": 5}
+    # Un campo no numérico no rompe la suma: gana el último.
+    assert _sumar_uso({"modelo": "a"}, {"modelo": "b"}) == {"modelo": "b"}
+
+
 async def test_con_reserva_el_primero_se_guarda_y_contesta_el_segundo() -> None:
     """paper/CRITERIO_HORARIOS.md: las vueltas de gestión van del segundo en
     adelante; el primero se guarda para los cierres de 4h."""
