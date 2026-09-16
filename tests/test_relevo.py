@@ -272,6 +272,43 @@ async def test_si_el_ultimo_cae_a_mitad_de_llamada_espera_si_es_corto() -> None:
     assert a.llamadas == 1, "el agotado del día ni se intenta"
 
 
+async def test_con_reserva_el_primero_se_guarda_y_contesta_el_segundo() -> None:
+    """paper/CRITERIO_HORARIOS.md: las vueltas de gestión van del segundo en
+    adelante; el primero se guarda para los cierres de 4h."""
+    a, b = _Modelo("a"), _Modelo("b")
+    relevo = _relevo(a, b)
+
+    relevo.reservar_primero(True)
+    assert await _todo(relevo) == ["b:0", "b:1"]
+    assert a.llamadas == 0
+
+    relevo.reservar_primero(False)
+    assert await _todo(relevo) == ["a:0", "a:1"]
+
+    # La copia con herramientas ve la misma reserva.
+    relevo.reservar_primero(True)
+    assert await relevo.bind_tools([{"name": "x"}]).ainvoke("hola") == "b"
+
+
+async def test_la_reserva_no_deja_a_nadie_sin_modelo() -> None:
+    """Si el primero es el único vivo, contesta él: reservar no es agotar."""
+    reloj = _Reloj()
+    a = _Modelo("a")
+    b = _Modelo("b", _Error(429, "GenerateRequestsPerDayPerProjectPerModel"))
+    relevo = Relevo(
+        [("a", a), ("b", b)],
+        espera_s=0,
+        reloj=reloj,
+        dormir=reloj.dormir,
+        ahora=lambda: datetime(2026, 9, 15, 10, 0, tzinfo=PACIFICO),
+    )
+    relevo.reservar_primero(True)
+    # b cae del día en la primera llamada; con la reserva, a era el descartado…
+    # pero al quedar solo, contesta.
+    assert await _todo(relevo) == ["a:0", "a:1"]
+    assert b.llamadas == 1 and a.llamadas == 1
+
+
 async def test_un_error_que_no_es_de_cuota_sube_tal_cual() -> None:
     relevo = _relevo(_Modelo("a", ValueError("argumento inválido")), _Modelo("b"))
     with pytest.raises(ValueError, match="argumento"):

@@ -160,6 +160,8 @@ class _Estado:
         self.actual: str | None = None
         self.hasta: dict[str, float] = {}
         self.ultima_llamada = float("-inf")
+        # Ver `Relevo.reservar_primero`. Compartido con las copias ligadas.
+        self.reservar_primero = False
 
 
 class Relevo:
@@ -235,9 +237,25 @@ class Relevo:
             _estado=self._estado,
         )
 
+    def reservar_primero(self, reservar: bool) -> None:
+        """Si el primero de la lista se guarda para otra vuelta.
+
+        ⚠ ES LA REGLA DE paper/CRITERIO_HORARIOS.md. Medido el 2026-09-15: el
+        modelo bueno de cada lista se gastó por la mañana en vueltas de lectura
+        y de niveles cercanos, y el cierre de 4h de las 20:00 —la vuelta que
+        más vale— lo hizo el lite o nadie. Con la reserva puesta, las vueltas
+        de gestión van del segundo en adelante y el primero llega a los cierres.
+        La reserva NO deja a nadie sin modelo: si el primero es el único
+        disponible, contesta él.
+        """
+        self._estado.reservar_primero = reservar
+
     def _disponibles(self) -> list[tuple[str, Any]]:
         t = self.reloj()
-        return [(n, m) for n, m in self.modelos if self._estado.hasta.get(n, float("-inf")) <= t]
+        vivos = [(n, m) for n, m in self.modelos if self._estado.hasta.get(n, float("-inf")) <= t]
+        if self._estado.reservar_primero and len(vivos) > 1 and vivos[0][0] == self.modelos[0][0]:
+            return vivos[1:]
+        return vivos
 
     async def _espaciar(self) -> None:
         falta = self._estado.ultima_llamada + self.espera_s - self.reloj()
@@ -330,9 +348,20 @@ class Relevo:
                     continue
                 self._contesto(nombre, uso)
                 return
-            if pasada == 1 and await self._esperar_si_es_corto():
+            if pasada == 1 and await self._segunda_pasada():
                 continue
             raise self._nadie()
+
+    async def _segunda_pasada(self) -> bool:
+        """Si merece volver a pasar la lista tras vaciarse la primera.
+
+        Dos casos: la reserva del primero dejó fuera al único que sigue vivo
+        (se suelta sola: `_disponibles` no reserva cuando queda uno), o todos
+        están en cuarentena pero el primero vuelve en segundos (se espera).
+        """
+        if self._disponibles():
+            return True
+        return await self._esperar_si_es_corto()
 
     async def ainvoke(self, entrada: Any, **kwargs: Any) -> Any:
         await self._espaciar()
@@ -348,7 +377,7 @@ class Relevo:
                     continue
                 self._contesto(nombre)
                 return respuesta
-            if pasada == 1 and await self._esperar_si_es_corto():
+            if pasada == 1 and await self._segunda_pasada():
                 continue
             raise self._nadie()
         raise self._nadie()  # inalcanzable; para el tipado

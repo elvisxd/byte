@@ -226,6 +226,10 @@ def _armar_remoto(
     # sigue sondeando y no puede hacer una sola vuelta; hoy solo lo dice una
     # línea de log que nadie mira de madrugada.
     etiqueta.estado_modelos = relevo.estado_modelos  # type: ignore[attr-defined]
+    # Para el vigía (paper/CRITERIO_HORARIOS.md): antes de cada vuelta dice si
+    # el primero de la lista se reserva —vuelta de gestión— o se usa —cierre
+    # de 4h—. El local no tiene relevo y no tiene nada que reservar.
+    etiqueta.reservar_primero = relevo.reservar_primero  # type: ignore[attr-defined]
 
     herramientas = ToolRegistry(
         build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta)

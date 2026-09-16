@@ -389,6 +389,17 @@ async def vigilar(
             plazos_avisados.update(
                 op["id"] for op in registro.abiertas() if registro.agoto_plazo(op)
             )
+            # ⚠ EL MODELO BUENO SE GUARDA PARA LOS CIERRES DE 4H
+            # (paper/CRITERIO_HORARIOS.md). Una vuelta de gestión —nivel
+            # cercano, stop cercano, plazo, la lectura de arranque— va del
+            # segundo de la lista en adelante; solo un cierre de 4h abre con
+            # el primero. Medido el 2026-09-15: sin esto, el primero se gastó
+            # por la mañana y el cierre de las 20:00 lo hizo el lite o nadie.
+            # El local no tiene relevo: `getattr` lo deja en paz.
+            es_estructura = any(m.startswith("cerró la vela de 4h") for m in motivos)
+            reservar = getattr(etiqueta, "reservar_primero", None)
+            if reservar is not None:
+                reservar(not es_estructura)
             vuelta_en_curso = asyncio.ensure_future(correr_vuelta(vueltas_total))
             try:
                 error = await vuelta_en_curso
