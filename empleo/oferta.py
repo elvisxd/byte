@@ -9,6 +9,8 @@ es una función que devuelve `Oferta` y el criterio ni se entera.
 import hashlib
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 # Palabras que no distinguen a una empresa de otra y que, si quedan en la clave
 # de deduplicación, hacen que "Acme Inc." y "Acme LLC" parezcan dos empresas.
@@ -57,6 +59,45 @@ class Oferta:
         """
         base = f"{_RUIDO_EMPRESA.sub('', _normalizar(self.empresa))}|{_normalizar(self.titulo)}"
         return hashlib.sha256(" ".join(base.split()).encode("utf-8")).hexdigest()[:16]
+
+    def publicada_en(self) -> datetime | None:
+        """La fecha de publicación, en UTC. `None` si el feed no la manda o no se entiende.
+
+        Cada fuente la manda distinta —ISO, RFC 822 del RSS, epoch— y ninguna
+        promete el formato. Se prueban los tres y se devuelve `None` antes que
+        adivinar: una fecha inventada haría que una oferta de hace dos semanas
+        se anuncie como recién salida, que es el error más caro de todos acá.
+        """
+        crudo = self.publicada.strip()
+        if not crudo:
+            return None
+
+        if crudo.isdigit():  # epoch en segundos
+            try:
+                return datetime.fromtimestamp(int(crudo), tz=UTC)
+            except (ValueError, OSError):
+                return None
+
+        try:
+            fecha = datetime.fromisoformat(crudo.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                fecha = parsedate_to_datetime(crudo)
+            except (TypeError, ValueError):
+                return None
+        # Una fecha sin huso se toma como UTC: los feeds publican en UTC y
+        # tratarla como local correría la antigüedad varias horas.
+        return fecha if fecha.tzinfo else fecha.replace(tzinfo=UTC)
+
+    def antiguedad_horas(self, ahora: datetime | None = None) -> float | None:
+        """Cuántas horas pasaron desde que se publicó. `None` si no se sabe."""
+        publicada = self.publicada_en()
+        if publicada is None:
+            return None
+        delta = (ahora or datetime.now(tz=UTC)) - publicada
+        # Un feed con el reloj adelantado daría negativo; para lo que sigue, eso
+        # es "recién salida", no un error.
+        return max(0.0, delta.total_seconds() / 3600)
 
     def buscable(self) -> str:
         """Todo el texto donde se buscan términos y señales, en minúsculas."""

@@ -103,11 +103,30 @@ def seleccionar(
     return seleccion
 
 
+def _edad(horas: float | None) -> str:
+    """La antigüedad, como se lee de un vistazo en el teléfono.
+
+    Va primero en la línea junto al puntaje porque es lo que decide si abrís el
+    link ahora o después: una de hace 3 horas y una de hace 9 días se postulan
+    distinto aunque puntúen parecido.
+    """
+    if horas is None:
+        return "s/f"
+    if horas < 1:
+        return "recién"
+    if horas < 48:
+        return f"{horas:.0f}h"
+    return f"{horas / 24:.0f}d"
+
+
 def _linea(oferta: Oferta, puntaje: Puntaje) -> str:
     empresa = f" — {oferta.empresa}" if oferta.empresa else ""
     senales = f"  [{', '.join(puntaje.senales)}]" if puntaje.senales else ""
     lugar = f"\n  {oferta.ubicacion}" if oferta.ubicacion else ""
-    return f"{puntaje.total:>4}  {oferta.titulo}{empresa}{senales}{lugar}\n  {oferta.url}"
+    edad = _edad(puntaje.antiguedad_horas)
+    return (
+        f"{puntaje.total:>4} · {edad:>6}  {oferta.titulo}{empresa}{senales}{lugar}\n  {oferta.url}"
+    )
 
 
 def armar_aviso(

@@ -7,6 +7,7 @@ defender leyendo el TOML— y que nada de esto postule por su cuenta.
 import asyncio
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -336,3 +337,96 @@ def test_una_worldwide_le_gana_a_una_solo_us_con_el_mismo_stack() -> None:
     puntaje_us = puntuar(solo_us, CRITERIO)
     assert puntaje_us.total < puntuar(global_, CRITERIO).total
     assert "solo_us" in puntaje_us.senales  # sigue en la lista, con la señal a la vista
+
+
+# --- Frescura ---
+
+
+def test_las_cuatro_formas_de_fecha_de_los_feeds_se_entienden() -> None:
+    """Cada fuente manda la fecha distinta —ISO con huso, ISO sin huso, el RFC 822
+    del RSS, epoch— y ninguna promete el formato. Si una no se entiende, esa fuente
+    entera pierde el bono por llegar temprano sin que nadie se entere."""
+    ahora = datetime(2026, 9, 16, 20, 0, tzinfo=UTC)
+    for crudo in (
+        "2026-09-16T12:00:00+00:00",
+        "2026-09-16T12:00:00Z",
+        "2026-09-16T12:00:00",
+        "Tue, 16 Sep 2026 12:00:00 +0000",
+    ):
+        assert _oferta(publicada=crudo).antiguedad_horas(ahora) == 8.0
+
+
+def test_una_fecha_que_no_se_entiende_es_none_y_no_una_fecha_inventada() -> None:
+    """Adivinar sería peor que no saber: una oferta de hace dos semanas anunciada
+    como recién salida es el error más caro acá, porque es el que hace postular
+    tarde creyendo que se llegó temprano."""
+    assert _oferta(publicada="el martes pasado").antiguedad_horas() is None
+    assert _oferta(publicada="").antiguedad_horas() is None
+
+
+def test_la_misma_oferta_puntua_mas_recien_publicada_que_a_los_diez_dias() -> None:
+    """El reclutador lee las primeras 20 o 40 de la cola, no las 300. Sin esto el
+    cazador trata igual a una de hace dos horas y a una que ya tiene cola adelante."""
+    ahora = datetime(2026, 9, 16, 20, 0, tzinfo=UTC)
+    descripcion = "LangGraph, RAG, FastAPI. Work from anywhere."
+
+    def a_las(horas: int) -> int:
+        publicada = (ahora - timedelta(hours=horas)).isoformat()
+        return puntuar(_oferta(descripcion=descripcion, publicada=publicada), CRITERIO, ahora).total
+
+    assert a_las(2) > a_las(30) > a_las(80) > a_las(240)
+
+
+def test_sin_fecha_no_suma_ni_resta_pero_se_dice() -> None:
+    """Que un feed no mande la fecha no vuelve vieja a la oferta. Castigarla
+    convertiría una carencia del feed en un defecto de la oferta — y como We Work
+    Remotely y Hacker News no siempre la mandan, hundiría fuentes enteras."""
+    ahora = datetime(2026, 9, 16, 20, 0, tzinfo=UTC)
+    descripcion = "LangGraph, RAG, FastAPI."
+    sin_fecha = puntuar(_oferta(descripcion=descripcion), CRITERIO, ahora)
+    con_fecha_vieja = puntuar(
+        _oferta(descripcion=descripcion, publicada=(ahora - timedelta(days=30)).isoformat()),
+        CRITERIO,
+        ahora,
+    )
+    assert sin_fecha.total > con_fecha_vieja.total
+    assert "sin fecha de publicación" in sin_fecha.motivos
+    assert sin_fecha.antiguedad_horas is None
+
+
+def test_un_feed_con_el_reloj_adelantado_no_da_antiguedad_negativa() -> None:
+    """Pasa: un RSS publica con la fecha corrida unos minutos. Una antigüedad
+    negativa caería en el primer tramo igual, pero mostraría "-1h" en el aviso."""
+    ahora = datetime(2026, 9, 16, 20, 0, tzinfo=UTC)
+    futura = _oferta(publicada=(ahora + timedelta(hours=3)).isoformat())
+    assert futura.antiguedad_horas(ahora) == 0.0
+
+
+# --- Brecha contra el CV ---
+
+
+def test_la_brecha_separa_lo_que_piden_y_tenes_de_lo_que_te_falta() -> None:
+    """Es la decisión concreta al postular: lo que piden y tenés va en las dos
+    primeras líneas, y lo que piden y el CV no dice es lo que conviene nombrar. Sin
+    esto el modelo lo estima, y estima distinto cada vez."""
+    from empleo.criterio import comparar_con_cv
+    from empleo.vocabulario import TERMINOS
+
+    cv = "Python, FastAPI, LangGraph, pgvector y RAG en producción."
+    oferta = _oferta(descripcion="You will use LangGraph, RAG, Kubernetes and Terraform.")
+    brecha = comparar_con_cv(oferta, cv, TERMINOS)
+
+    assert set(brecha.tenes) == {"langgraph", "rag"}
+    assert set(brecha.faltan) == {"kubernetes", "terraform"}
+    assert brecha.cobertura == 0.5
+
+
+def test_una_oferta_sin_tecnologias_conocidas_no_divide_por_cero() -> None:
+    """Las de Hacker News son texto libre y algunas no nombran una sola tecnología.
+    La cobertura de un conjunto vacío es 0, no una excepción a mitad del análisis."""
+    from empleo.criterio import comparar_con_cv
+    from empleo.vocabulario import TERMINOS
+
+    brecha = comparar_con_cv(_oferta(descripcion="We are hiring. Email us."), "cv", TERMINOS)
+    assert brecha.pide == ()
+    assert brecha.cobertura == 0.0

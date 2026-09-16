@@ -88,6 +88,27 @@ hackernews = true
 # es el que termina en cuenta suspendida.
 upwork = false
 
+[frescura]
+# Cuánto suma —o resta— llegar temprano, por tramos de antigüedad de la oferta.
+#
+# El reclutador no lee las 300 postulaciones: lee las primeras 20 o 40 de la
+# cola. El ATS ordena esa cola, no rechaza por su cuenta (sólo ~8% habilita el
+# auto-rechazo). Así que llegar tarde no es que te filtren: es que te leen
+# después de que ya entrevistaron a alguien.
+#
+# Las 96 horas son el umbral medido que aparece en la literatura del tema. Los
+# múltiplos que publican las empresas del rubro —"8 veces más entrevistas"— son
+# de blogs que venden urgencia: acá se usa la dirección del hallazgo, que es
+# sólida, no el número.
+#
+# Una oferta sin fecha no suma ni resta: que un feed no la mande no la vuelve
+# vieja.
+hasta_24h = 25
+hasta_48h = 15
+hasta_96h = 8
+hasta_7d = 0
+mas_vieja = -10
+
 [aviso]
 # Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee.
 tope_por_aviso = 8

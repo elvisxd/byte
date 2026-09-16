@@ -21,8 +21,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from api.logging import get_logger
-from empleo.criterio import Puntaje, cargar_criterio, puntuar
+from empleo.criterio import Puntaje, cargar_criterio, comparar_con_cv, puntuar
 from empleo.oferta import Oferta
+from empleo.vocabulario import TERMINOS
 from tools.base import Tool, ToolResult, wrap_untrusted
 
 logger = get_logger("tools.empleo")
@@ -49,16 +50,43 @@ class BuscarArgs(BaseModel):
     tope: int = Field(default=10, ge=1, le=30, description="Cuántas ofertas devolver")
 
 
-def _informe(oferta: Oferta, criterio_ruta: Path) -> tuple[str, Puntaje]:
-    """El informe legible y el puntaje que lo produjo."""
+def _informe(oferta: Oferta, criterio_ruta: Path, cv_ruta: Path) -> tuple[str, Puntaje]:
+    """El informe legible y el puntaje que lo produjo.
+
+    Todo acá lo calcula el código. El modelo recibe esto ya resuelto para que
+    escriba la propuesta con ello, no para que lo vuelva a estimar: un número
+    que el modelo inventa cambia en cada corrida y no se puede discutir.
+    """
     criterio = cargar_criterio(criterio_ruta)
     puntaje = puntuar(oferta, criterio)
     lineas = [
         f"Puntaje: {puntaje.total} (mínimo para avisar: {criterio.puntaje_minimo})",
         f"Señales: {', '.join(puntaje.senales) or 'ninguna'}",
-        f"Coincide con tu stack: {', '.join(puntaje.terminos) or 'nada'}",
         f"De dónde sale el puntaje: {'; '.join(puntaje.motivos) or 'nada suma'}",
     ]
+
+    if puntaje.antiguedad_horas is not None:
+        horas = puntaje.antiguedad_horas
+        lineas.append(f"Publicada hace {horas:.0f} h.")
+        if horas > 96:
+            lineas.append(
+                "Van más de 4 días: es probable que ya haya una cola de "
+                "postulaciones adelante. Vale la pena sólo si encaja muy bien."
+            )
+
+    cv = _leer_cv(cv_ruta)
+    if cv:
+        brecha = comparar_con_cv(oferta, cv, TERMINOS)
+        if brecha.pide:
+            lineas += [
+                f"Cobertura del CV: {brecha.cobertura:.0%} de lo que pide "
+                f"({len(brecha.tenes)} de {len(brecha.pide)}).",
+                f"PIDE Y TENÉS — con esto se abre la carta: {', '.join(brecha.tenes) or 'nada'}",
+                f"PIDE Y EL CV NO DICE: {', '.join(brecha.faltan) or 'nada'}",
+            ]
+        else:
+            lineas.append("La oferta no nombra tecnologías conocidas: leerla a mano.")
+
     if "sin_patrocinio" in puntaje.senales:
         lineas.append("Ojo: dice explícitamente que no patrocina visas.")
     if "junior" in puntaje.senales:
@@ -66,8 +94,25 @@ def _informe(oferta: Oferta, criterio_ruta: Path) -> tuple[str, Puntaje]:
     return "\n".join(lineas), puntaje
 
 
-def build_empleo_tools(criterio_ruta: Path, max_chars: int) -> list[Tool]:
-    """Arma las dos herramientas. `criterio_ruta` es el `perfil/busqueda.toml`."""
+def _leer_cv(ruta: Path) -> str:
+    """El CV como texto. Vacío si no está: el análisis sigue sin la comparación."""
+    try:
+        return ruta.read_text(encoding="utf-8")
+    except OSError:
+        logger.info("empleo_sin_cv", ruta=str(ruta)[:200])
+        return ""
+
+
+def build_empleo_tools(
+    criterio_ruta: Path, max_chars: int, cv_ruta: Path | None = None
+) -> list[Tool]:
+    """Arma las dos herramientas.
+
+    `criterio_ruta` es el `perfil/busqueda.toml`; `cv_ruta`, el `perfil/cv.md`
+    contra el que se compara lo que pide cada oferta. Sin CV la herramienta
+    sigue andando: puntúa igual, sólo que no dice qué falta.
+    """
+    cv_ruta = cv_ruta or criterio_ruta.parent / "cv.md"
 
     async def analizar(args: BaseModel) -> ToolResult:
         assert isinstance(args, AnalizarArgs)  # noqa: S101 - garantizado por el nodo de tools
@@ -88,7 +133,7 @@ def build_empleo_tools(criterio_ruta: Path, max_chars: int) -> list[Tool]:
         )
         # El informe lo calculó el código y no es contenido de terceros: va
         # afuera del bloque. Adentro va solo lo que escribió el que publicó.
-        informe, puntaje = _informe(oferta, criterio_ruta)
+        informe, puntaje = _informe(oferta, criterio_ruta, cv_ruta)
         cuerpo = wrap_untrusted("OFERTA PEGADA", texto, max_chars)
         return ToolResult(
             content=f"{informe}\n\n{cuerpo}",
@@ -135,7 +180,8 @@ def build_empleo_tools(criterio_ruta: Path, max_chars: int) -> list[Tool]:
             name="analizar_oferta",
             description=(
                 "Puntúa una oferta de trabajo contra el perfil del usuario y muestra las "
-                "señales que trae (contrata en LatAm, patrocina visa, reubicación, junior). "
+                "señales que trae (contrata en LatAm, patrocina visa, reubicación, junior), "
+                "qué pide que el CV ya dice y qué pide que le falta. "
                 "Usala cuando te peguen el texto de una oferta, de Upwork o de donde sea. "
                 "El puntaje lo calcula el código: no lo recalcules ni lo contradigas."
             ),

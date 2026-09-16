@@ -14,6 +14,13 @@ tecnologías pesan, qué señales suman y cuál es el puntaje mínimo para que a
 llegue al teléfono. Es un archivo tuyo, editable y versionado — cambiar el
 criterio no es tocar código.
 
+## Antes que el código
+
+[**Cómo se aplica bien**](COMO-APLICAR.md) — el modelo mental del que sale todo
+esto: el ATS ordena en vez de rechazar, el humano lee las primeras 20-40 de la
+cola, y de ahí salen las dos palancas que el código implementa (llegar temprano
+y coincidir en términos). Si eso está mal, el puntaje mide lo que no es.
+
 ## Por qué no postula
 
 La pregunta que originó esto era si se podía raspar Upwork para mandar CVs. Se
@@ -69,10 +76,15 @@ un 7B al que se le pide "puntuá esta oferta del 1 al 100" devuelve algo
 plausible y distinto cada vez. Acá cada punto tiene una línea que lo explica:
 
 ```
-106  Senior AI Engineer — Acme  [latam, remoto_global, contractor]
+ 106 ·     2h  Senior AI Engineer — Acme  [latam, remoto_global, contractor]
      +44 stack: langgraph, rag, pgvector, fastapi, python
-     +30 latam · +20 remoto_global · +12 contractor
+     +30 latam · +20 remoto_global · +12 contractor · +25 hasta_24h (2 h)
 ```
+
+Las horas van al lado del puntaje porque son lo que decide si abrís el link
+ahora o después: una de hace 3 horas y una de hace 9 días se postulan distinto
+aunque puntúen parecido. Una oferta sin fecha no suma ni resta — que el feed no
+la mande no la vuelve vieja.
 
 **Ninguna señal descarta sola.** Una oferta que dice "US only" o "no visa
 sponsorship" baja de puesto y aparece con la señal a la vista. Filtrar en
