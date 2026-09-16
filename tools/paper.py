@@ -794,7 +794,10 @@ def _anatomia_de_la_vela_cerrada(velas: list[dict[str, Any]], atr: Any) -> str:
 
 
 def _tasa_base(
-    velas: list[dict[str, Any]], atr: float | None, horizonte: int = 24
+    velas: list[dict[str, Any]],
+    atr: float | None,
+    horizonte: int = 24,
+    atr_serie: list[list[float]] | None = None,
 ) -> dict[str, Any] | None:
     """Cuántas veces un nivel a 1 y a 2 ATR se tocó dentro del plazo, en estas velas.
 
@@ -808,8 +811,14 @@ def _tasa_base(
     promedian los dos lados. `horizonte` = 24 velas = el plazo con el que el
     registro resuelve la predicción de ese marco (PLAZO_POR_MARCO).
 
-    Con el ATR de AHORA aplicado a todas: es una aproximación honesta y
-    declarada, no una serie de ATR históricos.
+    ⚠ CON EL ATR DE CADA VELA, NO EL DE AHORA. `atr_serie` son pares
+    `[time, atr]` del mismo `calculateATR` de producción (calcular.mjs,
+    `atr_serie`), cruzados por `time`: un nivel «a 1 ATR» en una vela de hace
+    tres días se mide con el ATR de hace tres días. La primera versión
+    (2026-09-16, unas horas) aplicaba el ATR actual a todas y lo declaraba
+    como aproximación; con volatilidad cambiante subestima o sobreestima la
+    tasa. Sin serie —un calcular.mjs viejo— se cae al ATR actual y lo dice
+    en `aproximado`.
     """
     if not isinstance(atr, int | float) or atr <= 0:
         return None
@@ -817,23 +826,46 @@ def _tasa_base(
     n = len(cerradas) - horizonte
     if n < 30:
         return None
+    por_tiempo: dict[Any, float] = {}
+    if isinstance(atr_serie, list):
+        por_tiempo = {
+            par[0]: float(par[1])
+            for par in atr_serie
+            if isinstance(par, list | tuple) and len(par) == 2 and float(par[1]) > 0
+        }
+    # Con serie, SOLO las velas que tienen su ATR (el de producción empieza en
+    # la vela 14): menos muestras, todas exactas. Sin serie, todas con el ATR
+    # actual, y el texto lo dice.
+    aproximado = not por_tiempo
+    indices = [i for i in range(n) if aproximado or cerradas[i]["time"] in por_tiempo]
+    if len(indices) < 30:
+        return None
     toques = {1: 0, 2: 0}
-    for i in range(n):
-        cierre = cerradas[i]["close"]
+    for i in indices:
+        vela = cerradas[i]
+        cierre = vela["close"]
+        atr_i = float(atr) if aproximado else por_tiempo[vela["time"]]
         despues = cerradas[i + 1 : i + 1 + horizonte]
         maximo = max(v["high"] for v in despues)
         minimo = min(v["low"] for v in despues)
         for k in (1, 2):
-            toques[k] += int(maximo >= cierre + k * atr) + int(minimo <= cierre - k * atr)
+            toques[k] += int(maximo >= cierre + k * atr_i) + int(minimo <= cierre - k * atr_i)
+    m = len(indices)
     return {
-        "1_atr": round(100 * toques[1] / (2 * n)),
-        "2_atr": round(100 * toques[2] / (2 * n)),
-        "velas": n,
+        "1_atr": round(100 * toques[1] / (2 * m)),
+        "2_atr": round(100 * toques[2] / (2 * m)),
+        "velas": m,
         "horizonte": horizonte,
+        "aproximado": aproximado,
     }
 
 
-def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
+def _bloque(
+    marco: str,
+    datos: dict[str, Any],
+    ind: dict[str, Any],
+    atr_serie: list[list[float]] | None = None,
+) -> str:
     """Un marco en cuatro a siete líneas. Hechos; los mismos que `_mirar`, apretados."""
     ctx = _contexto_de(datos, ind)
     adx = ind.get("adx") or {}
@@ -875,10 +907,11 @@ def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     cerrada = _anatomia_de_la_vela_cerrada(datos["velas"], ind.get("atr"))
     if cerrada:
         lineas.append(f"   {cerrada}")
-    tasa = _tasa_base(datos["velas"], ind.get("atr"))
+    tasa = _tasa_base(datos["velas"], ind.get("atr"), atr_serie=atr_serie)
     if tasa:
+        aprox = " (con el ATR actual, aproximado)" if tasa.get("aproximado") else ""
         lineas.append(
-            f"   tasa base: en las últimas {tasa['velas']} velas, un nivel a 1 ATR se tocó "
+            f"   tasa base{aprox}: en las últimas {tasa['velas']} velas, un nivel a 1 ATR se tocó "
             f"dentro de {tasa['horizonte']} velas el {tasa['1_atr']}% de las veces; "
             f"a 2 ATR, el {tasa['2_atr']}%"
         )
@@ -937,8 +970,15 @@ def _mapa(simbolo: str, max_chars: int, ahora: datetime | None = None) -> ToolRe
         except MercadoNoDisponible as exc:
             fallos.append(f"{marco}: {exc}")
             continue
-        ind = indicadores(datos["velas"], SIEMPRE)
-        bloques.append(_bloque(marco, datos, ind))
+        # La serie de ATR se pide SOLO para la tasa base y se saca de `ind`
+        # antes de nada: `ind` se sella en cada escritura (`_contexto_de`), y
+        # 200 valores por marco en cada fila del registro y del panel serían
+        # peso sin lectura.
+        ind = indicadores(datos["velas"], [*SIEMPRE, "atr_serie"])
+        serie = ind.pop("atr_serie", None)
+        bloques.append(
+            _bloque(marco, datos, ind, atr_serie=serie if isinstance(serie, list) else None)
+        )
         ultima = datos["velas"][-1]
         precio, fuente = ultima["close"], datos["fuente"]
         # Por el indicador, no por la vela (ver `_mirar`).
