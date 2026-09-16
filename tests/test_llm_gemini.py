@@ -145,3 +145,15 @@ def test_el_local_sigue_igual(espias: None) -> None:
     assert OllamaEspia.ultimo["model"] == "qwen3:14b"
     assert OllamaEspia.ultimo["num_ctx"] == 12288
     assert GeminiEspia.ultimo == {}
+
+
+def test_el_local_tambien_tiene_tope_por_llamada(espias: None) -> None:
+    """Medido el 2026-09-16: el runner murió con un sueño térmico y el vigía
+    esperó UNA HORA una respuesta que no iba a llegar."""
+    from agent.llm import TIMEOUT_LOCAL_S
+
+    build_llm(Settings(OLLAMA_MODEL="qwen3:14b"))
+
+    assert OllamaEspia.ultimo["client_kwargs"] == {"timeout": TIMEOUT_LOCAL_S}
+    # Generoso a propósito: el 14B tarda minutos cuando piensa.
+    assert TIMEOUT_LOCAL_S >= 600

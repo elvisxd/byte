@@ -9,6 +9,11 @@ from api.logging import get_logger
 
 logger = get_logger("agent.llm")
 
+# El tope por llamada al modelo LOCAL, mucho más generoso que el de los remotos
+# (TIMEOUT_REMOTO_S, más abajo): el 14B piensa en la GPU de la Mac y una
+# respuesta suya tarda minutos. Ver `build_llm`.
+TIMEOUT_LOCAL_S = 900.0
+
 
 def es_de_google(nombre: str) -> bool:
     """Un `gemini-…` se pide a la API de Google.
@@ -73,6 +78,17 @@ def build_llm(
     # el 2026-09-16 en el log de Ollama). El vigía lo sube dentro de su
     # ventana; la API no lo toca y sigue soltando el modelo como siempre.
     extra = {"keep_alive": keep_alive} if keep_alive else {}
+    # ⚠ TOPE TAMBIÉN EN EL LOCAL, Y NO ES SIMETRÍA: ES UN FALLO MEDIDO. El
+    # 2026-09-16 la Mac se durmió por emergencia térmica en mitad de una vuelta
+    # (`Dark Wake Thermal Emergency`, 11 min); el runner de Ollama murió con
+    # ella y la petición HTTP del vigía quedó esperando una respuesta que nunca
+    # llegó: UNA HORA sin sondear, sin resolver predicciones y sin un error que
+    # mirar, con el proceso vivo al 0,3 % de CPU. Los brazos remotos ya tenían
+    # su tope (TIMEOUT_REMOTO_S); este es el mismo remedio para el que faltaba.
+    #
+    # Quince minutos, no dos: el 14B tarda 5-12 min por respuesta cuando piensa
+    # —medido—, así que un tope corto cortaría vueltas buenas. Lo que esto
+    # corta es lo que no va a terminar nunca.
     return ChatOllama(
         base_url=settings.ollama_base_url,
         model=modelo or settings.ollama_model,
@@ -80,6 +96,7 @@ def build_llm(
         num_predict=num_predict or settings.ollama_num_predict,
         temperature=0.2,
         reasoning=reasoning,
+        client_kwargs={"timeout": TIMEOUT_LOCAL_S},
         **extra,
     )
 
