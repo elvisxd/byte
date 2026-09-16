@@ -41,6 +41,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -150,6 +151,31 @@ MARGEN_DESPERTAR_S = 600
 # Cuánto tiene que saltar el reloj de pared durante un trozo de sueño para
 # darlo por un sueño del sistema (y no por un proceso lento).
 SALTO_DE_RELOJ_S = 30.0
+# Si el relevo dice que vuelve en menos de esto, la vuelta perdida se
+# reintenta en el tick siguiente en vez de darse por perdida.
+REINTENTO_MAX_MIN = 15
+# Con una escritura más reciente que esto, el arranque no hace vuelta.
+RECIENTE_S = 2 * 3600
+# Margen tras la rejilla: la vela de 15m cierra en :00 y la fuente tarda
+# unos segundos en publicarla.
+MARGEN_REJILLA_S = 30.0
+
+_VUELVE_EN = re.compile(r"vuelve en (\d+) min")
+
+
+def _minutos_hasta_que_vuelva(error: str) -> int | None:
+    """Los minutos que dice un `RelevoAgotado`, o None si el error es otro."""
+    if "agotados" not in error:
+        return None
+    m = _VUELVE_EN.search(error)
+    return int(m.group(1)) if m else None
+
+
+def _hasta_la_rejilla(t: float, cada_s: float) -> float:
+    """Segundos hasta el siguiente múltiplo de `cada_s` más el margen."""
+    if cada_s <= 0:
+        return 0.0
+    return cada_s - (t % cada_s) + MARGEN_REJILLA_S
 
 
 def hay_que_sostener(
@@ -344,6 +370,23 @@ async def vigilar(
     estaba_dentro: bool | None = None
     resueltas_hoy = 0
     pendiente_arranque = primera_vuelta_al_arrancar
+    # ⚠ EL ARRANQUE NO SE HACE SI EL REGISTRO ACABA DE ESCRIBIR. Medido el
+    # 2026-09-15: 6 de las 13 vueltas del día fueron «arranque» porque se
+    # relanzó tres veces por cambios de código, y cada una gastó tope y cuota
+    # para releer lo que la vuelta anterior acababa de leer. Si la última
+    # escritura tiene menos de dos horas, el arranque sobra: la siguiente
+    # vuelta llegará por su motivo.
+    if pendiente_arranque:
+        ultima = registro.ultima_escritura()
+        if ultima is not None and (ahora() - ultima).total_seconds() < RECIENTE_S:
+            print(
+                f"[vigía] sin vuelta de arranque: la última escritura es de las {ultima:%H:%M}",
+                flush=True,
+            )
+            pendiente_arranque = False
+    # Una vuelta que se perdió por cuota corta —«todos agotados, vuelve en N
+    # min»— deja su motivo acá para el tick siguiente, y no gasta tope.
+    motivos_pendientes: list[str] = []
     ultimo_latido = 0.0
     n_ticks = 0
 
@@ -351,12 +394,21 @@ async def vigilar(
         n_ticks += 1
         momento = ahora()
         dia = momento.strftime("%Y-%m-%d")
-        cambios = poner_al_dia(registro, prefijo="[vigía]")
-        hubo_cambios = any(cambios.values())
 
         motivos: list[str] = []
+        v15: dict[str, Any] | None = None
         try:
+            # Las velas de 15m se piden UNA vez por tick y se comparten con
+            # `poner_al_dia`: antes se pedían dos veces —las mismas 200— en
+            # cada uno de los tres brazos, cada 15 min.
             v15 = velas_del_mercado(SIMBOLO, "15m", 200)
+        except MercadoNoDisponible:
+            v15 = None
+        cambios = poner_al_dia(registro, prefijo="[vigía]", velas15=v15["velas"] if v15 else None)
+        hubo_cambios = any(cambios.values())
+        try:
+            if v15 is None:
+                raise MercadoNoDisponible("sin velas de 15m en este sondeo")
             v4h = velas_del_mercado(SIMBOLO, "4h", 3)
             ind = indicadores(v15["velas"], ["atr", "liquidity"])
             precio = float(v15["velas"][-1]["close"])
@@ -388,6 +440,10 @@ async def vigilar(
             # arranque en reposo y a las 08:00 no hizo su vuelta de lectura
             # hasta que cerró la vela de 4h.
             motivos.insert(0, "arranque: una vuelta de lectura")
+        if motivos_pendientes and not motivos:
+            # La vuelta que se perdió por cuota corta, ahora que el relevo volvió.
+            motivos = [f"{m} (reintento tras la cuota)" for m in motivos_pendientes]
+            motivos_pendientes = []
 
         dentro = en_ventana(momento, ventana)
         # Despierta desde un poco antes de la ventana hasta que se cierra;
@@ -408,11 +464,18 @@ async def vigilar(
         estaba_dentro = dentro
         if motivos and dentro and hoy < tope_diario:
             vueltas_total += 1
-            vueltas_hoy[dia] = hoy + 1
+            # ⚠ EL ARRANQUE A SECAS NO GASTA TOPE. Es una lectura que solo
+            # existe porque se relanzó el proceso; cobrarla contra las ocho
+            # del día castiga cada cambio de código con una vuelta menos de
+            # mercado. Si además hay motivo real, cuenta como siempre.
+            solo_arranque = len(motivos) == 1 and motivos[0].startswith("arranque")
+            if not solo_arranque:
+                vueltas_hoy[dia] = hoy + 1
             pendiente_arranque = False
             print(
-                f"[vigía] {momento:%H:%M} · vuelta {vueltas_total} ({hoy + 1}/{tope_diario} hoy) · "
-                + "; ".join(motivos),
+                f"[vigía] {momento:%H:%M} · vuelta {vueltas_total} "
+                f"({vueltas_hoy.get(dia, 0)}/{tope_diario} hoy"
+                f"{', el arranque no cuenta' if solo_arranque else ''}) · " + "; ".join(motivos),
                 flush=True,
             )
             # Los plazos por los que se despertó quedan avisados, se cierre o no.
@@ -443,6 +506,25 @@ async def vigilar(
                 vuelta_en_curso = None
             if error:
                 print(f"[vigía] la vuelta {vueltas_total} falló: {error[:120]}", flush=True)
+                # ⚠ UNA VUELTA PERDIDA POR CUOTA CORTA VUELVE, Y NO GASTA TOPE.
+                # Medido el 2026-09-15 a las 20:06: Groq perdió el cierre de
+                # 4h por «todos agotados… vuelve en 1 min» y el motivo no se
+                # volvió a proponer porque `cierre_4h_visto` ya se había
+                # anotado. Si el relevo dice que vuelve en menos de
+                # REINTENTO_MAX_MIN, el motivo espera al tick siguiente.
+                minutos = _minutos_hasta_que_vuelva(error)
+                if minutos is not None and minutos <= REINTENTO_MAX_MIN:
+                    motivos_pendientes = [
+                        m.replace(" (reintento tras la cuota)", "")
+                        for m in motivos
+                        if not m.startswith("arranque")
+                    ] or motivos
+                    vueltas_hoy[dia] = hoy
+                    print(
+                        f"[vigía] el motivo queda pendiente para el sondeo siguiente "
+                        f"(el relevo vuelve en {minutos} min); no cuenta contra el tope",
+                        flush=True,
+                    )
             hubo_cambios = True
         elif motivos:
             por = "fuera de la ventana" if not dentro else f"tope diario ({tope_diario}) alcanzado"
@@ -472,7 +554,12 @@ async def vigilar(
         # resto. Con `pmset sleep 1`, esperar al tick siguiente son catorce
         # minutos de más. `time.time()` y no `monotonic`: en macOS el monotónico
         # no avanza mientras la máquina duerme. Ver `hay_que_sostener`.
-        restante = cada_s
+        # ⚠ ALINEADO A LA REJILLA, NO «CADA 15 MIN DESDE QUE ARRANQUÉ». Medido:
+        # los cierres de 4h de las 16:00 y las 20:00 se detectaron a las 16:04
+        # y las 20:08, porque el tick caía donde caía. Dormir hasta el siguiente
+        # múltiplo de `cada_s` más 30 s da la vuelta de estructura 0-8 min
+        # antes con el mismo número de ticks.
+        restante = _hasta_la_rejilla(time.time(), cada_s)
         while restante > 0 and not parando:
             paso = min(5.0, restante)
             antes = time.time()

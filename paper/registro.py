@@ -714,6 +714,27 @@ class Registro:
         self._con.commit()
         return int(cursor.lastrowid or 0)
 
+    def ultima_escritura(self) -> datetime | None:
+        """Cuándo se escribió algo por última vez —operación, orden o predicción—.
+
+        Lo usa el vigía para no repetir la vuelta de arranque cuando se relanza
+        el proceso a los minutos: si el registro acaba de escribir, esa lectura
+        ya se hizo. Ver `RECIENTE_S` en paper/vigia.py.
+        """
+        fechas: list[datetime] = []
+        for tabla, columna in (
+            ("operaciones", "abierta_en"),
+            ("ordenes", "creada_en"),
+            ("predicciones", "hecha_en"),
+        ):
+            fila = self._con.execute(f"SELECT MAX({columna}) FROM {tabla}").fetchone()  # noqa: S608
+            if fila and fila[0]:
+                try:
+                    fechas.append(datetime.fromisoformat(str(fila[0])))
+                except ValueError:
+                    continue
+        return max(fechas) if fechas else None
+
     def ordenes_vivas(self) -> list[dict[str, Any]]:
         """Las órdenes que todavía esperan. Es lo que el agente lee al volver."""
         return [

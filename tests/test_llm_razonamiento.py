@@ -62,6 +62,8 @@ def test_el_agente_en_papel_piensa_y_con_mas_presupuesto(
     )
 
     assert espia.ultimo["reasoning"] is True
+    # El valor que pide el llamante, sea cual sea: acá 4096 por el `Settings` de
+    # arriba. El default está en `test_el_presupuesto_de_pensamiento_deja_aire`.
     assert espia.ultimo["num_predict"] == 4096
 
 
@@ -127,3 +129,32 @@ def test_el_agente_en_papel_usa_su_propio_contexto(espia: type[ChatOllamaEspia])
 
     build_llm(ajustes)
     assert espia.ultimo["num_ctx"] == 16384
+
+
+def test_el_vigia_pide_keep_alive_y_la_api_no(espia: type[ChatOllamaEspia]) -> None:
+    """El default de Ollama son 5 min y las vueltas del vigía distan horas: el
+    14B se descargaba entre vueltas y cada una pagaba la carga en frío más la
+    evaluación completa del prefijo (~1 min, medido el 2026-09-16 en su log).
+    La API sigue soltando el modelo como siempre: su latencia no paga por esto."""
+    ajustes = Settings(BYTE_PAPER_KEEP_ALIVE="4h")
+
+    build_llm(ajustes, keep_alive=ajustes.paper_keep_alive)
+    assert espia.ultimo["keep_alive"] == "4h"
+
+    build_llm(ajustes)
+    assert "keep_alive" not in espia.ultimo
+
+
+def test_el_presupuesto_de_pensamiento_deja_aire_al_contexto() -> None:
+    """Medido en el log de Ollama: pico de 11.572 tokens de 12.288 (94 %), con el
+    pensamiento entre 836 y 1.083 por iteración. Con `num_predict` a 4096 el
+    margen eran ~700 tokens, y un pensamiento largo en la última iteración habría
+    provocado un `context shift` silencioso: Ollama tira el PRINCIPIO —la
+    instrucción—. El tope de salida tiene que caber de sobra en lo que queda."""
+    ajustes = Settings()
+
+    assert ajustes.paper_num_predict == 3072
+    # El pensamiento medido (≤1.100) cabe casi tres veces en el presupuesto...
+    assert ajustes.paper_num_predict > 3 * 1000
+    # ...y al prompt le queda más de lo que llegó a pedir (8,9K).
+    assert ajustes.paper_num_ctx - ajustes.paper_num_predict > 8900

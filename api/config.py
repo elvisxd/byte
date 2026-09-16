@@ -67,7 +67,17 @@ class Settings(BaseSettings):
     # agotó los 1024 de `ollama_num_predict` y la respuesta salió VACÍA.
     # La API no los lee —usa los de arriba—, así que su latencia no cambia.
     paper_reasoning: bool = Field(default=False, alias="BYTE_PAPER_REASONING")
-    paper_num_predict: int = Field(default=4096, alias="BYTE_PAPER_NUM_PREDICT")
+    # ⚠ 3072 Y NO 4096 DESDE EL 2026-09-16, PARA DARLE AIRE AL CONTEXTO. Medido
+    # en el log de Ollama: el pico de una vuelta fue 11.572 tokens de 12.288
+    # —el 94 %—, con el pensamiento entre 836 y 1.083 tokens por iteración. Los
+    # 4.096 no se usaban y, si una vuelta pensara largo en la última iteración,
+    # Ollama haría un `context shift` silencioso y tiraría el principio del
+    # contexto: la instrucción. Con 3.072 sobra margen y el pensamiento medido
+    # cabe tres veces.
+    paper_num_predict: int = Field(default=3072, alias="BYTE_PAPER_NUM_PREDICT")
+    # Cuánto se queda el modelo cargado en Ollama entre vueltas del vigía. El
+    # default son 5 min y las vueltas distan horas. Ver `build_llm`.
+    paper_keep_alive: str = Field(default="4h", alias="BYTE_PAPER_KEEP_ALIVE")
     # ⚠ 12K Y NO 16K, PORQUE 16K NO CABE EN LA GPU DE UN MAC DE 16 GB. Medido el
     # 2026-09-14: con 16K, Ollama dejaba una capa del 14B en CPU (40/41) y macOS
     # tenía 12-17 GB en swap; el modelo generaba a 1,9 tok/s. Con 12K entra
