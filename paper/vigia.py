@@ -58,6 +58,7 @@ from paper.publicar import publicar, publicar_resumen
 from paper.registro import Registro
 from paper.sesion import SIMBOLO, armar, poner_al_dia, precarga_segura, una_vuelta
 from paper.trace import TraceDeSesion
+from tools.paper import fijar_vuelta
 
 # Ventana activa, hora local de la máquina. Ver CRITERIO_CADENCIA.md: cubre los
 # cierres de 4h de las 08, 12, 16 y 20 local y la sesión americana. Fuera de
@@ -404,6 +405,10 @@ async def vigilar(
             reservar = getattr(etiqueta, "reservar_primero", None)
             if reservar is not None:
                 reservar(not es_estructura)
+            # Lo que esta vuelta escriba lleva sellado por qué despertó: es lo
+            # que CRITERIO_HORARIOS.md necesita para comparar lecturas de
+            # estructura con lecturas de gestión.
+            fijar_vuelta(motivo="; ".join(motivos))
             vuelta_en_curso = asyncio.ensure_future(correr_vuelta(vueltas_total))
             try:
                 error = await vuelta_en_curso
