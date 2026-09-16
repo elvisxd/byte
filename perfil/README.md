@@ -12,6 +12,12 @@ el modelo se equivoca. Una fila en Postgres no tiene nada de eso.
 **El CV es tuyo, no del modelo.** Byte propone y mide; lo que se manda a una
 empresa lo aprobás vos. Nada acá se publica ni se envía solo.
 
+**Y este repo es público.** Lo que entra en `cv.md`, `github.md`, `quien-soy.md`
+o `busqueda.toml` lo lee cualquiera que haga clic — incluido el reclutador al
+que le mandaste el link del agente. Lo que no querés que lean va en
+`privado.md`, que está en `.gitignore`: fechas de visado, números de documento,
+lo que estés negociando. Byte lo usa para razonar, no para decir.
+
 ## Archivos
 
 | | qué es |
@@ -20,6 +26,7 @@ empresa lo aprobás vos. Nada acá se publica ni se envía solo.
 | `proyectos.md` | Un proyecto por bloque: qué es, qué prueba, números reales. |
 | `github.md` | Estado del perfil: qué repo es público, cuál tiene descripción. |
 | `busqueda.toml` | Qué trabajo buscás. Lo lee el código que puntúa las ofertas (`empleo/`), no el modelo: por eso es TOML y no prosa. |
+| `privado.md` | Lo que Byte tiene que saber y nadie más. **No se versiona** — este repo es público. Se crea copiando `privado.ejemplo.md`. |
 
 ## El flujo real del CV
 

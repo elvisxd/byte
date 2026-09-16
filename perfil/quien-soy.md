@@ -24,3 +24,16 @@ Proyectos propios:
 
 Está buscando trabajo: el CV, el portfolio y el perfil de GitHub son material
 vivo que se actualiza seguido.
+
+**Lo que busca es remoto desde donde sea**, y no es una preferencia estética:
+tiene mudanzas previstas, con sus fechas en `perfil/privado.md`. Un puesto
+atado a una ciudad o a un país es un puesto que pierde en el camino, así que
+las ofertas "worldwide", las que contratan latinoamericanos y las de
+contractor/EOR valen más que las locales.
+
+Tiene **permiso de trabajo vigente en Estados Unidos**. Cuando eso tenga que
+salir en algo que lee otra persona —el CV, una carta, la respuesta a un
+reclutador— se dice así y nada más: autorizado a trabajar, permiso vigente.
+**Sin fechas**, aunque las pregunten. Los detalles están en `perfil/privado.md`,
+que no se versiona; son para razonar, no para decir. Si un formulario exige una
+fecha como campo obligatorio, eso lo decide él: preguntale antes de completar.

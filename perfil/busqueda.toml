@@ -12,6 +12,9 @@ anios = 10
 # Dónde estás hoy. No filtra nada: sirve para que el aviso diga si una oferta
 # presencial te queda cerca o al otro lado del país.
 ubicacion = "Orlando, Florida"
+# Las mudanzas previstas viven en `perfil/privado.md`, que no se versiona: son
+# las que vuelven inservible a una oferta local por buena que sea, y no tienen
+# por qué leerlas los mismos a los que les mandás el CV.
 
 [stack]
 # El peso es cuánto suma que la oferta mencione eso. Alto = es tu diferencial y
@@ -60,9 +63,12 @@ junior = 40
 # Dice explícitamente que no patrocina visas. Se muestra siempre, pero solo
 # resta si abajo declarás que la necesitás.
 sin_patrocinio = 25
-# Solo Estados Unidos. Vivís en Orlando, así que por defecto NO resta: está en 0
-# a propósito. Subilo solo si querés empujar las de afuera hacia arriba.
-solo_us = 0
+# Solo Estados Unidos. Resta, aunque hoy estés en Orlando y puedas trabajar ahí:
+# lo que buscás es un puesto que sobreviva a las mudanzas de `privado.md`, y uno
+# que exige estar en el país no lo hace. No descarta —ninguna señal descarta
+# sola—, pero deja de competir de igual a igual con una "worldwide".
+# Si querés volver a mirar puestos locales, esto vuelve a 0 en una línea.
+solo_us = 20
 
 [situacion]
 # Esto cambia cómo se leen las señales de visa, así que conviene tenerlo

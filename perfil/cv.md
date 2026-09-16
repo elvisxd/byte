@@ -8,7 +8,7 @@ models and predictive systems into products running in production.
 - Contacto: ver `build/cv-{en,es}.html` — el correo y el teléfono no se
   versionan acá para que este archivo pueda vivir en un repo público
 - linkedin.com/in/elvis-pino · github.com/elvisxd · my-porfolio-next.vercel.app
-- Orlando, Florida · Open to relocation & remote work
+- Orlando, Florida · Open to relocation & remote work · Authorized to work in the US
 
 > **Fuente única.** Los PDF de `portfolio/public/`, los de Drive y los de
 > `~/Downloads/cv-elvis/` salen de este archivo. Editar un PDF suelto es lo que
