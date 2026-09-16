@@ -44,7 +44,7 @@ from agent.relevo import Relevo
 from api.config import Settings
 from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
-from paper.prompt import INSTRUCCION, SIMBOLO  # noqa: F401 — SIMBOLO se reexporta
+from paper.prompt import INSTRUCCION, ROL, SIMBOLO  # noqa: F401 — SIMBOLO se reexporta
 from paper.publicar import publicar
 from paper.registro import Registro
 from paper.trace import TraceDeSesion
@@ -339,7 +339,11 @@ async def una_vuelta(
         # KeyError que parece un fallo del modelo.
         await grafo.ainvoke(
             {
-                "messages": [{"role": "user", "content": contenido}],
+                # El rol primero, como `system` (prompt v4): es el prefijo fijo.
+                "messages": [
+                    {"role": "system", "content": ROL},
+                    {"role": "user", "content": contenido},
+                ],
                 "iterations": 0,
                 "sources": [],
                 "tools_used": [],
