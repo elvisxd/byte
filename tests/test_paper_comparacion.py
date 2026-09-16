@@ -223,3 +223,44 @@ def test_el_local_escribe_la_traza_en_disco_y_ademas_la_publica(
 
     assert trace.publicar(viva=True) is True
     assert archivo.exists() and len(pedidos) == 1
+
+
+def test_el_resumen_lleva_las_ultimas_predicciones_una_a_una(tmp_path: Path) -> None:
+    """Para ver CUÁNDO acierta un brazo, no solo cuántas: de la más nueva a la más vieja."""
+    from paper.comparar import resumen
+
+    registro = Registro(tmp_path / "u.db", modelo="gemini-3.5-flash")
+    primera = registro.predecir(
+        simbolo="BTCUSDT",
+        contexto=_ctx(79000),
+        nivel=80000,
+        hacia="arriba",
+        probabilidad=0.4,
+        razonamiento="a",
+        horas_vigencia=6,
+        temporalidad="1h",
+    )
+    registro.predecir(
+        simbolo="BTCUSDT",
+        contexto=_ctx(79000),
+        nivel=70000,
+        hacia="abajo",
+        probabilidad=0.7,
+        razonamiento="b",
+        horas_vigencia=6,
+        temporalidad="15m",
+    )
+    registro.cerrar_conexion()
+
+    ultimas = resumen(tmp_path / "u.db")["ultimas"]
+    assert [u["id"] for u in ultimas][-1] == primera, "de la más nueva a la más vieja"
+    assert ultimas[0]["nivel"] == 70000 and ultimas[0]["temporalidad"] == "15m"
+    assert ultimas[0]["ocurrio"] is None and ultimas[0]["brier"] is None, "viva = esperando"
+    assert ultimas[0]["modelo"] == "gemini-3.5-flash"
+    assert ultimas[0]["sesion"] in (
+        "Asia",
+        "Londres",
+        "Londres y Nueva York",
+        "Nueva York",
+        "entre Nueva York y Asia",
+    )

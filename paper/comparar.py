@@ -31,6 +31,7 @@ def resumen(ruta: str | Path) -> dict[str, Any]:
             "predicciones": _predicciones(con),
             "cierres": _cierres(con),
             "razones": _razones(con),
+            "ultimas": _ultimas(con),
         }
     finally:
         con.close()
@@ -87,6 +88,42 @@ def _predicciones(con: sqlite3.Connection) -> dict[str, Any]:
         "por_marco": por_marco,
         "por_sesion": por_sesion,
     }
+
+
+# Cuántas predicciones viajan una a una. Es para leer CUÁNDO acierta y cuándo
+# no un brazo —con su probabilidad delante—, no para contar: contar es lo de
+# arriba. Treinta cubren una semana larga a este ritmo y pesan unos 5 KB.
+ULTIMAS = 30
+
+
+def _ultimas(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Las últimas predicciones, de la más nueva a la más vieja, resueltas o vivas."""
+    filas = []
+    for f in con.execute(
+        "SELECT id, hecha_en, temporalidad, nivel, hacia, probabilidad, ocurrio, brier, modelo "
+        "FROM predicciones ORDER BY id DESC LIMIT ?",
+        (ULTIMAS,),
+    ):
+        try:
+            sesion = sesion_de(datetime.fromisoformat(str(f["hecha_en"])))
+        except ValueError:
+            sesion = "?"
+        filas.append(
+            {
+                "id": f["id"],
+                "hecha_en": f["hecha_en"],
+                "temporalidad": f["temporalidad"],
+                "sesion": sesion,
+                "nivel": f["nivel"],
+                "hacia": f["hacia"],
+                "probabilidad": f["probabilidad"],
+                # None = viva; el panel distingue «esperando» de «no ocurrió».
+                "ocurrio": None if f["ocurrio"] is None else bool(f["ocurrio"]),
+                "brier": f["brier"],
+                "modelo": f["modelo"],
+            }
+        )
+    return filas
 
 
 def _cierres(con: sqlite3.Connection) -> dict[str, Any]:
