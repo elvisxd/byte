@@ -89,7 +89,8 @@ async def test_la_precarga_va_despues_de_la_instruccion_y_queda_en_la_traza() ->
     trace = TraceDeSesion(sesion_id="s", modelo="m", simbolo="BTCUSDT")
     assert await una_vuelta(_Grafo(), trace, 1, precarga="═══ ESTADO ═══\nnada abierto") is None
 
-    contenido = recibido["messages"][0]["content"]
+    # El mensaje 0 es el rol (`system`, prompt v4); el 1, la instrucción.
+    contenido = recibido["messages"][1]["content"]
     # Prefijo fijo primero —es lo que el proveedor puede cachear—, luego lo que cambia.
     assert contenido.startswith(INSTRUCCION)
     assert contenido.endswith("nada abierto")
@@ -111,11 +112,12 @@ async def test_sin_precarga_la_vuelta_es_la_de_siempre() -> None:
     trace = TraceDeSesion(sesion_id="s", modelo="m", simbolo="BTCUSDT")
     await una_vuelta(_Grafo(), trace, 1)
 
-    assert recibido["messages"][0]["content"] == INSTRUCCION
+    assert recibido["messages"][1]["content"] == INSTRUCCION
     assert trace.instantanea()["pasos"] == []
 
 
-def test_el_prompt_v3_no_manda_pedir_lo_que_ya_viene() -> None:
-    assert VERSION_PROMPT == "3"
+def test_el_prompt_desde_v3_no_manda_pedir_lo_que_ya_viene() -> None:
+    # La versión concreta la fija test_paper_prompt_v4; acá, lo que la precarga garantiza.
+    assert int(VERSION_PROMPT) >= 3
     assert "vienen YA CARGADOS" in INSTRUCCION
     assert "Mirá el estado del registro con `estado_paper`" not in INSTRUCCION

@@ -264,8 +264,8 @@ class AbrirArgs(BaseModel):
     razon: str = Field(
         description=(
             "Por qué entrás ACÁ y no cinco velas después. Concreto: qué viste en el "
-            "gráfico. Esto queda sellado y es lo que se va a revisar cuando la "
-            "operación cierre."
+            "gráfico, y qué pesa EN CONTRA. Esto queda sellado y es lo que se va a "
+            "revisar cuando la operación cierre."
         )
     )
 
@@ -458,7 +458,10 @@ class PredecirArgs(BaseModel):
         )
     )
     razonamiento: str = Field(
-        description="Qué ves que justifica ESA probabilidad. Queda sellado al predecir."
+        description=(
+            "Qué ves que justifica ESA probabilidad, partiendo de la tasa base del mapa, "
+            "y qué pesa EN CONTRA. Queda sellado al predecir."
+        )
     )
     temporalidad: str = Field(
         default="1h",
@@ -790,6 +793,46 @@ def _anatomia_de_la_vela_cerrada(velas: list[dict[str, Any]], atr: Any) -> str:
     )
 
 
+def _tasa_base(
+    velas: list[dict[str, Any]], atr: float | None, horizonte: int = 24
+) -> dict[str, Any] | None:
+    """Cuántas veces un nivel a 1 y a 2 ATR se tocó dentro del plazo, en estas velas.
+
+    ⚠ ES LA VISTA EXTERNA QUE LOS MODELOS NO TIENEN. La literatura de
+    pronóstico (paper/INVESTIGACION_PROMPTS_2026-09-16.md) señala la tasa base
+    como lo que más falta a un modelo que pone probabilidades: no sabe cuántas
+    veces «tocar un nivel a 2 ATR en 24 h» ocurre por azar, y sin eso su número
+    sale de la nada. Es aritmética sobre las velas (uso 1 de TRAMPAS.md), no una
+    decisión: para cada vela cerrada con `horizonte` velas por delante, ¿el
+    máximo posterior llegó a cierre + k·ATR? ¿El mínimo a cierre − k·ATR? Se
+    promedian los dos lados. `horizonte` = 24 velas = el plazo con el que el
+    registro resuelve la predicción de ese marco (PLAZO_POR_MARCO).
+
+    Con el ATR de AHORA aplicado a todas: es una aproximación honesta y
+    declarada, no una serie de ATR históricos.
+    """
+    if not isinstance(atr, int | float) or atr <= 0:
+        return None
+    cerradas = velas[:-1]
+    n = len(cerradas) - horizonte
+    if n < 30:
+        return None
+    toques = {1: 0, 2: 0}
+    for i in range(n):
+        cierre = cerradas[i]["close"]
+        despues = cerradas[i + 1 : i + 1 + horizonte]
+        maximo = max(v["high"] for v in despues)
+        minimo = min(v["low"] for v in despues)
+        for k in (1, 2):
+            toques[k] += int(maximo >= cierre + k * atr) + int(minimo <= cierre - k * atr)
+    return {
+        "1_atr": round(100 * toques[1] / (2 * n)),
+        "2_atr": round(100 * toques[2] / (2 * n)),
+        "velas": n,
+        "horizonte": horizonte,
+    }
+
+
 def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     """Un marco en cuatro a siete líneas. Hechos; los mismos que `_mirar`, apretados."""
     ctx = _contexto_de(datos, ind)
@@ -832,6 +875,13 @@ def _bloque(marco: str, datos: dict[str, Any], ind: dict[str, Any]) -> str:
     cerrada = _anatomia_de_la_vela_cerrada(datos["velas"], ind.get("atr"))
     if cerrada:
         lineas.append(f"   {cerrada}")
+    tasa = _tasa_base(datos["velas"], ind.get("atr"))
+    if tasa:
+        lineas.append(
+            f"   tasa base: en las últimas {tasa['velas']} velas, un nivel a 1 ATR se tocó "
+            f"dentro de {tasa['horizonte']} velas el {tasa['1_atr']}% de las veces; "
+            f"a 2 ATR, el {tasa['2_atr']}%"
+        )
     pools = ind.get("liquidity") or []
     if pools:
         lineas.append(
@@ -1285,9 +1335,9 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
         Tool(
             name="estado_paper",
             description=(
-                "Qué operaciones quedaron abiertas y cómo va cada eje. Usala al empezar "
-                "una sesión: entre una y otra el proceso muere y esto es lo único que "
-                "recuerda qué había a medias."
+                "Qué operaciones quedaron abiertas y cómo va cada eje. YA VIENE en tu "
+                "mensaje al empezar la vuelta: pedilo solo si acabás de escribir algo y "
+                "necesitás verlo actualizado."
             ),
             args_model=EstadoArgs,
             run=estado,
