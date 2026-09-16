@@ -19,6 +19,7 @@ empresa lo aprobás vos. Nada acá se publica ni se envía solo.
 | `cv.md` | El CV en texto, la fuente de verdad. Los PDF salen de acá. |
 | `proyectos.md` | Un proyecto por bloque: qué es, qué prueba, números reales. |
 | `github.md` | Estado del perfil: qué repo es público, cuál tiene descripción. |
+| `busqueda.toml` | Qué trabajo buscás. Lo lee el código que puntúa las ofertas (`empleo/`), no el modelo: por eso es TOML y no prosa. |
 
 ## El flujo real del CV
 

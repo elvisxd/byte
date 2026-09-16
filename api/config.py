@@ -178,6 +178,11 @@ class Settings(BaseSettings):
     # Carpeta con instrucciones por tarea (`<carpeta>/<skill>/SKILL.md`), en el
     # formato que usan otras herramientas de agente.
     skills_dir: str = Field(default="", alias="BYTE_SKILLS")
+    # Buscar trabajo: puntuar ofertas y traerlas de los feeds oficiales. Opt-in
+    # porque trae contenido de terceros al prompt, igual que la búsqueda web.
+    empleo_tools: bool = Field(default=False, alias="BYTE_EMPLEO_TOOLS")
+    # Dónde está el criterio de búsqueda. Vacío = `perfil/busqueda.toml` del repo.
+    empleo_criterio: str = Field(default="", alias="BYTE_EMPLEO_CRITERIO")
     # Paper trading: dónde vive el registro de operaciones. Necesita también
     # BYTE_PAPER_SCRIPTS, que apunta a los indicadores del repo de trading.
     paper_db: str = Field(default="", alias="BYTE_PAPER_DB")

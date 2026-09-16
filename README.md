@@ -19,13 +19,14 @@ Python · FastAPI · LangGraph · Ollama · PostgreSQL + pgvector · MCP · AG-U
 - [Contrato de la API](docs/api-contrato-byte.md) — endpoints, runs, eventos AG-UI, documentos, sandbox
 - [Seguridad: modelo de amenazas y checklist](docs/seguridad-byte.md) — OWASP LLM 2025 + Agentic 2026
 - [Identidad visual y prompts de Canva](docs/prompts-canva-byte.md)
+- [Buscar trabajo](empleo/README.md) — de dónde salen las ofertas, cómo se puntúan y por qué esto no postula solo
 - [Diagramas](docs/diagramas/) — el sistema completo y las conexiones con n8n, como páginas que se abren en el navegador
 
 ## Estructura
 Un módulo por carpeta; cada carpeta tiene su README explicando qué va ahí.
 
 ```
-api/  agent/  tools/  sandbox/  mcp_client/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  perfil/  docs/
+api/  agent/  tools/  sandbox/  mcp_client/  rag/  models/  db/  web/  cli/  n8n/  docker/  tests/  evals/  perfil/  empleo/  docs/
 ```
 
 ## Cómo correrlo
@@ -121,6 +122,24 @@ cd sandbox && npm test    # incluye la suite de escape del sandbox
 ```
 
 ## Qué hay hoy
+
+### Buscar trabajo
+
+- **`empleo/`**: trae ofertas de RemoteOK, Remotive, We Work Remotely y del hilo
+  "Who is hiring?" de Hacker News —las cuatro por API o RSS oficial, sin raspar
+  nada—, las puntúa contra tu perfil y manda los links por Telegram
+- **El puntaje lo calcula el código**, como en `paper/`: cada punto sale de
+  `perfil/busqueda.toml` y viene con la línea que lo explica. Ninguna señal
+  descarta sola — una oferta que dice "US only" baja de puesto y se muestra con
+  la señal a la vista, porque filtrar en silencio hace invisible un criterio
+  equivocado
+- **No postula a nada, ni va a hacerlo.** Upwork prohíbe los bots y castiga el
+  auto-envío de propuestas con suspensión permanente; su API oficial ni siquiera
+  tiene la mutation para enviar una. Sin `UPWORK_TOKEN` no se manda un solo
+  pedido a Upwork, y hay un test que lo verifica
+- **`analizar_oferta`** cubre Upwork mientras tanto: le pegás la oferta al chat y
+  Byte la puntúa con el mismo criterio que el cazador
+
 
 ### Usuarios con JWT
 

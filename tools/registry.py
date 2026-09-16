@@ -165,6 +165,25 @@ def build_registry(settings: Settings, doc_store: "DocumentStore | None" = None)
         if herramienta is not None:
             registry.add(herramienta)
 
+    # Buscar trabajo. Opt-in como el resto de lo que trae texto ajeno al prompt.
+    if settings.empleo_tools:
+        from pathlib import Path
+
+        from tools.empleo import build_empleo_tools
+
+        criterio = (
+            Path(settings.empleo_criterio).expanduser()
+            if settings.empleo_criterio
+            else Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
+        )
+        for herramienta in build_empleo_tools(criterio, settings.max_tool_result_chars):
+            registry.add(herramienta)
+        logger.info(
+            "empleo_activo",
+            criterio=str(criterio),
+            detail="el agente puede puntuar ofertas y traer links; no postula a ninguna",
+        )
+
     # Paper trading. Necesita las dos cosas: dónde guardar y de dónde sacar los
     # indicadores — sin la segunda las herramientas fallarían en cada llamada.
     if settings.paper_db and os.environ.get("BYTE_PAPER_SCRIPTS"):
