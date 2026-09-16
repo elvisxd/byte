@@ -60,6 +60,18 @@ class RelevoAgotado(RuntimeError):
     """Todos los modelos de la lista están en cuarentena."""
 
 
+def _hora() -> str:
+    """La hora local en cada línea del relevo.
+
+    ⚠ SIN ESTO NO SE PUEDE EVALUAR EL HORARIO DE LOS BRAZOS. Las líneas
+    `contesta`/`agotado` son lo único que dice cuándo se acabó cada modelo, y
+    hasta el 2026-09-15 iban sin reloj: para saber que el 120b de Groq se agotó
+    a las 17:34 hubo que cruzar el mtime del log con las velas de al lado. Ver
+    paper/CRITERIO_HORARIOS.md.
+    """
+    return datetime.now().strftime("%H:%M:%S")
+
+
 def tipo_de_agotamiento(exc: BaseException) -> str | None:
     """`minuto`, `dia` o `caido` si el error es de cuota o de servicio; None si es otra cosa.
 
@@ -148,6 +160,8 @@ class _Estado:
         self.actual: str | None = None
         self.hasta: dict[str, float] = {}
         self.ultima_llamada = float("-inf")
+        # Ver `Relevo.reservar_primero`. Compartido con las copias ligadas.
+        self.reservar_primero = False
 
 
 class Relevo:
@@ -223,9 +237,25 @@ class Relevo:
             _estado=self._estado,
         )
 
+    def reservar_primero(self, reservar: bool) -> None:
+        """Si el primero de la lista se guarda para otra vuelta.
+
+        ⚠ ES LA REGLA DE paper/CRITERIO_HORARIOS.md. Medido el 2026-09-15: el
+        modelo bueno de cada lista se gastó por la mañana en vueltas de lectura
+        y de niveles cercanos, y el cierre de 4h de las 20:00 —la vuelta que
+        más vale— lo hizo el lite o nadie. Con la reserva puesta, las vueltas
+        de gestión van del segundo en adelante y el primero llega a los cierres.
+        La reserva NO deja a nadie sin modelo: si el primero es el único
+        disponible, contesta él.
+        """
+        self._estado.reservar_primero = reservar
+
     def _disponibles(self) -> list[tuple[str, Any]]:
         t = self.reloj()
-        return [(n, m) for n, m in self.modelos if self._estado.hasta.get(n, float("-inf")) <= t]
+        vivos = [(n, m) for n, m in self.modelos if self._estado.hasta.get(n, float("-inf")) <= t]
+        if self._estado.reservar_primero and len(vivos) > 1 and vivos[0][0] == self.modelos[0][0]:
+            return vivos[1:]
+        return vivos
 
     async def _espaciar(self) -> None:
         falta = self._estado.ultima_llamada + self.espera_s - self.reloj()
@@ -251,7 +281,7 @@ class Relevo:
             cuarentena = CUARENTENA_CAIDO_S
         self._estado.hasta[nombre] = self.reloj() + cuarentena
         print(
-            f"[relevo] {nombre} agotado ({tipo}): vuelve en {cuarentena / 60:.0f} min · "
+            f"[relevo] {_hora()} {nombre} agotado ({tipo}): vuelve en {cuarentena / 60:.0f} min · "
             f"{str(exc)[:80]}",
             flush=True,
         )
@@ -262,9 +292,9 @@ class Relevo:
         entrada = (uso or {}).get("input_tokens") if isinstance(uso, dict) else None
         peso = f" · {entrada} tokens de entrada" if entrada else ""
         if self._estado.actual != nombre:
-            print(f"[relevo] contesta {nombre}{peso}", flush=True)
+            print(f"[relevo] {_hora()} contesta {nombre}{peso}", flush=True)
         elif peso:
-            print(f"[relevo] {nombre}{peso}", flush=True)
+            print(f"[relevo] {_hora()} {nombre}{peso}", flush=True)
         self._estado.actual = nombre
 
     def _espera_hasta_el_primero(self) -> float:
@@ -277,7 +307,8 @@ class Relevo:
         if espera > ESPERA_CORTA_S:
             return False
         print(
-            f"[relevo] todos en cuarentena; el primero vuelve en {espera:.0f} s: espero", flush=True
+            f"[relevo] {_hora()} todos en cuarentena; el primero vuelve en {espera:.0f} s: espero",
+            flush=True,
         )
         await self.dormir(espera + 1.0)
         return True
@@ -289,41 +320,64 @@ class Relevo:
             f"el primero vuelve en {espera / 60:.0f} min"
         )
 
+    # ⚠ DOS PASADAS, Y LA ESPERA VA ENTRE LAS DOS. La primera versión solo
+    # esperaba ANTES de empezar, si ya no había nadie disponible. Medido el
+    # 2026-09-15 a las 20:06: el 120b llevaba agotado desde las 17:34, el 20b
+    # cayó por tope de minuto A MITAD de la vuelta del cierre de 4h —«vuelve en
+    # 1 min»—, y el relevo lanzó «todos agotados» sin esperar ese minuto: la
+    # vuelta se perdió y no había reintento antes del reposo. Ahora, si la
+    # lista se vacía durante la pasada y el primero vuelve pronto, se espera
+    # UNA vez y se vuelve a pasar. Una sola vez: si el segundo intento también
+    # se vacía, es que el tope no es de segundos.
     async def astream(self, entrada: Any, **kwargs: Any) -> AsyncIterator[Any]:
         await self._espaciar()
-        if not self._disponibles() and await self._esperar_si_es_corto():
-            pass
-        for nombre, modelo in self._disponibles():
-            emitio = False
-            uso: Any = None
-            try:
-                async for trozo in modelo.astream(entrada, **kwargs):
-                    emitio = emitio or _es_respuesta(trozo)
-                    uso = getattr(trozo, "usage_metadata", None) or uso
-                    yield trozo
-            except Exception as exc:
-                tipo = tipo_de_agotamiento(exc)
-                if tipo is None or emitio:
-                    raise
-                self._agotar(nombre, tipo, exc)
+        for pasada in (1, 2):
+            for nombre, modelo in self._disponibles():
+                emitio = False
+                uso: Any = None
+                try:
+                    async for trozo in modelo.astream(entrada, **kwargs):
+                        emitio = emitio or _es_respuesta(trozo)
+                        uso = getattr(trozo, "usage_metadata", None) or uso
+                        yield trozo
+                except Exception as exc:
+                    tipo = tipo_de_agotamiento(exc)
+                    if tipo is None or emitio:
+                        raise
+                    self._agotar(nombre, tipo, exc)
+                    continue
+                self._contesto(nombre, uso)
+                return
+            if pasada == 1 and await self._segunda_pasada():
                 continue
-            self._contesto(nombre, uso)
-            return
-        raise self._nadie()
+            raise self._nadie()
+
+    async def _segunda_pasada(self) -> bool:
+        """Si merece volver a pasar la lista tras vaciarse la primera.
+
+        Dos casos: la reserva del primero dejó fuera al único que sigue vivo
+        (se suelta sola: `_disponibles` no reserva cuando queda uno), o todos
+        están en cuarentena pero el primero vuelve en segundos (se espera).
+        """
+        if self._disponibles():
+            return True
+        return await self._esperar_si_es_corto()
 
     async def ainvoke(self, entrada: Any, **kwargs: Any) -> Any:
         await self._espaciar()
-        if not self._disponibles() and await self._esperar_si_es_corto():
-            pass
-        for nombre, modelo in self._disponibles():
-            try:
-                respuesta = await modelo.ainvoke(entrada, **kwargs)
-            except Exception as exc:
-                tipo = tipo_de_agotamiento(exc)
-                if tipo is None:
-                    raise
-                self._agotar(nombre, tipo, exc)
+        for pasada in (1, 2):
+            for nombre, modelo in self._disponibles():
+                try:
+                    respuesta = await modelo.ainvoke(entrada, **kwargs)
+                except Exception as exc:
+                    tipo = tipo_de_agotamiento(exc)
+                    if tipo is None:
+                        raise
+                    self._agotar(nombre, tipo, exc)
+                    continue
+                self._contesto(nombre)
+                return respuesta
+            if pasada == 1 and await self._segunda_pasada():
                 continue
-            self._contesto(nombre)
-            return respuesta
-        raise self._nadie()
+            raise self._nadie()
+        raise self._nadie()  # inalcanzable; para el tipado

@@ -316,6 +316,67 @@ async def test_un_cierre_de_4h_despierta_dentro_de_la_ventana(mundo: _Mundo, tmp
     assert vueltas == [1]
 
 
+async def test_el_primero_de_la_lista_se_reserva_para_los_cierres_de_4h(
+    mundo: _Mundo, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """paper/CRITERIO_HORARIOS.md: la lectura de arranque va con reserva (del
+    segundo en adelante); el cierre de 4h, sin ella (abre el primero)."""
+    reservas: list[bool] = []
+
+    def etiqueta() -> str:
+        return "g"
+
+    etiqueta.reservar_primero = reservas.append  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        vigia, "armar", lambda ajustes, db, modelos=None: (Registro(db), object(), etiqueta)
+    )
+    tick = {"n": 0}
+
+    def ahora() -> datetime:
+        tick["n"] += 1
+        if tick["n"] == 3:
+            mundo.cierre_4h += 14400
+        return mundo.hora
+
+    async def vuelta(_n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=ahora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=4,
+        modelos=["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+        publicar_al_panel=False,
+        archivo_traza=str(tmp_path / "t.json"),
+        brazo="gemini",
+    )
+
+    # Vuelta 1: arranque (gestión) → reservado. Vuelta 2: cierre de 4h → libre.
+    assert reservas == [True, False]
+
+
+async def test_el_local_sin_relevo_no_tiene_nada_que_reservar(mundo: _Mundo, tmp_path: Any) -> None:
+    """La etiqueta del local es una cadena: el vigía no le pide nada."""
+    vueltas: list[int] = []
+
+    async def vuelta(n: int) -> str | None:
+        vueltas.append(n)
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: mundo.hora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=2,
+    )
+    assert vueltas == [1]
+
+
 async def test_fuera_de_la_ventana_no_despierta_aunque_haya_motivo(
     mundo: _Mundo, tmp_path: Any
 ) -> None:

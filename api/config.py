@@ -100,14 +100,18 @@ class Settings(BaseSettings):
     # Mismo razonamiento que `gemini_num_predict`: el pensamiento de gpt-oss
     # cuenta dentro del tope de salida.
     groq_num_predict: int = Field(default=8192, alias="BYTE_GROQ_NUM_PREDICT")
-    # ⚠ 45 SEGUNDOS, NO 12. Medido el 2026-09-15: la capa gratuita de Groq
-    # tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
+    # ⚠ 60 SEGUNDOS, NO 45 NI 12. Medido el 2026-09-15: la capa gratuita de
+    # Groq tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
     # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
-    # llegó el 429 del minuto. Con 45 s entre llamadas entra una por minuto y
-    # la vuelta tarda 4-5 min, seis veces menos que el local. Una petición
-    # sola de más de 8K da 413 y no hay espera que la arregle: ese es el
-    # techo del prompt para este brazo, y el relevo lo anota.
-    groq_espera_s: float = Field(default=45.0, alias="BYTE_GROQ_ESPERA_S")
+    # llegó el 429 del minuto. Con 45 s parecía resuelto —una llamada por
+    # minuto si los DOS modelos se turnan—, pero en cuanto UNO carga con todo
+    # (el 120b agotó su cuota del día a las 17:34 y el 20b quedó solo) dos
+    # llamadas de 4-6k caben en el mismo minuto y a las 20:06 volvió el 429 en
+    # la cuarta llamada de la vuelta del cierre de 4h. Con 60 s es una por
+    # minuto pase lo que pase; la vuelta tarda ~6 min, aún muy por debajo del
+    # local. Una petición sola de más de 8K da 413 y no hay espera que la
+    # arregle: ese es el techo del prompt para este brazo, y el relevo lo anota.
+    groq_espera_s: float = Field(default=60.0, alias="BYTE_GROQ_ESPERA_S")
 
     # --- Persistencia ---
     database_url: str = Field(default="", alias="DATABASE_URL")

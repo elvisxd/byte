@@ -235,6 +235,80 @@ async def test_si_todos_estan_agotados_pero_por_segundos_espera() -> None:
     assert any(20 <= d <= 30 for d in reloj.dormido), reloj.dormido
 
 
+async def test_si_el_ultimo_cae_a_mitad_de_llamada_espera_si_es_corto() -> None:
+    """Medido el 2026-09-15 a las 20:06: el 120b agotado del día, el 20b cae
+    por tope de MINUTO en la cuarta llamada de la vuelta, y el relevo lanzó
+    «todos agotados; el primero vuelve en 1 min» sin esperar ese minuto: la
+    espera solo existía ANTES de empezar. La vuelta del cierre de 4h se perdió
+    y no había reintento antes del reposo."""
+
+    class _CaeUnaVez(_Modelo):
+        """Falla la primera vez que se le llama y contesta después: un tope de minuto."""
+
+        async def astream(self, entrada: Any, **_: Any) -> Any:
+            self.llamadas += 1
+            if self.fallo is not None:
+                fallo, self.fallo = self.fallo, None
+                raise fallo
+            for i in range(self.trozos):
+                yield f"{self.nombre}:{i}"
+
+    reloj = _Reloj()
+    ahora = datetime(2026, 9, 15, 17, 34, tzinfo=PACIFICO)
+    a = _Modelo("a", _Error(429, "GenerateRequestsPerDayPerProjectPerModel"))
+    b = _CaeUnaVez("b")
+    relevo = Relevo(
+        [("a", a), ("b", b)], espera_s=0, reloj=reloj, dormir=reloj.dormir, ahora=lambda: ahora
+    )
+    # 17:34: `a` se agota del día; `b` carga con todo.
+    assert await _todo(relevo) == ["b:0", "b:1"]
+
+    # 20:06: `b` choca con el tope de minuto A MITAD de la vuelta. Antes: «todos
+    # agotados», vuelta perdida. Ahora: se espera ~25 s y `b` contesta.
+    b.fallo = _Error(429, "Rate limit reached. Please try again in 20s.")
+    assert await _todo(relevo) == ["b:0", "b:1"]
+    assert b.llamadas == 3, "una que falló, y la que contestó tras esperar"
+    assert any(20 <= d <= 30 for d in reloj.dormido), reloj.dormido
+    assert a.llamadas == 1, "el agotado del día ni se intenta"
+
+
+async def test_con_reserva_el_primero_se_guarda_y_contesta_el_segundo() -> None:
+    """paper/CRITERIO_HORARIOS.md: las vueltas de gestión van del segundo en
+    adelante; el primero se guarda para los cierres de 4h."""
+    a, b = _Modelo("a"), _Modelo("b")
+    relevo = _relevo(a, b)
+
+    relevo.reservar_primero(True)
+    assert await _todo(relevo) == ["b:0", "b:1"]
+    assert a.llamadas == 0
+
+    relevo.reservar_primero(False)
+    assert await _todo(relevo) == ["a:0", "a:1"]
+
+    # La copia con herramientas ve la misma reserva.
+    relevo.reservar_primero(True)
+    assert await relevo.bind_tools([{"name": "x"}]).ainvoke("hola") == "b"
+
+
+async def test_la_reserva_no_deja_a_nadie_sin_modelo() -> None:
+    """Si el primero es el único vivo, contesta él: reservar no es agotar."""
+    reloj = _Reloj()
+    a = _Modelo("a")
+    b = _Modelo("b", _Error(429, "GenerateRequestsPerDayPerProjectPerModel"))
+    relevo = Relevo(
+        [("a", a), ("b", b)],
+        espera_s=0,
+        reloj=reloj,
+        dormir=reloj.dormir,
+        ahora=lambda: datetime(2026, 9, 15, 10, 0, tzinfo=PACIFICO),
+    )
+    relevo.reservar_primero(True)
+    # b cae del día en la primera llamada; con la reserva, a era el descartado…
+    # pero al quedar solo, contesta.
+    assert await _todo(relevo) == ["a:0", "a:1"]
+    assert b.llamadas == 1 and a.llamadas == 1
+
+
 async def test_un_error_que_no_es_de_cuota_sube_tal_cual() -> None:
     relevo = _relevo(_Modelo("a", ValueError("argumento inválido")), _Modelo("b"))
     with pytest.raises(ValueError, match="argumento"):
