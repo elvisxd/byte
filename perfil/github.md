@@ -6,12 +6,13 @@ Medido el 12 de septiembre de 2026 con `gh`. Lo vuelve a medir
 ## El problema principal: lo mejor está invisible
 
 **27 repos, 8 públicos.** El README de perfil (17,5 KB, bien trabajado) destaca
-Byte como trabajo principal, pero **el repo es privado**: quien lee "Self-Hosted
-AI Agent con LangGraph y MCP", se interesa y hace clic, encuentra un 404.
+Byte como trabajo principal.
 
-Lo mismo con el dashboard de trading y GO190 Store. Los únicos proyectos
-enlazados y accesibles son el portfolio, un generador de QR y una app del clima
-— los tres más chicos.
+**Byte ya es público** (se abrió después de esta medición), así que el 404 que
+encontraba quien hacía clic en "Self-Hosted AI Agent con LangGraph y MCP" está
+resuelto. Falta lo demás: el dashboard de trading y GO190 Store siguen privados,
+y los únicos otros proyectos enlazados y accesibles son el portfolio, un
+generador de QR y una app del clima — los tres más chicos.
 
 Esto no lo arregla ninguna automatización: es una decisión sobre qué mostrar.
 
@@ -25,7 +26,9 @@ Esto no lo arregla ninguna automatización: es una decisión sobre qué mostrar.
 
 ## El CV está desactualizado y duplicado
 
-El PDF dice **"183 tests"**; hoy son **459**. Y hay seis copias en tres lugares,
+El PDF dice **"183 tests"**; el `cv.md` dice **459**; hoy son **807**
+(`uv run python perfil/actualizar.py`). El número envejeció dos veces, que es
+exactamente el argumento de por qué se mide y no se escribe. Y hay seis copias en tres lugares,
 todas de distinto tamaño:
 
 | dónde | es | en |

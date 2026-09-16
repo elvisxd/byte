@@ -1,0 +1,90 @@
+# Qué trabajo se busca. Es tuyo: editalo y el cazador cambia sin tocar código.
+#
+# Va en TOML y no en markdown como el resto de `perfil/` porque esto no lo lee
+# el modelo, lo lee el código que puntúa. El criterio con el que se descarta una
+# oferta tiene que ser un dato revisable en un diff, no una frase que el modelo
+# interpreta distinto cada vez.
+
+[perfil]
+# Años de experiencia. Solo se usa para marcar las ofertas junior, que son ruido
+# a los diez años y aparecen igual en cualquier feed de "developer".
+anios = 10
+# Dónde estás hoy. No filtra nada: sirve para que el aviso diga si una oferta
+# presencial te queda cerca o al otro lado del país.
+ubicacion = "Orlando, Florida"
+
+[stack]
+# El peso es cuánto suma que la oferta mencione eso. Alto = es tu diferencial y
+# una oferta que lo pide te busca a vos; bajo = lo sabés pero lo sabe todo el
+# mundo, y encontrarlo no dice mucho.
+#
+# Los términos se buscan en el título y en el cuerpo, sin distinguir mayúsculas.
+# Un término de una sola letra o demasiado común ("go", "c") daría falsos
+# positivos en cualquier texto largo: por eso van los nombres completos.
+fuerte = [
+  "langgraph", "langchain", "rag", "retrieval augmented", "pgvector",
+  "llm", "large language model", "ai agent", "agentic", "prompt engineering",
+  "vector database", "embeddings", "mcp", "model context protocol",
+  "openai", "anthropic", "claude", "gemini", "ollama",
+]
+medio = [
+  "next.js", "nextjs", "nestjs", "react native", "fastapi",
+  "typescript", ".net", "c#", "graphql", "pgsql", "postgresql",
+]
+leve = [
+  "react", "node.js", "nodejs", "python", "docker", "redis",
+  "tailwind", "express", "rest api", "microservices",
+]
+
+[preferencias]
+# Cuánto suma cada cosa que te importa. Poner 0 la apaga sin borrar la línea.
+#
+# Contratan latinoamericanos: lo que más pesa. Una oferta "worldwide" o que
+# nombra LatAm te contrata sin que nadie tenga que patrocinar nada.
+latam = 30
+# Remoto en cualquier parte del mundo.
+remoto_global = 20
+# Reubicación: la pagan o al menos la mencionan.
+reubicacion = 15
+# Contratación como contractor / EOR (Deel, Remote.com): el camino por el que
+# una empresa de afuera contrata sin abrir entidad legal.
+contractor = 12
+# Freelance por proyecto (Upwork y similares).
+freelance = 5
+
+[penalizaciones]
+# Restan. Ninguna descarta sola: el aviso muestra la señal y decidís vos.
+#
+# Junior / entry level: a los diez años es tiempo perdido.
+junior = 40
+# Dice explícitamente que no patrocina visas. Se muestra siempre, pero solo
+# resta si abajo declarás que la necesitás.
+sin_patrocinio = 25
+# Solo Estados Unidos. Vivís en Orlando, así que por defecto NO resta: está en 0
+# a propósito. Subilo solo si querés empujar las de afuera hacia arriba.
+solo_us = 0
+
+[situacion]
+# Esto cambia cómo se leen las señales de visa, así que conviene tenerlo
+# explícito y no adivinado. Si hoy necesitás que una empresa patrocine para
+# trabajar, poné `true` y las ofertas que dicen "no sponsorship" bajan.
+necesita_patrocinio = false
+
+[fuentes]
+# Qué feeds se consultan. Todas publican API o RSS oficial: acá no se scrapea
+# nada. Upwork es la excepción y está explicada en `empleo/README.md`.
+remoteok = true
+remotive = true
+weworkremotely = true
+hackernews = true
+# Upwork solo se activa con una API key aprobada por ellos. Sin key no trae
+# nada y lo dice: no hay modo "probemos igual", porque el modo de probar igual
+# es el que termina en cuenta suspendida.
+upwork = false
+
+[aviso]
+# Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee.
+tope_por_aviso = 8
+# Puntaje mínimo para que una oferta llegue al teléfono. Las que quedan abajo
+# se guardan igual en el digest de disco, por si el criterio quedó muy duro.
+puntaje_minimo = 25
