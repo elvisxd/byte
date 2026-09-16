@@ -552,6 +552,67 @@ async def test_pide_estar_despierta_solo_dentro_de_la_ventana(mundo: _Mundo, tmp
     assert pedidos == [True, False, False, False], "tres sondeos y la soltada final"
 
 
+def test_el_caffeinate_se_pide_diez_minutos_antes_de_la_ventana() -> None:
+    """Medido el 2026-09-16: la Mac despertó a las 07:55 y a las 07:56 volvió a
+    dormirse, porque el vigía solo sostenía dentro de la ventana (08:00)."""
+    from paper.vigia import hay_que_sostener
+
+    h = lambda hh, mm: datetime(2026, 9, 16, hh, mm)  # noqa: E731
+    assert not hay_que_sostener(h(7, 49))
+    assert hay_que_sostener(h(7, 50))
+    assert hay_que_sostener(h(7, 55)), "el despertar programado cae dentro del margen"
+    assert hay_que_sostener(h(8, 0)) and hay_que_sostener(h(20, 30))
+    assert not hay_que_sostener(h(20, 31))
+
+
+async def test_al_despertar_la_mac_pide_caffeinate_en_segundos_y_no_al_tick_siguiente(
+    mundo: _Mundo, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La Mac duerme once horas a mitad de un sueño de 15 min. Al despertar, el
+    reloj de pared saltó: se reevalúa el caffeinate en ese mismo trozo de 5 s
+    —antes del minuto de inactividad que la duerme otra vez— y el tick se hace ya."""
+    import paper.vigia as vigia_mod
+
+    pared = {"t": 1_000_000.0}
+    monkeypatch.setattr(vigia_mod.time, "time", lambda: pared["t"])
+    saltos = {"n": 0}
+
+    async def dormir_con_sueno_del_sistema(s: float) -> None:
+        saltos["n"] += 1
+        # El primer trozo del sueño: la Mac se duerme y despierta once horas después.
+        pared["t"] += s + (11 * 3600 if saltos["n"] == 1 else 0)
+
+    horas = iter(
+        [
+            datetime(2026, 9, 15, 20, 40).astimezone(),  # tick 1: fuera de la ventana
+            datetime(2026, 9, 16, 7, 55).astimezone(),  # al notar el salto
+            datetime(2026, 9, 16, 7, 55).astimezone(),  # tick 2, adelantado
+        ]
+    )
+    pedidos: list[bool] = []
+
+    async def sin_vuelta(_n: int) -> str | None:
+        return None
+
+    await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=lambda: next(horas),
+        dormir=dormir_con_sueno_del_sistema,
+        correr_vuelta=sin_vuelta,
+        ticks=2,
+        primera_vuelta_al_arrancar=False,
+        avisar=lambda _t: True,
+        mantener_despierta=pedidos.append,
+    )
+
+    # Tick 1 fuera → False. Salto → True en el acto. Tick 2 a las 07:55 → True.
+    # Al parar → False.
+    assert pedidos == [False, True, True, False], pedidos
+    # El tick 2 llegó tras UN trozo de 5 s, no tras los 180 del sueño entero.
+    assert saltos["n"] == 1 + 180, "un trozo con salto, y el sueño completo del tick 2"
+
+
 async def test_si_arranca_ya_fuera_de_la_ventana_no_avisa(mundo: _Mundo, tmp_path: Any) -> None:
     avisos: list[str] = []
     mundo.hora = datetime(2026, 9, 15, 22, 0).astimezone()

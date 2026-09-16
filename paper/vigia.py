@@ -47,7 +47,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import time as hora_del_dia
 from typing import Any
 
@@ -136,6 +136,30 @@ class Despertador:
 
 def en_ventana(ahora: datetime, ventana: tuple[hora_del_dia, hora_del_dia] = VENTANA) -> bool:
     return ventana[0] <= ahora.time() <= ventana[1]
+
+
+# ⚠ EL CAFFEINATE SE PIDE DIEZ MINUTOS ANTES DE LA VENTANA, NO AL ABRIRSE.
+# Medido el 2026-09-16: la Mac despertó a las 07:55 por el horario del sistema
+# y a las 07:56:11 volvió a dormirse por inactividad —`pmset sleep 1`—, porque
+# el vigía solo sostenía la aserción DENTRO de la ventana (08:00) y además la
+# reevaluaba una vez por tick de 15 min. Hubo dark wakes a las 08:00 y 08:10 y
+# el despertar real fue a las 08:10:35 por el teclado del usuario. Sin él, ese
+# día no habría habido vuelta de las 08:00 ni ninguna otra. Es lo que el
+# usuario describía como «se me apaga si la dejo sin YouTube».
+MARGEN_DESPERTAR_S = 600
+# Cuánto tiene que saltar el reloj de pared durante un trozo de sueño para
+# darlo por un sueño del sistema (y no por un proceso lento).
+SALTO_DE_RELOJ_S = 30.0
+
+
+def hay_que_sostener(
+    ahora: datetime,
+    ventana: tuple[hora_del_dia, hora_del_dia] = VENTANA,
+    margen_s: int = MARGEN_DESPERTAR_S,
+) -> bool:
+    """Si el vigía tiene que mantener la Mac despierta en este instante."""
+    inicio = (datetime.combine(ahora.date(), ventana[0]) - timedelta(seconds=margen_s)).time()
+    return inicio <= ahora.time() <= ventana[1]
 
 
 def eventos(
@@ -366,8 +390,9 @@ async def vigilar(
             motivos.insert(0, "arranque: una vuelta de lectura")
 
         dentro = en_ventana(momento, ventana)
-        # Despierta dentro de la ventana, dormida fuera. Ver `Despertador`.
-        mantener_despierta(dentro)
+        # Despierta desde un poco antes de la ventana hasta que se cierra;
+        # dormida fuera. Ver `Despertador` y `hay_que_sostener`.
+        mantener_despierta(hay_que_sostener(momento, ventana))
         hoy = vueltas_hoy.get(dia, 0)
         resueltas_hoy += len(cambios["predicciones"]) + len(cambios["cerradas"])
         # ⚠ AL CERRARSE LA VENTANA, UN AVISO. Es lo que permite apagar la Mac
@@ -440,12 +465,22 @@ async def vigilar(
             except Exception as exc:  # noqa: BLE001 — publicar es best-effort
                 print(f"[vigía] no se publicó: {str(exc)[:100]}", flush=True)
 
-        # Se duerme a trozos para que la señal de parada se atienda en segundos.
+        # Se duerme a trozos para que la señal de parada se atienda en segundos
+        # — y para notar cuándo la Mac estuvo dormida: si el reloj de pared
+        # saltó más de lo que se durmió, hubo un sueño del sistema, y entonces
+        # el caffeinate se reevalúa AHORA y se hace el tick sin esperar el
+        # resto. Con `pmset sleep 1`, esperar al tick siguiente son catorce
+        # minutos de más. `time.time()` y no `monotonic`: en macOS el monotónico
+        # no avanza mientras la máquina duerme. Ver `hay_que_sostener`.
         restante = cada_s
         while restante > 0 and not parando:
             paso = min(5.0, restante)
+            antes = time.time()
             await dormir(paso)
             restante -= paso
+            if time.time() - antes - paso > SALTO_DE_RELOJ_S:
+                mantener_despierta(hay_que_sostener(ahora(), ventana))
+                break
 
     # Al parar se suelta siempre: un vigía que ya no existe no pide nada.
     mantener_despierta(False)
