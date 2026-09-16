@@ -56,7 +56,7 @@ from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
 from paper.publicar import publicar, publicar_resumen
 from paper.registro import Registro
-from paper.sesion import SIMBOLO, armar, poner_al_dia, una_vuelta
+from paper.sesion import SIMBOLO, armar, poner_al_dia, precarga_segura, una_vuelta
 from paper.trace import TraceDeSesion
 
 # Ventana activa, hora local de la máquina. Ver CRITERIO_CADENCIA.md: cubre los
@@ -278,7 +278,11 @@ async def vigilar(
     if correr_vuelta is None:
 
         async def correr_vuelta(n: int) -> str | None:
-            return await una_vuelta(grafo, trace, n)
+            # El estado y el mapa van precargados (prompt v3): dos llamadas
+            # menos por vuelta. Si no se pueden calcular, la vuelta sale sin
+            # ellos y el modelo los pide como antes —nunca se pierde la vuelta
+            # por la precarga—.
+            return await una_vuelta(grafo, trace, n, precarga=precarga_segura(registro, ajustes))
 
     if mantener_despierta is None:
         mantener_despierta = Despertador()
