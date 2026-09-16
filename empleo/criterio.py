@@ -15,6 +15,7 @@ ofertas que te estás perdiendo, verías menos ofertas y nada más.
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from empleo.oferta import Oferta
@@ -80,6 +81,7 @@ class Criterio:
     # treinta tecnologías en un párrafo de "nice to have" le gana a una que pide
     # exactamente lo que hacés.
     tope_stack: int = 60
+    frescura: dict[str, int] = field(default_factory=dict)
 
 
 # Cuánto vale encontrar un término de cada grupo.
@@ -93,6 +95,32 @@ DEFECTOS_PREFERENCIAS = {
     "freelance": 5,
 }
 DEFECTOS_PENALIZACIONES = {"junior": 40, "sin_patrocinio": 25, "solo_us": 0}
+
+# Cuánto vale llegar temprano. Los tramos salen de que el reclutador no lee las
+# 300 postulaciones: lee las primeras 20 o 40 de la cola, y el ATS ordena esa
+# cola en vez de rechazar por su cuenta. Llegar tarde no es que te filtren, es
+# que te leen después de que ya entrevistaron a alguien.
+#
+# Las 96 horas son el umbral que aparece medido (TalentWorks, 1.600
+# postulaciones); las magnitudes que publican las empresas del rubro —"8 veces
+# más entrevistas"— son de blogs con interés en venderte urgencia, así que acá
+# se usa la DIRECCIÓN del hallazgo, que es sólida, y no el número.
+DEFECTOS_FRESCURA = {
+    "hasta_24h": 25,
+    "hasta_48h": 15,
+    "hasta_96h": 8,
+    "hasta_7d": 0,
+    "mas_vieja": -10,
+}
+
+# Los tramos, en horas, de más nuevo a más viejo. El último atrapa todo lo demás.
+TRAMOS_FRESCURA: tuple[tuple[str, float], ...] = (
+    ("hasta_24h", 24),
+    ("hasta_48h", 48),
+    ("hasta_96h", 96),
+    ("hasta_7d", 168),
+    ("mas_vieja", float("inf")),
+)
 
 
 def cargar_criterio(ruta: Path) -> Criterio:
@@ -116,6 +144,7 @@ def cargar_criterio(ruta: Path) -> Criterio:
     preferencias = {**DEFECTOS_PREFERENCIAS, **_enteros(crudo.get("preferencias"))}
     penalizaciones = {**DEFECTOS_PENALIZACIONES, **_enteros(crudo.get("penalizaciones"))}
     aviso = crudo.get("aviso") or {}
+    frescura = {**DEFECTOS_FRESCURA, **_enteros(crudo.get("frescura"))}
     return Criterio(
         stack=stack,
         pesos_stack=dict(PESOS),
@@ -123,6 +152,7 @@ def cargar_criterio(ruta: Path) -> Criterio:
         penalizaciones=penalizaciones,
         necesita_patrocinio=bool((crudo.get("situacion") or {}).get("necesita_patrocinio", False)),
         fuentes={k: bool(v) for k, v in (crudo.get("fuentes") or {}).items()},
+        frescura=frescura,
         tope_por_aviso=int(aviso.get("tope_por_aviso", 8)),
         puntaje_minimo=int(aviso.get("puntaje_minimo", 25)),
     )
@@ -169,6 +199,7 @@ class Puntaje:
     motivos: tuple[str, ...]
     senales: tuple[str, ...]
     terminos: tuple[str, ...]
+    antiguedad_horas: float | None = None
 
 
 def detectar_senales(oferta: Oferta) -> tuple[str, ...]:
@@ -184,7 +215,14 @@ def detectar_senales(oferta: Oferta) -> tuple[str, ...]:
     return tuple(encontradas)
 
 
-def puntuar(oferta: Oferta, criterio: Criterio) -> Puntaje:
+def tramo_de_frescura(horas: float | None) -> str | None:
+    """En qué tramo cae una oferta. `None` si el feed no mandó fecha."""
+    if horas is None:
+        return None
+    return next(nombre for nombre, tope in TRAMOS_FRESCURA if horas <= tope)
+
+
+def puntuar(oferta: Oferta, criterio: Criterio, ahora: datetime | None = None) -> Puntaje:
     """El puntaje de una oferta, con el detalle de de dónde salió cada punto."""
     texto = oferta.buscable()
     motivos: list[str] = []
@@ -222,9 +260,57 @@ def puntuar(oferta: Oferta, criterio: Criterio) -> Puntaje:
             total -= castigo
             motivos.append(f"-{castigo} {senal}")
 
+    # La frescura va al final para que quede última en los motivos: es la que
+    # se mira primero cuando una oferta buena aparece baja en la lista.
+    horas = oferta.antiguedad_horas(ahora)
+    tramo = tramo_de_frescura(horas)
+    if tramo is not None:
+        puntos = criterio.frescura.get(tramo, 0)
+        if puntos:
+            total += puntos
+            motivos.append(f"{puntos:+d} {tramo} ({horas:.0f} h)")
+    else:
+        # Sin fecha no se premia ni se castiga. Castigar convertiría "este feed
+        # no manda la fecha" en "esta oferta es vieja", que son cosas distintas.
+        motivos.append("sin fecha de publicación")
+
     return Puntaje(
         total=total,
         motivos=tuple(motivos),
         senales=senales,
         terminos=tuple(encontrados),
+        antiguedad_horas=horas,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Brecha:
+    """Qué pide la oferta, qué de eso está en tu CV y qué no.
+
+    Es una diferencia de conjuntos, no una opinión del modelo. Sirve para lo
+    único que se decide al postular: qué va en las dos primeras líneas —lo que
+    piden y tenés— y qué conviene nombrar aunque sea de refilón, porque lo piden
+    y tu CV hoy no lo dice.
+
+    No mide si sabés algo: mide si tu CV lo **dice**. Un reclutador busca
+    términos en un buscador, y lo que no está escrito no aparece.
+    """
+
+    pide: tuple[str, ...]
+    tenes: tuple[str, ...]
+    faltan: tuple[str, ...]
+
+    @property
+    def cobertura(self) -> float:
+        """Qué proporción de lo que pide la oferta figura en tu CV."""
+        return len(self.tenes) / len(self.pide) if self.pide else 0.0
+
+
+def comparar_con_cv(oferta: Oferta, cv: str, vocabulario: tuple[str, ...]) -> Brecha:
+    """Cruza los términos de la oferta contra el texto del CV."""
+    texto_oferta = oferta.buscable()
+    texto_cv = cv.lower()
+    pide = [t for t in vocabulario if patron_de(t).search(texto_oferta)]
+    tenes = [t for t in pide if patron_de(t).search(texto_cv)]
+    faltan = [t for t in pide if t not in tenes]
+    return Brecha(pide=tuple(pide), tenes=tuple(tenes), faltan=tuple(faltan))
