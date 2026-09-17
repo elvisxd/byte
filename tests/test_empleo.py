@@ -573,9 +573,7 @@ def test_sin_hilo_de_ofertas_no_se_inventa_uno() -> None:
 
     def responder(pedido: httpx.Request) -> httpx.Response:
         pedidos.append(str(pedido.url))
-        solo_curriculums = {
-            "hits": [{"objectID": "9", "title": "Ask HN: Who wants to be hired?"}]
-        }
+        solo_curriculums = {"hits": [{"objectID": "9", "title": "Ask HN: Who wants to be hired?"}]}
         return httpx.Response(200, json=solo_curriculums)
 
     async def correr() -> list[Oferta]:
@@ -598,15 +596,31 @@ def test_una_sola_empresa_no_se_lleva_el_aviso_entero() -> None:
     misma empresa, las otras cuatro fuentes no existen.
     """
     dignas = [
-        (Oferta(fuente="remotive", id_externo=str(i), titulo=f"Puesto {i}", empresa="Lemon.io",
-                url=f"https://ej.com/{i}", descripcion=""),
-         Puntaje(total=90 - i, motivos=(), senales=(), terminos=()))
+        (
+            Oferta(
+                fuente="remotive",
+                id_externo=str(i),
+                titulo=f"Puesto {i}",
+                empresa="Lemon.io",
+                url=f"https://ej.com/{i}",
+                descripcion="",
+            ),
+            Puntaje(total=90 - i, motivos=(), senales=(), terminos=()),
+        )
         for i in range(5)
     ]
     dignas.append(
-        (Oferta(fuente="weworkremotely", id_externo="x", titulo="AI agent engineer",
-                empresa="Sticker Mule", url="https://ej.com/x", descripcion=""),
-         Puntaje(total=60, motivos=(), senales=(), terminos=()))
+        (
+            Oferta(
+                fuente="weworkremotely",
+                id_externo="x",
+                titulo="AI agent engineer",
+                empresa="Sticker Mule",
+                url="https://ej.com/x",
+                descripcion="",
+            ),
+            Puntaje(total=60, motivos=(), senales=(), terminos=()),
+        )
     )
 
     repartidas = cazador._repartir(dignas, tope_por_empresa=2)
@@ -624,9 +638,17 @@ def test_las_ofertas_sin_empresa_no_se_agrupan_entre_si() -> None:
     ofertas que no tienen ninguna relación entre sí.
     """
     dignas = [
-        (Oferta(fuente="hackernews", id_externo=str(i), titulo=f"Oferta {i}", empresa="",
-                url=f"https://ej.com/{i}", descripcion=""),
-         Puntaje(total=50, motivos=(), senales=(), terminos=()))
+        (
+            Oferta(
+                fuente="hackernews",
+                id_externo=str(i),
+                titulo=f"Oferta {i}",
+                empresa="",
+                url=f"https://ej.com/{i}",
+                descripcion="",
+            ),
+            Puntaje(total=50, motivos=(), senales=(), terminos=()),
+        )
         for i in range(4)
     ]
 
