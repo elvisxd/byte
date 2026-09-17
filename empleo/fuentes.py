@@ -19,6 +19,7 @@ y nada de acá se ejecuta ni se obedece.
 
 import json
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET  # noqa: S405 - ver _rss_a_ofertas
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -237,6 +238,115 @@ def _rss_a_ofertas(xml: str) -> list[Oferta]:
             )
         )
     return ofertas
+
+
+# --- Get on Board: el board latinoamericano ---
+
+# Cuántas búsquedas se hacen por vuelta. La API pide `query` obligatorio —sin él
+# devuelve `unprocessable_content`—, así que hay que elegir con qué preguntar.
+# Cada término es una llamada; seis alcanzan para cubrir el perfil sin convertir
+# una vuelta del cazador en veinte pedidos a un board que no cobra por esto.
+TOPE_CONSULTAS_GETONBRD = 6
+POR_CONSULTA_GETONBRD = 30
+
+
+async def getonbrd(cliente: httpx.AsyncClient, consultas: tuple[str, ...]) -> list[Oferta]:
+    """https://www.getonbrd.com/api/v0/search/jobs — JSON público, sin key.
+
+    Es la única de las fuentes que nace en la región: las empresas que publican
+    acá ya contratan latinoamericanos, así que una oferta suya no necesita que
+    nadie patrocine nada. Las otras cuatro son boards globales donde "LATAM"
+    aparece si la empresa se acordó de escribirlo.
+
+    `query` es obligatorio, así que las búsquedas salen de los términos
+    `fuerte` del TOML: el criterio de qué se busca vive en un solo lugar y
+    cambiarlo ahí cambia esto, sin tocar código.
+
+    Los duplicados entre términos —una oferta que menciona "rag" y "llm"— se
+    sacan acá por id, antes de que el cazador los vea: deduplicar dentro de una
+    fuente es asunto de la fuente.
+    """
+    if not consultas:
+        return []
+
+    ofertas: dict[str, Oferta] = {}
+    for consulta in consultas[:TOPE_CONSULTAS_GETONBRD]:
+        respuesta = await _traer(
+            cliente,
+            "https://www.getonbrd.com/api/v0/search/jobs"
+            f"?query={urllib.parse.quote(consulta)}&per_page={POR_CONSULTA_GETONBRD}",
+        )
+        crudo = _json_de(respuesta)
+        datos = crudo.get("data") if isinstance(crudo, dict) else None
+        if not isinstance(datos, list):
+            continue
+        for item in datos:
+            if not isinstance(item, dict):
+                continue
+            clave = _texto(item.get("id"), 120)
+            atributos = item.get("attributes")
+            if not clave or clave in ofertas or not isinstance(atributos, dict):
+                continue
+            ofertas[clave] = _oferta_getonbrd(clave, atributos, item.get("links"))
+    return list(ofertas.values())
+
+
+def _oferta_getonbrd(
+    clave: str, atributos: dict[str, object], enlaces: object = None
+) -> Oferta:
+    """Una oferta de Get on Board, con los campos que el puntuador sabe leer."""
+    # `links.public_url` es la URL que publica el board. Se prefiere a armarla
+    # con el slug: si mañana cambian el formato, el link sigue llevando a la
+    # oferta en vez de a un 404.
+    url_publica = ""
+    if isinstance(enlaces, dict):
+        url_publica = _texto(enlaces.get("public_url"), 600)
+    # La empresa se deja VACÍA a propósito. `company` solo trae
+    # `{"data": {"id": N}}` y resolver el nombre costaría una llamada por cada
+    # una de las treinta ofertas de cada búsqueda. Sacarlo del slug —que
+    # termina en "<algo>-remote"— se probó y acierta 1 de 5: los slugs terminan
+    # en país, ciudad o un hash, así que "Us", "Ai" y "42C5" se leían como el
+    # nombre de la empresa. Un nombre inventado en la línea del aviso es peor
+    # que ninguno: el título ya dice qué es y el link dice quién.
+    #
+    # `Oferta.huella` usa empresa+puesto para no repetir la misma búsqueda
+    # publicada en dos boards; con la empresa vacía la huella queda en el
+    # puesto, que para esta fuente alcanza.
+    empresa = ""
+
+    # La ubicación se arma con lo que el board separa en campos: `remote_zone`
+    # dice desde dónde se puede trabajar —lo que decide si la oferta sirve— y
+    # `countries` trae "Remote" o la lista de países. Juntarlos deja que las
+    # señales de `criterio.py` (latam, remoto_global) los encuentren donde ya
+    # las buscan, sin inventar un campo nuevo.
+    partes = [_texto(atributos.get("remote_zone"), 100)]
+    paises = atributos.get("countries")
+    if isinstance(paises, list):
+        partes += [_texto(pais, 60) for pais in paises[:6]]
+    ubicacion = ", ".join(p for p in partes if p)
+
+    return Oferta(
+        fuente="getonbrd",
+        id_externo=clave,
+        titulo=_texto(atributos.get("title"), 300),
+        empresa=empresa,
+        url=url_publica or f"https://www.getonbrd.com/jobs/{clave}"[:600],
+        descripcion=_texto_plano(_texto(atributos.get("description"))),
+        ubicacion=ubicacion[:200],
+        publicada=_fecha_getonbrd(atributos.get("published_at")),
+        salario=_sueldo(atributos.get("min_salary"), atributos.get("max_salary")),
+        etiquetas=tuple(_texto(t, 60) for t in (atributos.get("tags") or [])[:20])
+        if isinstance(atributos.get("tags"), list)
+        else (),
+    )
+
+
+def _fecha_getonbrd(marca: object) -> str:
+    """`published_at` llega como marca de tiempo Unix, no como fecha ISO."""
+    try:
+        return datetime.fromtimestamp(int(_texto(marca, 20)), tz=UTC).isoformat()
+    except (ValueError, TypeError, OSError):
+        return ""
 
 
 # --- Hacker News: "Ask HN: Who is hiring?" ---

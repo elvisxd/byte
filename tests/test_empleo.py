@@ -21,6 +21,17 @@ from empleo.criterio import Criterio, Puntaje, cargar_criterio, detectar_senales
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 
+# Los nombres que `recolectar()` conoce. Sale de leer el cazador y no de una
+# lista escrita acá para que agregar una fuente no deje tests saliendo a la red.
+_TODAS_LAS_FUENTES = (
+    "remoteok",
+    "remotive",
+    "weworkremotely",
+    "hackernews",
+    "getonbrd",
+    "upwork",
+)
+
 CRITERIO = cargar_criterio(Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml")
 
 
@@ -244,15 +255,11 @@ def test_si_el_aviso_no_sale_las_ofertas_vuelven_en_la_proxima_vuelta(
 
     monkeypatch.setattr(fuentes, "remoteok", sana)
     monkeypatch.setattr(cazador, "avisar", lambda _texto: False)
-    criterio = replace(
-        CRITERIO,
-        fuentes={
-            "remoteok": True,
-            "remotive": False,
-            "weworkremotely": False,
-            "hackernews": False,
-        },
-    )
+    # Apagadas por omisión y no una por una: enumerarlas dejaba encendida a
+    # cualquier fuente agregada después —el default de `fuentes.get()` es
+    # `True`— y este test salía a internet de verdad a buscar ofertas reales.
+    solo_remoteok = dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"remoteok": True}
+    criterio = replace(CRITERIO, fuentes=solo_remoteok)
 
     asyncio.run(cazador.una_vuelta(criterio, tmp_path, "python", con_aviso=True))
     assert not (tmp_path / "vistas.json").exists()
@@ -682,3 +689,123 @@ def test_el_corte_por_antiguedad_se_puede_apagar() -> None:
     vieja = Puntaje(total=40, motivos=(), senales=(), terminos=(), antiguedad_horas=200 * 24)
 
     assert cazador._bastante_fresca(vieja, crit) is True
+
+
+# --- Get on Board: el board de la región ---
+
+_GETONBRD_UNA = {
+    "data": [
+        {
+            "id": "senior-ai-engineer-acme-remote",
+            "attributes": {
+                "title": "Senior AI Engineer",
+                "description": "<p>LangChain y RAG sobre pgvector.</p>",
+                "remote": True,
+                "remote_zone": "LATAM",
+                "countries": ["Remote"],
+                "published_at": 1789000000,
+                "min_salary": 6000,
+                "max_salary": 9000,
+                "tags": ["python", "llm"],
+                "company": {"data": {"id": 19276, "type": "company"}},
+            },
+        }
+    ]
+}
+
+
+def test_la_oferta_de_getonbrd_trae_de_donde_se_puede_trabajar() -> None:
+    """`remote_zone` es lo que decide si una oferta sirve: "LATAM" contrata sin
+    que nadie patrocine nada, y las señales de `criterio.py` la buscan en la
+    ubicación. Si ese campo no llega ahí, una oferta de la región puntúa igual
+    que una que exige estar en otro país.
+    """
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_GETONBRD_UNA)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.getonbrd(cliente, ("llm",))
+
+    ofertas = asyncio.run(correr())
+    assert len(ofertas) == 1
+    assert "LATAM" in ofertas[0].ubicacion
+    assert "latam" in detectar_senales(ofertas[0])
+
+
+def test_la_misma_oferta_en_dos_busquedas_se_cuenta_una_vez() -> None:
+    """La API pide `query` obligatorio, así que se consulta término por término
+    y una oferta que menciona "rag" y "llm" vuelve en las dos. Deduplicar
+    dentro de una fuente es asunto de la fuente: dejarlas pasar gastaría dos
+    lugares del aviso —que son cuatro— en la misma oferta.
+    """
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_GETONBRD_UNA)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.getonbrd(cliente, ("llm", "rag", "langchain"))
+
+    assert len(asyncio.run(correr())) == 1
+
+
+def test_sin_terminos_que_buscar_no_se_llama_a_getonbrd() -> None:
+    """Su API devuelve `unprocessable_content` sin `query`. Pedir igual sería
+    gastar una llamada para que el servidor conteste que faltó el parámetro.
+    """
+    pedidos: list[str] = []
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        pedidos.append(str(pedido.url))
+        return httpx.Response(200, json={"data": []})
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.getonbrd(cliente, ())
+
+    assert asyncio.run(correr()) == []
+    assert pedidos == []
+
+
+def test_el_link_es_el_que_publica_el_board() -> None:
+    """Armar la URL pegando el slug funciona hasta que el board cambia el
+    formato, y entonces cada línea del aviso lleva a un 404 sin que nada falle.
+    `links.public_url` viene en la misma respuesta.
+    """
+    con_link = {
+        "data": [
+            {
+                "id": "senior-ai-engineer-acme-remote",
+                "attributes": {"title": "Senior AI Engineer", "description": "x"},
+                "links": {"public_url": "https://www.getonbrd.com/jobs/otro-slug-distinto"},
+            }
+        ]
+    }
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=con_link)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.getonbrd(cliente, ("llm",))
+
+    assert asyncio.run(correr())[0].url.endswith("otro-slug-distinto")
+
+
+def test_la_empresa_de_getonbrd_queda_vacia_en_vez_de_adivinada() -> None:
+    """La API no manda el nombre, solo un id. Sacarlo del slug —que termina en
+    "<algo>-remote"— acierta 1 de 5: los slugs terminan en país, ciudad o un
+    hash, así que "Us", "Ai" y "42C5" se leían como el nombre de la empresa en
+    el aviso. Un nombre inventado es peor que ninguno.
+    """
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_GETONBRD_UNA)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.getonbrd(cliente, ("llm",))
+
+    assert asyncio.run(correr())[0].empresa == ""
