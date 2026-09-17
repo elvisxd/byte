@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     # cuenta dentro del tope de salida.
     groq_num_predict: int = Field(default=8192, alias="BYTE_GROQ_NUM_PREDICT")
     cerebras_num_predict: int = Field(default=8192, alias="BYTE_CEREBRAS_NUM_PREDICT")
+    # NVIDIA NIM: otro brazo de capa gratuita por el protocolo de OpenAI. Vale por
+    # DeepSeek, familia que ni Gemini ni los gpt-oss de Groq traen.
+    # ⚠ EL ALIAS ES `NVIDIA_NIM_API_KEY` porque es el nombre con el que la clave
+    # está puesta en Railway. Con otro nombre el brazo arrancaría con la clave
+    # vacía, que es el fallo del 2026-09-15 con `GEMINI_API_KEY`.
+    nvidia_api_key: str = Field(default="", alias="NVIDIA_NIM_API_KEY")
+    nvidia_num_predict: int = Field(default=8192, alias="BYTE_NVIDIA_NUM_PREDICT")
     # ⚠ 60 SEGUNDOS, NO 45 NI 12. Medido el 2026-09-15: la capa gratuita de
     # Groq tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
     # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
