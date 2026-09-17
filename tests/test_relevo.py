@@ -445,3 +445,23 @@ async def test_el_parte_de_modelos_dice_quien_esta_en_cuarentena() -> None:
     # Pasada la cuarentena, el agotado vuelve a estar disponible.
     reloj.t += CUARENTENA_MINUTO_S + 1
     assert relevo.estado_modelos()["a"]["disponible"] is True
+
+
+def test_el_log_lleva_entrada_y_salida_para_poder_costear(capsys) -> None:
+    """Sin los de SALIDA el coste de un brazo es una estimación, no un dato: en
+    Gemini el pensamiento factura como salida y cuesta 5x la entrada."""
+    relevo = _relevo(_Modelo("a"))
+
+    relevo._contesto(
+        "a",
+        {
+            "input_tokens": 6000,
+            "output_tokens": 1500,
+            "input_token_details": {"cache_read": 4000},
+        },
+    )
+
+    linea = capsys.readouterr().out
+    assert "6000 tokens de entrada" in linea
+    assert "4000 de caché" in linea
+    assert "1500 de salida" in linea
