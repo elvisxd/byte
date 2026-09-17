@@ -11,7 +11,7 @@ import pytest
 
 import paper.vigia as vigia
 from paper.registro import Contexto, Registro
-from paper.vigia import en_ventana, eventos, vigilar
+from paper.vigia import en_ventana, eventos, hora_del_dia, vigilar
 
 T0 = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 
@@ -412,7 +412,12 @@ async def test_sin_vuelta_de_arranque_si_el_registro_acaba_de_escribir(
         horas_vigencia=6,
         temporalidad="1h",
     )
+    # Un minuto después de lo que se acaba de escribir: es «hace un momento»
+    # corra la suite a la hora que corra. Se lee antes de cerrar la conexión.
+    escrito = registro.ultima_escritura()
     registro.cerrar_conexion()
+    assert escrito is not None
+    reloj_de_prueba = escrito + timedelta(minutes=1)
     vueltas: list[int] = []
 
     async def vuelta(n: int) -> str | None:
@@ -422,7 +427,19 @@ async def test_sin_vuelta_de_arranque_si_el_registro_acaba_de_escribir(
     await vigilar(
         ruta_db=ruta,
         ruta_scripts="",
-        ahora=lambda: datetime.now().astimezone().replace(hour=9, minute=0),
+        # Las 09:00 ponen al vigía DENTRO de la ventana (08:00-20:30): fuera
+        # de ella no hay vuelta por otro motivo y el test pasaría sin ejercer
+        # la guarda. Pero la hora tiene que salir de la misma referencia que la
+        # escritura de arriba, que usa el reloj real: con `datetime.now()`
+        # crudo, correr la suite de madrugada dejaba la escritura siete horas
+        # «en el futuro» —más que RECIENTE_S— y el arranque se hacía igual.
+        ahora=lambda: reloj_de_prueba,
+        # Ventana abierta todo el día en vez de fijar el reloj a las 09:00: lo
+        # que este test aísla es la guarda de escritura reciente, y fuera de la
+        # ventana no habría vuelta por otro motivo —pasaría sin ejercerla—.
+        # Fijar la hora rompía la distancia con la escritura, que sale del
+        # reloj real: corriendo la suite de madrugada quedaban siete horas.
+        ventana=(hora_del_dia(0, 0), hora_del_dia(23, 59)),
         dormir=_nada,
         correr_vuelta=vuelta,
         ticks=1,
