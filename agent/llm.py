@@ -39,10 +39,26 @@ def es_de_cerebras(nombre: str) -> bool:
     return nombre.startswith("cerebras/")
 
 
+def es_de_nvidia(nombre: str) -> bool:
+    """`nvidia/<id>` se pide a NVIDIA NIM, también por el protocolo de OpenAI.
+
+    Vale por la familia: NIM sirve DeepSeek, que ni Gemini ni los gpt-oss de
+    Groq tienen (`paper/CRITERIO_COMPARACION.md`, un brazo nuevo vale por la
+    familia que trae y no por el modelo).
+
+    ⚠ EL ID DE NIM LLEVA BARRA DENTRO (`deepseek-ai/deepseek-v4-flash-0731`),
+    así que el modelo completo queda `nvidia/deepseek-ai/deepseek-v4-…`. Quitar
+    el prefijo deja la barra interna intacta, que es la que el servidor espera.
+    """
+    return nombre.startswith("nvidia/")
+
+
 def es_remoto(nombre: str) -> bool:
     """Todo lo que no es Ollama. Un brazo remoto puede mezclar proveedores: cada
     escritura queda sellada con el modelo que la hizo (paper/CRITERIO_COMPARACION.md)."""
-    return es_de_google(nombre) or es_de_groq(nombre) or es_de_cerebras(nombre)
+    return (
+        es_de_google(nombre) or es_de_groq(nombre) or es_de_cerebras(nombre) or es_de_nvidia(nombre)
+    )
 
 
 def build_llm(
@@ -80,6 +96,8 @@ def build_llm(
         return _groq(settings, nombre, reasoning=reasoning)
     if es_de_cerebras(nombre):
         return _cerebras(settings, nombre)
+    if es_de_nvidia(nombre):
+        return _nvidia(settings, nombre)
 
     from langchain_ollama import ChatOllama
 
@@ -143,6 +161,7 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 # ⚠ SIN ESTO UNA LLAMADA COLGADA PARA EL BRAZO ENTERO. Medido el 2026-09-15:
 # tras dos 503, la llamada siguiente de Gemini se quedó esperando UNA HORA sin
@@ -236,6 +255,44 @@ def _cerebras(settings: Settings, nombre: str) -> Any:
         model=nombre.removeprefix("cerebras/"),
         temperature=0.2,
         max_tokens=settings.cerebras_num_predict,
+        max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
+    )
+
+
+def _nvidia(settings: Settings, nombre: str) -> Any:
+    """NVIDIA NIM por el protocolo de OpenAI, igual que Cerebras y sin `reasoning`.
+
+    ⚠ LA CLAVE SE LLAMA `NVIDIA_NIM_API_KEY`, NO `NVIDIA_API_KEY`. Es el nombre
+    con el que está puesta en Railway, y un alias distinto dejaría el brazo
+    arrancando con la clave vacía — el mismo fallo que el `GEMINI_API_KEY`
+    contra `GEMINI_API_KEY_GRATIS` del 2026-09-15, que costó una jornada.
+
+    ⚠ Y EL CATÁLOGO DE NIM NO ES EL DE LA CUENTA. Sondeado el 2026-09-17 desde el
+    contenedor de Railway: `/v1/models` devolvió 82 modelos y el primero de ellos
+    contestó 404 «Function …: Not found for account …». O sea que NIM lista el
+    catálogo PÚBLICO y la cuenta tiene habilitado otro subconjunto — peor que
+    Cerebras, donde `/v1/models` sí era de la clave. El que sí contestó 200 fue
+    `deepseek-ai/deepseek-v4-flash-0731`. Antes de tocar la lista de modelos de
+    este brazo, correr `scripts/sondear-proveedor.sh nvidia` del dashboard, que
+    prueba los candidatos EN ORDEN hasta que uno conteste.
+
+    Sin `reasoning_format`: eso es propio de Groq y de los gpt-oss. Mandarlo haría
+    que el servidor reciba un campo que no conoce.
+
+    `max_retries=1` por lo mismo que en los otros tres: ante un 429 el reintento
+    lo hace el relevo, que sabe turnar los modelos de la lista del brazo.
+    """
+    if not settings.nvidia_api_key:
+        raise ValueError(f"NVIDIA_NIM_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        base_url=NVIDIA_BASE_URL,
+        api_key=settings.nvidia_api_key,
+        model=nombre.removeprefix("nvidia/"),
+        temperature=0.2,
+        max_tokens=settings.nvidia_num_predict,
         max_retries=1,
         timeout=TIMEOUT_REMOTO_S,
     )
