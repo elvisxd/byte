@@ -110,8 +110,24 @@ hasta_7d = 0
 mas_vieja = -10
 
 [aviso]
-# Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee.
-tope_por_aviso = 8
+# Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
+# además no entra: el panel que reenvía a Telegram rechaza los textos de más de
+# 1000 caracteres, así que un aviso más largo llega cortado. Medido el
+# 17/09/2026: cuatro ofertas ocupan 820 caracteres y cinco ya se pasan. Las que
+# no entran siguen en el digest del disco.
+tope_por_aviso = 4
+# Cuántas de la MISMA empresa pueden entrar. Los marketplaces de talento
+# —Lemon.io, Toptal— republican su catálogo entero todo el tiempo y con buen
+# puntaje: sin tope se llevan casi todos los lugares y las ofertas frescas del
+# resto quedan afuera. Lo que pasa el tope no se pierde, baja en la lista y
+# sigue en el digest. Poner 0 lo apaga.
+tope_por_empresa = 2
+# Después de cuántos días una oferta ya no llega al teléfono, por buena que sea.
+# Restarle puntos no alcanzaba: una que menciona todo el stack absorbe la
+# penalización de `[frescura]` y sigue arriba. Medido el 17/09/2026, dos de las
+# cuatro que llegaban tenían 29 días — a esa altura ya entrevistaron a alguien.
+# Siguen en el digest del disco. Poner 0 lo apaga.
+descartar_despues_de_dias = 7
 # Puntaje mínimo para que una oferta llegue al teléfono. Las que quedan abajo
 # se guardan igual en el digest de disco, por si el criterio quedó muy duro.
 puntaje_minimo = 25

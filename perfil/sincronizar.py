@@ -156,7 +156,7 @@ def imprimir() -> bool:
 
         # Y la de Drive, que es la que se manda desde el teléfono. Va con el
         # mismo nombre que ya tiene ahí para no dejar dos versiones conviviendo.
-        if DRIVE.is_dir():
+        if DRIVE and DRIVE.is_dir():
             shutil.copy2(destino, DRIVE / destino.name)
             print(f"      → Drive/{destino.name}")
 

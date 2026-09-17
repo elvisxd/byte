@@ -5,7 +5,10 @@ defender leyendo el TOML— y que nada de esto postule por su cuenta.
 """
 
 import asyncio
+import contextlib
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,8 +17,8 @@ import httpx
 import pytest
 
 from empleo import cazador, fuentes
-from empleo.criterio import Criterio, cargar_criterio, detectar_senales, puntuar
-from empleo.memoria import Memoria
+from empleo.criterio import Criterio, Puntaje, cargar_criterio, detectar_senales, puntuar
+from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 
 CRITERIO = cargar_criterio(Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml")
@@ -430,3 +433,252 @@ def test_una_oferta_sin_tecnologias_conocidas_no_divide_por_cero() -> None:
     brecha = comparar_con_cv(_oferta(descripcion="We are hiring. Email us."), "cv", TERMINOS)
     assert brecha.pide == ()
     assert brecha.cobertura == 0.0
+
+
+# --- El turno: una vuelta a la vez ---
+
+
+def test_dos_vueltas_no_corren_a_la_vez_sobre_la_misma_carpeta(tmp_path: Path) -> None:
+    """`Memoria` reescribe el JSON entero, así que dos vueltas solapadas se
+    pisan: la última en guardar borra lo que anotó la primera, y esas ofertas
+    vuelven a avisarse mañana como si fueran nuevas.
+
+    Pasa de verdad cuando el cron dispara mientras la vuelta anterior sigue
+    esperando a un feed lento.
+    """
+    with turno(tmp_path), pytest.raises(YaCorriendo):
+        with turno(tmp_path):
+            pass
+
+
+def test_el_turno_se_suelta_aunque_la_vuelta_explote(tmp_path: Path) -> None:
+    """Si un feed tira una excepción y el cerrojo queda tomado, el cazador no
+    vuelve a correr nunca más: todas las vueltas siguientes se saltean en
+    silencio y los avisos dejan de llegar sin que nada falle a la vista.
+    """
+    with contextlib.suppress(RuntimeError), turno(tmp_path):
+        raise RuntimeError("un feed explotó")
+
+    with turno(tmp_path):
+        pass  # si el cerrojo hubiera quedado tomado, esto levantaría YaCorriendo
+
+
+def test_el_turno_muere_con_el_proceso(tmp_path: Path) -> None:
+    """Con un archivo de PID en vez de `flock`, un `kill -9` deja el cerrojo
+    puesto para siempre y hace falta borrarlo a mano. Con flock lo suelta el
+    sistema operativo: un proceso que ya no existe no retiene nada.
+    """
+    raiz = str(Path(__file__).resolve().parent.parent)
+    codigo = (
+        f"import sys; sys.path.insert(0, {raiz!r});"
+        "from pathlib import Path; from empleo.memoria import turno;"
+        f"ctx = turno(Path({str(tmp_path)!r})); ctx.__enter__();"
+        "print('tomado', flush=True);"
+        "import time; time.sleep(30)"
+    )
+    hijo = subprocess.Popen(  # noqa: S603 - código fijo de este test
+        [sys.executable, "-c", codigo], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert hijo.stdout is not None
+        assert hijo.stdout.readline().strip() == "tomado"
+        with pytest.raises(YaCorriendo):
+            with turno(tmp_path):
+                pass
+    finally:
+        hijo.kill()
+        hijo.wait(timeout=10)
+
+    # El hijo murió de la peor manera; el cerrojo tiene que estar libre igual.
+    with turno(tmp_path):
+        pass
+
+
+def test_no_se_confunde_el_hilo_de_ofertas_con_el_de_curriculums() -> None:
+    """El mismo autor publica "Who is hiring?" y "Who wants to be hired?" con un
+    segundo de diferencia. Quedarse con el primero que devuelve Algolia es
+    jugarse a un orden que nadie garantiza: el día que se invierta, el aviso
+    trae trescientos currículums de otros programadores puntuados como ofertas.
+    """
+    hilos = {
+        "hits": [
+            {"objectID": "222", "title": "Ask HN: Who wants to be hired? (September 2026)"},
+            {"objectID": "111", "title": "Ask HN: Who is hiring? (September 2026)"},
+        ]
+    }
+    pedidos: list[str] = []
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        pedidos.append(str(pedido.url))
+        if "search_by_date" in str(pedido.url):
+            return httpx.Response(200, json=hilos)
+        return httpx.Response(200, json={"children": []})
+
+    transporte = httpx.MockTransport(responder)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=transporte) as cliente:
+            return await fuentes.hackernews(cliente)
+
+    asyncio.run(correr())
+    assert any("/items/111" in url for url in pedidos), "tomó el hilo equivocado"
+    assert not any("/items/222" in url for url in pedidos)
+
+
+def test_un_titulo_que_solo_menciona_el_hilo_de_ofertas_no_lo_reemplaza() -> None:
+    """Buscar "who is hiring" suelto en el título matchea también un hilo que
+    lo menciona de paso —"Who wants to be hired, and who is hiring"— o un
+    "Tell HN" cualquiera. Como el filtro corta en la primera coincidencia, un
+    título ambiguo que llegue antes secuestra la fuente entera y el aviso se
+    llena de currículums ajenos: el mismo daño que el filtro venía a evitar.
+    """
+    hilos = {
+        "hits": [
+            {"objectID": "222", "title": "Ask HN: Who wants to be hired, and who is hiring?"},
+            {"objectID": "333", "title": "Tell HN: Nobody who is hiring responds"},
+            {"objectID": "111", "title": "Ask HN: Who is hiring? (September 2026)"},
+        ]
+    }
+    pedidos: list[str] = []
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        pedidos.append(str(pedido.url))
+        if "search_by_date" in str(pedido.url):
+            return httpx.Response(200, json=hilos)
+        return httpx.Response(200, json={"children": []})
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.hackernews(cliente)
+
+    asyncio.run(correr())
+    assert any("/items/111" in url for url in pedidos), "tomó un título ambiguo"
+    assert not any("/items/222" in url or "/items/333" in url for url in pedidos)
+
+
+def test_sin_hilo_de_ofertas_no_se_inventa_uno() -> None:
+    """Si HN cambia el título del hilo, traer el que haya es peor que no traer
+    nada: se puntúa contenido que no son ofertas y el problema pasa inadvertido
+    porque el aviso llega igual.
+    """
+
+    pedidos: list[str] = []
+
+    def responder(pedido: httpx.Request) -> httpx.Response:
+        pedidos.append(str(pedido.url))
+        solo_curriculums = {
+            "hits": [{"objectID": "9", "title": "Ask HN: Who wants to be hired?"}]
+        }
+        return httpx.Response(200, json=solo_curriculums)
+
+    async def correr() -> list[Oferta]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as cliente:
+            return await fuentes.hackernews(cliente)
+
+    assert asyncio.run(correr()) == []
+    # Sin esto el test pasaría igual con el filtro roto: al pedir el hilo
+    # equivocado, la respuesta no trae `children` y la lista sale vacía por otra
+    # razón. Lo que se verifica es que **ni se intentó** traerlo.
+    assert not any("/items/" in url for url in pedidos)
+
+
+def test_una_sola_empresa_no_se_lleva_el_aviso_entero() -> None:
+    """Los marketplaces de talento republican su catálogo con puntajes altos:
+    medido el 16/09/2026, Lemon.io ocupaba cinco de los ocho lugares con
+    ofertas de 8 a 29 días y empujaba abajo la única fresca del día.
+
+    El aviso se lee de un vistazo en el teléfono; si cinco líneas son de la
+    misma empresa, las otras cuatro fuentes no existen.
+    """
+    dignas = [
+        (Oferta(fuente="remotive", id_externo=str(i), titulo=f"Puesto {i}", empresa="Lemon.io",
+                url=f"https://ej.com/{i}", descripcion=""),
+         Puntaje(total=90 - i, motivos=(), senales=(), terminos=()))
+        for i in range(5)
+    ]
+    dignas.append(
+        (Oferta(fuente="weworkremotely", id_externo="x", titulo="AI agent engineer",
+                empresa="Sticker Mule", url="https://ej.com/x", descripcion=""),
+         Puntaje(total=60, motivos=(), senales=(), terminos=()))
+    )
+
+    repartidas = cazador._repartir(dignas, tope_por_empresa=2)
+
+    primeras_tres = [o.empresa for o, _ in repartidas[:3]]
+    assert primeras_tres.count("Lemon.io") == 2
+    assert "Sticker Mule" in primeras_tres
+    # Nada se descarta: las tres que pasaron el tope siguen al final.
+    assert len(repartidas) == len(dignas)
+
+
+def test_las_ofertas_sin_empresa_no_se_agrupan_entre_si() -> None:
+    """En Hacker News la empresa sale de la primera línea del comentario y a
+    veces queda vacía. Tratarlas como una sola empresa dejaría fuera del aviso
+    ofertas que no tienen ninguna relación entre sí.
+    """
+    dignas = [
+        (Oferta(fuente="hackernews", id_externo=str(i), titulo=f"Oferta {i}", empresa="",
+                url=f"https://ej.com/{i}", descripcion=""),
+         Puntaje(total=50, motivos=(), senales=(), terminos=()))
+        for i in range(4)
+    ]
+
+    repartidas = cazador._repartir(dignas, tope_por_empresa=2)
+
+    assert [o.id_externo for o, _ in repartidas] == ["0", "1", "2", "3"]
+
+
+def test_el_aviso_no_supera_lo_que_el_panel_acepta() -> None:
+    """El panel valida `texto.length > 1000` y devuelve 422 con el aviso
+    entero: pasarse por un carácter no manda un mensaje cortado, no manda
+    **nada**. Y el cazador solo anota en la memoria lo que avisó, así que un
+    422 silencioso dejaría las mismas ofertas repitiéndose cada vuelta.
+
+    El tope de `aviso.py` se eligió mirando el límite de Telegram (4096), que
+    es el del otro extremo de la cadena; el panel está en el medio y es más
+    estricto porque nació para los avisos de una línea del vigía de `paper/`.
+    """
+    from empleo.aviso import MAX_CARACTERES
+
+    LIMITE_DEL_PANEL = 1000
+    assert MAX_CARACTERES < LIMITE_DEL_PANEL, (
+        "MAX_CARACTERES tiene que dejar lugar a la nota de recorte "
+        f"por debajo de los {LIMITE_DEL_PANEL} del panel"
+    )
+
+
+def test_una_oferta_vieja_no_llega_al_telefono_por_buena_que_sea() -> None:
+    """La penalización de `[frescura]` no alcanza: una oferta que menciona todo
+    el stack suma bastante más de lo que resta `mas_vieja` y sigue arriba del
+    aviso. Medido el 17/09/2026, dos de las cuatro que llegaban al teléfono
+    tenían 29 días — a esa altura el reclutador ya entrevistó a alguien, y esos
+    dos lugares valían más para una oferta de ayer.
+    """
+    crit = replace(CRITERIO, descartar_despues_de_dias=7, puntaje_minimo=25)
+    vieja = Puntaje(total=100, motivos=(), senales=(), terminos=(), antiguedad_horas=29 * 24)
+    fresca = Puntaje(total=30, motivos=(), senales=(), terminos=(), antiguedad_horas=17)
+
+    assert cazador._bastante_fresca(vieja, crit) is False
+    assert cazador._bastante_fresca(fresca, crit) is True
+
+
+def test_una_oferta_sin_fecha_no_se_descarta_por_las_dudas() -> None:
+    """Que un feed no mande la fecha no vuelve vieja a la oferta. Descartarla
+    castigaría a la fuente en vez de a la oferta, y Hacker News —la que más
+    volumen trae— es justo la que peor informa las fechas.
+    """
+    crit = replace(CRITERIO, descartar_despues_de_dias=7)
+    sin_fecha = Puntaje(total=50, motivos=(), senales=(), terminos=(), antiguedad_horas=None)
+
+    assert cazador._bastante_fresca(sin_fecha, crit) is True
+
+
+def test_el_corte_por_antiguedad_se_puede_apagar() -> None:
+    """El criterio entero vive en el TOML para poder revisarlo en un diff. Si el
+    corte no se pudiera apagar desde ahí, volver a mirar ofertas viejas —una
+    semana floja, un nicho que rota lento— exigiría tocar código.
+    """
+    crit = replace(CRITERIO, descartar_despues_de_dias=0)
+    vieja = Puntaje(total=40, motivos=(), senales=(), terminos=(), antiguedad_horas=200 * 24)
+
+    assert cazador._bastante_fresca(vieja, crit) is True

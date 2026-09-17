@@ -20,11 +20,16 @@ from pathlib import Path
 
 import httpx
 
+# `api.config` se importa por su efecto al cargarse: hace `load_dotenv()`, y sin
+# eso el cazador corrido a mano o desde el cron no ve el `.env` —PANEL_URL entre
+# otras— y el aviso nunca sale del disco. Los vigías de `paper/` no lo notaban
+# porque su lanzador exporta las variables antes de arrancarlos.
+import api.config  # noqa: F401
 from api.logging import get_logger
 from empleo import fuentes
 from empleo.aviso import avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
-from empleo.memoria import Memoria
+from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 
 logger = get_logger("empleo.cazador")
@@ -133,7 +138,11 @@ def armar_aviso(
     seleccion: list[tuple[Oferta, Puntaje]], criterio: Criterio, conteo: dict[str, int]
 ) -> str:
     """El mensaje que llega al teléfono."""
-    dignas = [par for par in seleccion if par[1].total >= criterio.puntaje_minimo]
+    dignas = [
+        par
+        for par in seleccion
+        if par[1].total >= criterio.puntaje_minimo and _bastante_fresca(par[1], criterio)
+    ]
     cabecera = f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}"
     if not dignas:
         revisadas = sum(n for n in conteo.values() if n > 0)
@@ -142,10 +151,62 @@ def armar_aviso(
             f"entre {revisadas} ofertas nuevas.\n{_pie_fuentes(conteo)}"
         )
 
-    cuerpo = "\n\n".join(_linea(o, p) for o, p in dignas[: criterio.tope_por_aviso])
-    resto = len(dignas) - criterio.tope_por_aviso
+    muestra = _repartir(dignas, criterio.tope_por_empresa)[: criterio.tope_por_aviso]
+    cuerpo = "\n\n".join(_linea(o, p) for o, p in muestra)
+    resto = len(dignas) - len(muestra)
     extra = f"\n\n(+{resto} más en el digest)" if resto > 0 else ""
     return f"{cabecera} — {len(dignas)} nuevas\n\n{cuerpo}{extra}\n\n{_pie_fuentes(conteo)}"
+
+
+def _bastante_fresca(puntaje: Puntaje, criterio: Criterio) -> bool:
+    """Si la oferta llegó a tiempo como para que valga postularse.
+
+    Restar puntos no alcanza para las viejas: una oferta que menciona todo el
+    stack absorbe la penalización de frescura y sigue arriba del aviso. Medido
+    el 17/09/2026, dos de las cuatro que llegaban al teléfono tenían 29 días —
+    a esa altura el reclutador ya entrevistó a alguien.
+
+    Sin fecha se deja pasar: que un feed no la mande no la vuelve vieja, y
+    descartarla castigaría a la fuente, no a la oferta.
+    """
+    if criterio.descartar_despues_de_dias <= 0:
+        return True
+    if puntaje.antiguedad_horas is None:
+        return True
+    return puntaje.antiguedad_horas <= criterio.descartar_despues_de_dias * 24
+
+
+def _repartir(
+    dignas: list[tuple[Oferta, Puntaje]], tope_por_empresa: int
+) -> list[tuple[Oferta, Puntaje]]:
+    """Las mismas ofertas, sin dejar que una empresa se lleve el aviso entero.
+
+    Los marketplaces de talento republican su catálogo todo el tiempo y con
+    puntajes altos: medido el 16/09/2026, Lemon.io ocupaba cinco de los ocho
+    lugares con ofertas de 8 a 29 días, y la única fresca del día —12 horas,
+    remota, AI agent engineer— entraba cuarta.
+
+    No se descarta nada: lo que pasa el tope baja al final de la lista, así que
+    si sobra lugar igual aparece. El orden por puntaje se conserva dentro de
+    cada grupo.
+    """
+    if tope_por_empresa <= 0:
+        return dignas
+    dentro: list[tuple[Oferta, Puntaje]] = []
+    fuera: list[tuple[Oferta, Puntaje]] = []
+    vistas: dict[str, int] = {}
+    for oferta, puntaje in dignas:
+        # Sin empresa no se agrupa: en Hacker News la empresa sale de la primera
+        # línea del comentario y a veces queda vacía. Agruparlas todas bajo ""
+        # dejaría fuera ofertas que no tienen nada que ver entre sí.
+        clave = oferta.empresa.strip().casefold()
+        if not clave:
+            dentro.append((oferta, puntaje))
+            continue
+        vistas[clave] = vistas.get(clave, 0) + 1
+        destino = dentro if vistas[clave] <= tope_por_empresa else fuera
+        destino.append((oferta, puntaje))
+    return dentro + fuera
 
 
 def _pie_fuentes(conteo: dict[str, int]) -> str:
@@ -254,15 +315,27 @@ def main() -> None:
         criterio = replace(criterio, puntaje_minimo=args.minimo)
 
     if args.probar:
+        # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta
+        # que esté corriendo. Mirar qué devuelven los feeds tiene que poder
+        # hacerse en cualquier momento.
         print(asyncio.run(probar(criterio, args.consulta_upwork)))
         return
-    print(
-        asyncio.run(
-            una_vuelta(
-                criterio, carpeta_de_trabajo(), args.consulta_upwork, con_aviso=not args.sin_avisar
+
+    carpeta = carpeta_de_trabajo()
+    try:
+        with turno(carpeta):
+            print(
+                asyncio.run(
+                    una_vuelta(
+                        criterio, carpeta, args.consulta_upwork, con_aviso=not args.sin_avisar
+                    )
+                )
             )
-        )
-    )
+    except YaCorriendo:
+        # Sale en silencio y con código 0: desde el cron, "la anterior todavía
+        # no terminó" es una vuelta que se saltea, no una falla que haya que
+        # mirar. La siguiente sale en dos horas.
+        logger.info("turno_ocupado", detail="otra vuelta en curso; esta se saltea")
 
 
 if __name__ == "__main__":

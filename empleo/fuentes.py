@@ -241,6 +241,13 @@ def _rss_a_ofertas(xml: str) -> list[Oferta]:
 
 # --- Hacker News: "Ask HN: Who is hiring?" ---
 
+# "Who is hiring?" sí; "Who wants to be hired?" y "Freelancer? Seeking
+# freelancer?" no. Va anclado al principio: buscar "who is hiring" suelto
+# matchea también "Who wants to be hired, and who is hiring" —un título que
+# empieza por el hilo equivocado— y cualquier "Tell HN:" que lo mencione al
+# pasar. El `^` es lo que hace que el filtro signifique algo.
+_ES_HILO_DE_OFERTAS = re.compile(r"^ask hn:\s*who\s+is\s+hiring", re.IGNORECASE)
+
 
 async def hackernews(cliente: httpx.AsyncClient) -> list[Oferta]:
     """El hilo mensual, vía la API de Algolia que HN publica para esto.
@@ -254,14 +261,30 @@ async def hackernews(cliente: httpx.AsyncClient) -> list[Oferta]:
         await _traer(
             cliente,
             "https://hn.algolia.com/api/v1/search_by_date"
-            "?tags=story,author_whoishiring&hitsPerPage=1",
+            "?tags=story,author_whoishiring&hitsPerPage=20",
         )
     )
     aciertos = hilos.get("hits") if isinstance(hilos, dict) else None
     if not isinstance(aciertos, list) or not aciertos:
         return []
-    id_hilo = _texto((aciertos[0] or {}).get("objectID"), 32)
-    if not id_hilo.isdigit():
+
+    # El mismo autor publica DOS hilos con un segundo de diferencia: "Who is
+    # hiring?" —empresas contratando— y "Who wants to be hired?" —programadores
+    # ofreciéndose—. Pedir uno solo y quedarse con el primero es jugarse a que
+    # Algolia los devuelva siempre en el mismo orden; el día que no, el cazador
+    # trae trescientos currículums ajenos y los puntúa como si fueran ofertas.
+    id_hilo = ""
+    for acierto in aciertos:
+        if not isinstance(acierto, dict):
+            continue
+        if not _ES_HILO_DE_OFERTAS.search(_texto(acierto.get("title"), 200)):
+            continue
+        candidato = _texto(acierto.get("objectID"), 32)
+        if candidato.isdigit():
+            id_hilo = candidato
+            break
+    if not id_hilo:
+        logger.warning("hn_sin_hilo", detail="ningún 'Who is hiring?' entre los últimos hilos")
         return []
 
     hilo = _json_de(await _traer(cliente, f"https://hn.algolia.com/api/v1/items/{id_hilo}"))

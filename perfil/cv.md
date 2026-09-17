@@ -106,8 +106,17 @@ state graph checkpointed in Postgres. Third-party content enters the prompt
 tagged untrusted and, if code execution is then requested, the run halts for
 human approval — the exact path an indirect prompt injection would take.
 Connects to external tools over **MCP** and navigates a codebase (list, read,
-grep) confined to one root that symlinks cannot escape. **459 tests** and an
-eval suite that measures models against the tasks the agent actually performs.
+grep) confined to one root that symlinks cannot escape.
+
+It also runs two systems where the boundary between model and code is the whole
+point. A **paper-trading agent** takes positions against five competing
+hypotheses, writing its reasoning *before* the outcome is known and sealing it
+with a hash of the context — measured, because an 8B model self-reported 1.43R
+where the real figure was 17.35R, so the model chooses when and why, and the
+code computes what happened. And a **job hunter** that scores openings from
+official feeds with a rubric kept in version control, not in a prompt, so every
+change to the criteria shows up in a diff. **822 tests** and an eval suite that
+measures models against the tasks the agent actually performs.
 
 `Python · FastAPI · LangGraph · Ollama · PostgreSQL + pgvector · Pyodide/WASM · MCP · SSE · Docker`
 
