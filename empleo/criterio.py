@@ -77,6 +77,17 @@ class Criterio:
     fuentes: dict[str, bool] = field(default_factory=dict)
     tope_por_aviso: int = 8
     puntaje_minimo: int = 25
+    # Cuántas ofertas de la MISMA empresa entran en un aviso. Los marketplaces
+    # de talento —Lemon.io, Toptal y parecidos— republican su catálogo entero
+    # todo el tiempo: sin esto, una sola empresa se lleva cinco de los ocho
+    # lugares y las ofertas frescas del resto no llegan al teléfono. Las que
+    # sobran no se pierden, quedan en el digest.
+    tope_por_empresa: int = 2
+    # Días a partir de los cuales una oferta no entra al aviso, por buena que
+    # sea. Restar puntos no alcanza: una oferta con el stack entero absorbe la
+    # penalización de frescura y sigue arriba, y a las cuatro semanas ya
+    # entrevistaron a alguien. Las viejas siguen en el digest. 0 lo apaga.
+    descartar_despues_de_dias: int = 0
     # Cuánto puede aportar el stack como máximo. Sin tope, una oferta que lista
     # treinta tecnologías en un párrafo de "nice to have" le gana a una que pide
     # exactamente lo que hacés.
@@ -155,6 +166,8 @@ def cargar_criterio(ruta: Path) -> Criterio:
         frescura=frescura,
         tope_por_aviso=int(aviso.get("tope_por_aviso", 8)),
         puntaje_minimo=int(aviso.get("puntaje_minimo", 25)),
+        tope_por_empresa=int(aviso.get("tope_por_empresa", 2)),
+        descartar_despues_de_dias=int(aviso.get("descartar_despues_de_dias", 0)),
     )
 
 

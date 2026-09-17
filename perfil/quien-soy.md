@@ -18,6 +18,10 @@ Su principio de diseño: **el modelo explica, el código decide.**
 Proyectos propios:
 
 - **Byte** — este agente. Python, FastAPI, LangGraph, Ollama, pgvector, MCP.
+  Opera en papel sobre cinco hipótesis a la vez, sellando con hash la razón de
+  entrada antes de conocer el resultado, y busca trabajo puntuando ofertas con
+  un criterio versionado en TOML. En los dos casos el modelo elige cuándo y por
+  qué; los números los calcula el código.
 - **Plataforma de trading algorítmico** — ~283k líneas de TypeScript, cinco
   motores de señales, +1.29% de ventaja fuera de muestra.
 - **Go190 Store** — app publicada en la App Store (React Native, NestJS).

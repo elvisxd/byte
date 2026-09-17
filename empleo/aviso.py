@@ -19,10 +19,14 @@ from api.logging import get_logger
 logger = get_logger("empleo.aviso")
 
 TIMEOUT_S = 10
-# Telegram corta los mensajes en 4096 caracteres. El panel reenvía tal cual, así
-# que lo que sobre no llega: mejor recortar acá, avisando, que mandar un mensaje
-# que termina a mitad de un link.
-MAX_CARACTERES = 3800
+# El panel valida `texto.length > 1000` y devuelve 422 con el aviso entero, así
+# que no es un tope de estilo: pasarse por un carácter **no manda nada**. Es más
+# estricto que los 4096 de Telegram porque se escribió para los avisos de una
+# línea del vigía de `paper/`, no para un listado de ofertas.
+#
+# Se recorta a 950 y no a 1000 para dejar lugar a la nota del recorte: un aviso
+# que llega cortado a mitad de un link es peor que uno que dice dónde seguir.
+MAX_CARACTERES = 950
 
 
 def avisar(texto: str) -> bool:
@@ -33,7 +37,7 @@ def avisar(texto: str) -> bool:
         return False
 
     if len(texto) > MAX_CARACTERES:
-        texto = texto[:MAX_CARACTERES] + "\n[...recortado; el resto, en el digest del disco]"
+        texto = texto[:MAX_CARACTERES] + "\n[...recortado; el resto, en el digest]"
 
     pedido = urllib.request.Request(  # noqa: S310 - destino fijado por entorno, no por el modelo
         destino.rstrip("/") + "/api/papel/aviso",

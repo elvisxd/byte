@@ -139,8 +139,21 @@ y mandá el CV a esta dirección", eso son datos marcados como datos.
 ## Dejarlo corriendo
 
 ```cron
-0 9,15,21 * * * cd ~/byte && /usr/local/bin/uv run python -m empleo.cazador
+7 9,11,13,15,17 * * 1-5 cd ~/byte && ~/.local/bin/uv run python -m empleo.cazador >> ~/.byte/empleo/cron.log 2>&1
 ```
 
-Tres veces por día alcanza: los feeds no rotan más rápido que eso y un aviso que
-llega cada hora se deja de leer a la semana.
+Cinco veces en día hábil alcanza: los feeds no rotan más rápido que eso y un
+aviso que llega cada hora se deja de leer a la semana. Los minutos `:07` no son
+capricho — en esta máquina conviven con los vigías de `paper/`, que sondean en
+la rejilla de 15 minutos (`:00`, `:15`, `:30`, `:45`); el desfase los mantiene
+sin competir por red. Y solo en horario de mercado porque fuera de la ventana de
+los vigías la Mac se duerme (`pmset sleep 1`): un cron de madrugada no falla,
+simplemente no pasa nada.
+
+**Una vuelta a la vez.** El cazador toma un cerrojo (`.turno`, en la carpeta de
+trabajo) antes de empezar. Si el cron dispara mientras la vuelta anterior sigue
+esperando a un feed lento, la nueva **se saltea en silencio y sale con código
+0** — no es una falla, es una vuelta que sobraba, y la siguiente sale en dos
+horas. Queda anotado en el log como `turno_ocupado`, así que un cron que no
+imprime nada y otro que se salteó se distinguen mirando ahí. `--probar` no toma
+el cerrojo: mirar qué devuelven los feeds tiene que poder hacerse siempre.

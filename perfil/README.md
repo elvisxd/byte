@@ -1,6 +1,6 @@
 # perfil/
 
-Lo que Byte sabe de vos: el CV, los proyectos y el estado del GitHub. Es la
+Lo que Byte sabe de vos: el CV, qué trabajo buscás y el estado del GitHub. Es la
 base de la que salen las respuestas cuando le pedís adaptar el CV a una oferta,
 escribir el README de un repo o revisar el perfil.
 
@@ -22,8 +22,8 @@ lo que estés negociando. Byte lo usa para razonar, no para decir.
 
 | | qué es |
 |---|---|
+| `quien-soy.md` | Las cuatro líneas que entran en el prompt **en cada conversación**. Corto a propósito: el detalle se lee aparte cuando hace falta. |
 | `cv.md` | El CV en texto, la fuente de verdad. Los PDF salen de acá. |
-| `proyectos.md` | Un proyecto por bloque: qué es, qué prueba, números reales. |
 | `github.md` | Estado del perfil: qué repo es público, cuál tiene descripción. |
 | `busqueda.toml` | Qué trabajo buscás. Lo lee el código que puntúa las ofertas (`empleo/`), no el modelo: por eso es TOML y no prosa. |
 | `privado.md` | Lo que Byte tiene que saber y nadie más. **No se versiona** — este repo es público. Se crea copiando `privado.ejemplo.md`. |
