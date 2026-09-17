@@ -330,7 +330,9 @@ def test_la_oferta_pegada_llega_al_prompt_marcada_como_no_confiable() -> None:
     from tools.empleo import AnalizarArgs, build_empleo_tools
 
     ruta = Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
-    analizar = build_empleo_tools(ruta, 4000)[0]
+    # Por nombre y no por posición: indexar la lista hacía que agregar una
+    # herramienta rompiera este test, que no tiene nada que ver con eso.
+    analizar = next(t for t in build_empleo_tools(ruta, 4000) if t.name == "analizar_oferta")
     resultado = asyncio.run(
         analizar.run(
             AnalizarArgs(

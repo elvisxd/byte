@@ -40,6 +40,10 @@ class AnalizarArgs(BaseModel):
     url: str = Field(default="", description="El link a la oferta, si lo hay")
 
 
+class RadiografiaArgs(BaseModel):
+    """Sin argumentos: qué se mide sale del perfil y del TOML, no del modelo."""
+
+
 class BuscarArgs(BaseModel):
     minimo: int = Field(
         default=0,
@@ -175,7 +179,35 @@ def build_empleo_tools(
             sources=[{"filename": o.titulo[:80], "url": o.url} for o, _ in dignas],
         )
 
+    async def radiografia(args: BaseModel) -> ToolResult:
+        assert isinstance(args, RadiografiaArgs)  # noqa: S101 - garantizado por el nodo de tools
+        from empleo.cazador import recolectar
+        from empleo.mercado import analizar, informe
+
+        criterio = cargar_criterio(criterio_ruta)
+        ofertas, conteo = await recolectar(criterio, "AI agent LangGraph RAG")
+        texto = informe(analizar(ofertas, criterio, _leer_cv(cv_ruta)))
+        # El informe lo calculó el código contando: no es contenido de terceros
+        # y no va envuelto. Lo que sí sería de terceros —las descripciones— no
+        # sale de acá, sólo los términos que se contaron en ellas.
+        return ToolResult(
+            content=texto,
+            summary={"ok": True, "ofertas": len(ofertas), **conteo},
+        )
+
     return [
+        Tool(
+            name="radiografia_mercado",
+            description=(
+                "Mide qué términos piden HOY las ofertas que encajan con el perfil del "
+                "usuario, separando lo que su CV ya dice de lo que no, y sugiere las "
+                "cadenas de búsqueda para Upwork y LinkedIn. Los números salen de contar "
+                "ofertas reales: no los estimes ni los contradigas."
+            ),
+            args_model=RadiografiaArgs,
+            run=radiografia,
+            source="builtin",
+        ),
         Tool(
             name="analizar_oferta",
             description=(
