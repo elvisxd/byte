@@ -53,11 +53,43 @@ def es_de_nvidia(nombre: str) -> bool:
     return nombre.startswith("nvidia/")
 
 
+def es_de_mistral(nombre: str) -> bool:
+    """`mistral/<id>` se pide a Mistral, otra vez por el protocolo de OpenAI.
+
+    Trae la familia Mistral, que no está en ninguno de los otros brazos. Su capa
+    gratuita es la más estrecha de las cuatro (del orden de una petición por
+    minuto), así que el brazo aguanta las 8 vueltas del día y poco más.
+    """
+    return nombre.startswith("mistral/")
+
+
+def es_de_openrouter(nombre: str) -> bool:
+    """`openrouter/<id>` sale por OpenRouter, que es un intermediario y no un
+    proveedor: una clave para muchas familias.
+
+    ⚠ SUS IDS LLEVAN BARRA Y DOS PUNTOS (`deepseek/deepseek-chat-v3-0324:free`),
+    así que el modelo del brazo queda `openrouter/deepseek/deepseek-…:free`. El
+    `:free` NO es decorativo: marca la variante sin coste, y sin él la misma
+    petición se cobra. Quitar solo el prefijo deja los dos intactos.
+
+    ⚠ Y SU CATÁLOGO GRATIS CAMBIA SIN AVISAR: un modelo `:free` hoy puede dejar
+    de serlo mañana y el brazo se queda con un id que ya no existe. Por eso se
+    sondea antes (`scripts/sondear-proveedor.sh openrouter` del dashboard) y por
+    eso el relevo manda un 404 a cuarentena permanente en vez de morir con él.
+    """
+    return nombre.startswith("openrouter/")
+
+
 def es_remoto(nombre: str) -> bool:
     """Todo lo que no es Ollama. Un brazo remoto puede mezclar proveedores: cada
     escritura queda sellada con el modelo que la hizo (paper/CRITERIO_COMPARACION.md)."""
     return (
-        es_de_google(nombre) or es_de_groq(nombre) or es_de_cerebras(nombre) or es_de_nvidia(nombre)
+        es_de_google(nombre)
+        or es_de_groq(nombre)
+        or es_de_cerebras(nombre)
+        or es_de_nvidia(nombre)
+        or es_de_mistral(nombre)
+        or es_de_openrouter(nombre)
     )
 
 
@@ -98,6 +130,10 @@ def build_llm(
         return _cerebras(settings, nombre)
     if es_de_nvidia(nombre):
         return _nvidia(settings, nombre)
+    if es_de_mistral(nombre):
+        return _mistral(settings, nombre)
+    if es_de_openrouter(nombre):
+        return _openrouter(settings, nombre)
 
     from langchain_ollama import ChatOllama
 
@@ -162,6 +198,8 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+MISTRAL_BASE_URL = "https://api.mistral.ai/v1"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # ⚠ SIN ESTO UNA LLAMADA COLGADA PARA EL BRAZO ENTERO. Medido el 2026-09-15:
 # tras dos 503, la llamada siguiente de Gemini se quedó esperando UNA HORA sin
@@ -293,6 +331,57 @@ def _nvidia(settings: Settings, nombre: str) -> Any:
         model=nombre.removeprefix("nvidia/"),
         temperature=0.2,
         max_tokens=settings.nvidia_num_predict,
+        max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
+    )
+
+
+def _mistral(settings: Settings, nombre: str) -> Any:
+    """Mistral por el protocolo de OpenAI. Sin `reasoning`, como Cerebras y NIM.
+
+    `max_retries=1` por lo de siempre: ante un 429 turna el relevo. Y acá importa
+    más que en los otros, porque la capa gratuita de Mistral es la más estrecha
+    de las cuatro: un reintento del SDK se comería la cuota del minuto sin que el
+    relevo llegue a cambiar de modelo.
+    """
+    if not settings.mistral_api_key:
+        raise ValueError(f"MISTRAL_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        base_url=MISTRAL_BASE_URL,
+        api_key=settings.mistral_api_key,
+        model=nombre.removeprefix("mistral/"),
+        temperature=0.2,
+        max_tokens=settings.mistral_num_predict,
+        max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
+    )
+
+
+def _openrouter(settings: Settings, nombre: str) -> Any:
+    """OpenRouter por el protocolo de OpenAI. Un intermediario, no un proveedor.
+
+    ⚠ EL `:free` DEL ID VIAJA TAL CUAL Y ES LO QUE DECIDE SI ESTO CUESTA DINERO.
+    `deepseek/deepseek-chat-v3-0324:free` y el mismo id sin sufijo son la misma
+    familia y facturas distintas, y la regla del proyecto es no pagar una IA antes
+    de saber si es rentable. `removeprefix("openrouter/")` no toca ni la barra
+    interna ni el sufijo; cualquier limpieza «de más» aquí se convierte en una
+    factura.
+
+    Sin `reasoning_format`: es propio de Groq. OpenRouter enruta a docenas de
+    modelos y la mayoría no lo conoce.
+    """
+    if not settings.openrouter_api_key:
+        raise ValueError(f"OPENROUTER_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=settings.openrouter_api_key,
+        model=nombre.removeprefix("openrouter/"),
+        temperature=0.2,
+        max_tokens=settings.openrouter_num_predict,
         max_retries=1,
         timeout=TIMEOUT_REMOTO_S,
     )
