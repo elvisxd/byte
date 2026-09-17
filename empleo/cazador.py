@@ -71,6 +71,12 @@ async def recolectar(
         # criterio escrito en dos lugares que se desincronizan.
         consultas = criterio.stack.get("fuerte", ())
         activas["getonbrd"] = lambda c: fuentes.getonbrd(c, consultas)
+    if criterio.fuentes.get("empresas", True) and criterio.empresas:
+        # Las empresas grandes rara vez publican en los agregadores: se les
+        # pregunta a su propia página de Careers, que es de donde salen los
+        # puestos el día que abren.
+        listado = criterio.empresas
+        activas["empresas"] = lambda c: fuentes.empresas(c, listado)
     if criterio.fuentes.get("linkedin", False):
         usuario = os.environ.get("GMAIL_USUARIO", "")
         clave = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -305,10 +311,40 @@ async def probar(criterio: Criterio, consulta_upwork: str) -> str:
     return "\n".join(lineas)
 
 
+async def probar_empresas(criterio: Criterio) -> str:
+    """Cuáles de los tokens de `[[empresas]]` responden, y con cuántos puestos.
+
+    Existe porque un token equivocado falla en silencio: la empresa aporta cero
+    ofertas y eso se ve igual que "hoy no publicó nada". Acá se ven las dos
+    cosas separadas, que es lo único que permite corregir la lista.
+    """
+    if not criterio.empresas:
+        return "No hay empresas en `[[empresas]]` del TOML."
+
+    lineas = []
+    async with fuentes.cliente_http() as cliente:
+        for entrada in criterio.empresas:
+            nombre, ats, token = entrada
+            encontradas = await fuentes.empresas(cliente, (entrada,))
+            if encontradas:
+                estado = f"{len(encontradas):>3} puestos"
+                muestra = f"  ej: {encontradas[0].titulo[:60]}"
+            else:
+                estado = "  sin respuesta o token equivocado"
+                muestra = f"  revisá la URL de su página de empleos ({ats})"
+            lineas.append(f"[{ats:>10}] {nombre:<16} {estado}\n{muestra}")
+    return "\n".join(lineas)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
         "--probar", action="store_true", help="Muestra qué devuelve cada fuente y no avisa"
+    )
+    parser.add_argument(
+        "--probar-empresas",
+        action="store_true",
+        help="Dice cuáles tokens de [[empresas]] responden y cuántos puestos traen",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -328,6 +364,9 @@ def main() -> None:
     if args.minimo is not None:
         criterio = replace(criterio, puntaje_minimo=args.minimo)
 
+    if args.probar_empresas:
+        print(asyncio.run(probar_empresas(criterio)))
+        return
     if args.probar:
         # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta
         # que esté corriendo. Mirar qué devuelven los feeds tiene que poder

@@ -18,6 +18,7 @@ y nada de acá se ejecuta ni se obedece.
 """
 
 import email
+import html
 import imaplib
 import json
 import re
@@ -319,7 +320,7 @@ def _oferta_getonbrd(clave: str, atributos: dict[str, object], enlaces: object =
     # `countries` trae "Remote" o la lista de países. Juntarlos deja que las
     # señales de `criterio.py` (latam, remoto_global) los encuentren donde ya
     # las buscan, sin inventar un campo nuevo.
-    partes = [_texto(atributos.get("remote_zone"), 100)]
+    partes = [_texto(atributos.get("remote_zone"), 100), _modalidad_getonbrd(atributos)]
     paises = atributos.get("countries")
     if isinstance(paises, list):
         partes += [_texto(pais, 60) for pais in paises[:6]]
@@ -339,6 +340,35 @@ def _oferta_getonbrd(clave: str, atributos: dict[str, object], enlaces: object =
         if isinstance(atributos.get("tags"), list)
         else (),
     )
+
+
+# Las claves donde puede venir la modalidad —presencial, híbrido, remoto local,
+# remoto total—. Son varias porque la documentación del board está detrás de un
+# dominio que no se pudo alcanzar desde donde se escribió esto, así que el
+# nombre exacto del campo no está verificado.
+#
+# Probar varias y quedarse con la primera que traiga texto es más barato que
+# acertar: si ninguna existe, el valor queda vacío y la clasificación la hace
+# igual la señal de texto de `criterio.py` sobre el título y la descripción,
+# que es donde "híbrido" aparece de todos modos. `--probar` imprime la oferta
+# entera para fijar la clave correcta en una sola corrida.
+CLAVES_MODALIDAD = ("modality", "remote_modality", "remote_kind", "work_mode", "modalidad")
+
+
+def _modalidad_getonbrd(atributos: dict[str, object]) -> str:
+    """La modalidad declarada por el board, si alguna de las claves la trae.
+
+    Va a `ubicacion`, que ya entra en `Oferta.buscable()`: así la señal de
+    `criterio.py` la encuentra donde ya mira, sin agregar un campo que sólo una
+    fuente sabría llenar.
+    """
+    for clave in CLAVES_MODALIDAD:
+        valor = atributos.get(clave)
+        # El board podría mandarlo anidado como {"data": {...}}; sólo interesa
+        # cuando es un texto suelto que se pueda leer.
+        if isinstance(valor, str) and valor.strip():
+            return valor.strip()[:60]
+    return ""
 
 
 def _fecha_getonbrd(marca: object) -> str:
@@ -571,6 +601,157 @@ def _ofertas_del_correo(crudo: bytes) -> list[Oferta]:
             cuerpo = carga.decode(parte.get_content_charset() or "utf-8", errors="replace")
             break
     return ofertas_de_alerta_linkedin(cuerpo, fecha) if cuerpo else []
+
+
+# --- Empresas, por su propio sistema de postulación ---
+
+# Las tres plataformas que usan casi todas las empresas de software para su
+# página de "Careers", y que publican el listado como JSON **sin autenticación**:
+# es la API que alimenta su propia página, no un raspado.
+#
+# Sirve para lo que los boards no dan: llegar a una empresa concreta el día que
+# abre el puesto, sin esperar a que lo publique en un agregador — muchas grandes
+# nunca lo hacen.
+ATS_URL = {
+    "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true",
+    "lever": "https://api.lever.co/v0/postings/{token}?mode=json",
+    "ashby": "https://api.ashbyhq.com/posting-api/job-board/{token}",
+}
+
+
+async def empresas(
+    cliente: httpx.AsyncClient, listado: tuple[tuple[str, str, str], ...]
+) -> list[Oferta]:
+    """Los puestos abiertos de cada empresa de la lista. `(nombre, ats, token)`.
+
+    Una empresa que falla no arrastra a las demás: un token equivocado o una
+    empresa que se cambió de plataforma es lo más común acá, y tiene que costar
+    esa empresa y no el aviso entero.
+    """
+    salida: list[Oferta] = []
+    for nombre, ats, token in listado:
+        plantilla = ATS_URL.get(ats.lower())
+        if not plantilla or not token:
+            logger.warning("empresa_mal_configurada", empresa=nombre[:80], ats=ats[:40])
+            continue
+        crudo = _json_de(await _traer(cliente, plantilla.format(token=urllib.parse.quote(token))))
+        if crudo is None:
+            continue
+        try:
+            salida.extend(_LECTORES_ATS[ats.lower()](nombre, crudo))
+        except (TypeError, ValueError, AttributeError) as exc:
+            # La forma cambió: cuesta esa empresa, no la corrida.
+            logger.warning(
+                "empresa_forma_inesperada", empresa=nombre[:80], error_type=type(exc).__name__
+            )
+    return salida
+
+
+def _greenhouse(nombre: str, crudo: object) -> list[Oferta]:
+    """Greenhouse manda la descripción como HTML **escapado** dentro del JSON."""
+    puestos = crudo.get("jobs") if isinstance(crudo, dict) else None
+    if not isinstance(puestos, list):
+        return []
+    salida = []
+    for item in puestos:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        lugar = item.get("location")
+        salida.append(
+            Oferta(
+                fuente="empresas",
+                id_externo=f"greenhouse:{_texto(item.get('id'), 40)}",
+                titulo=_texto(item.get("title"), 300),
+                empresa=nombre,
+                url=_texto(item.get("absolute_url"), 600),
+                # Sin `unescape` la descripción llega como "&lt;p&gt;" literal y
+                # ni las señales ni la brecha contra el CV encuentran nada.
+                descripcion=_texto_plano(html.unescape(_texto(item.get("content")))),
+                ubicacion=_texto(lugar.get("name"), 200) if isinstance(lugar, dict) else "",
+                publicada=_texto(item.get("updated_at"), 40),
+            )
+        )
+    return salida
+
+
+def _lever(nombre: str, crudo: object) -> list[Oferta]:
+    """Lever devuelve la lista pelada, sin envoltorio."""
+    if not isinstance(crudo, list):
+        return []
+    salida = []
+    for item in crudo:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        categorias = item.get("categories")
+        categorias = categorias if isinstance(categorias, dict) else {}
+        salida.append(
+            Oferta(
+                fuente="empresas",
+                id_externo=f"lever:{_texto(item.get('id'), 80)}",
+                titulo=_texto(item.get("text"), 300),
+                empresa=nombre,
+                url=_texto(item.get("hostedUrl"), 600),
+                descripcion=_texto_plano(_texto(item.get("descriptionPlain"))),
+                # `commitment` entra a la ubicación para que "Full-time" y
+                # "Contract" los vean las señales donde ya miran.
+                ubicacion=", ".join(
+                    p
+                    for p in (
+                        _texto(categorias.get("location"), 120),
+                        _texto(categorias.get("commitment"), 60),
+                        _texto(categorias.get("workplaceType"), 40),
+                    )
+                    if p
+                )[:200],
+                publicada=_fecha_lever(item.get("createdAt")),
+            )
+        )
+    return salida
+
+
+def _fecha_lever(marca: object) -> str:
+    """Lever manda epoch en MILISEGUNDOS: leerlo como segundos da el año 1970."""
+    try:
+        return datetime.fromtimestamp(int(_texto(marca, 20)) / 1000, tz=UTC).isoformat()
+    except (ValueError, TypeError, OSError):
+        return ""
+
+
+def _ashby(nombre: str, crudo: object) -> list[Oferta]:
+    puestos = crudo.get("jobs") if isinstance(crudo, dict) else None
+    if not isinstance(puestos, list):
+        return []
+    salida = []
+    for item in puestos:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        # `isRemote` es un booleano propio de Ashby: se traduce a texto para que
+        # lo lea la misma señal que lee la prosa de las demás fuentes.
+        remoto = "remote" if item.get("isRemote") is True else ""
+        salida.append(
+            Oferta(
+                fuente="empresas",
+                id_externo=f"ashby:{_texto(item.get('id'), 80)}",
+                titulo=_texto(item.get("title"), 300),
+                empresa=nombre,
+                url=_texto(item.get("jobUrl"), 600),
+                descripcion=_texto_plano(_texto(item.get("descriptionPlain"))),
+                ubicacion=", ".join(
+                    p
+                    for p in (
+                        _texto(item.get("location"), 120),
+                        _texto(item.get("employmentType"), 40),
+                        remoto,
+                    )
+                    if p
+                )[:200],
+                publicada=_texto(item.get("publishedAt"), 40),
+            )
+        )
+    return salida
+
+
+_LECTORES_ATS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby}
 
 
 # --- Upwork ---
