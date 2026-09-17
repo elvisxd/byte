@@ -7,6 +7,24 @@
 - `uv run pytest -q` antes de cada commit. `uv run ruff check .` también.
 - Nada de `--force` en git, y `main` no se reescribe.
 
+## Cómo se entrega un cambio
+
+**El link del PR va primero, siempre.** Arriba de todo en el mensaje, antes de
+cualquier explicación. No al final, no "lo subí a la rama X": el link, que es lo
+único con lo que se puede hacer algo.
+
+**Todo va en draft y lo aprueba y mergea Elvis.** Nunca se mergea ni se aprueba
+por él, ni siquiera con el CI en verde y sin comentarios. Verde quiere decir
+"listo para que lo mires", no "listo para entrar".
+
+Y como el link es lo que hace falta, se pasa aunque el mensaje sea corto, aunque
+el cambio sea chico, y aunque en esa misma vuelta se esté contando otra cosa.
+
+**Su infraestructura tampoco se toca sin permiso.** El proyecto tiene servicios
+vivos en Railway —`cazador-service`, `vigia-service`— y ahí un redeploy, una
+variable o un volumen cambian algo que está corriendo de verdad. Se revisa, se
+informa qué se encontró, y se pregunta antes de tocar.
+
 ## Este repo es público
 
 Lo que se commitea acá lo lee cualquiera, incluido el reclutador al que se le
