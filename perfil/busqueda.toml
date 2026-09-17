@@ -146,6 +146,13 @@ mas_vieja = -10
 #   boards.greenhouse.io/TOKEN  ·  job-boards.greenhouse.io/TOKEN   -> ats = "greenhouse"
 #   jobs.lever.co/TOKEN                                             -> ats = "lever"
 #   jobs.ashbyhq.com/TOKEN                                          -> ats = "ashby"
+#   EMPRESA.wdN.myworkdayjobs.com/SITIO                             -> ats = "workday"
+#
+# O, sin mirar nada, pegando la URL de su página de empleos:
+#
+#   uv run python -m empleo.cazador --agregar-empresa "Vercel" https://jobs.ashbyhq.com/vercel
+#
+# que la prueba y te imprime el bloque listo para pegar acá.
 #
 # Los cinco de abajo RESPONDEN: se verificaron contra las APIs reales el
 # 2026-09-17 y entre los cinco devolvieron 1.734 puestos.
@@ -191,6 +198,31 @@ token = "datadog"
 nombre = "Linear"
 ats = "ashby"
 token = "linear"
+
+[[empresas]]
+nombre = "Grafana Labs"
+ats = "greenhouse"
+token = "grafanalabs"
+
+[[empresas]]
+nombre = "Sourcegraph"
+ats = "greenhouse"
+# El token lleva un "91" pegado que no sale del nombre: es el ejemplo de por qué
+# esto no se adivina y se saca de la URL de su board.
+token = "sourcegraph91"
+
+[[empresas]]
+nombre = "OpenAI"
+ats = "ashby"
+token = "openai"
+
+[[empresas]]
+nombre = "Chevron"
+ats = "workday"
+# Workday necesita tres datos —inquilino, shard y sitio— y los tres están en
+# esta URL, así que su "token" es la URL entera. Ver el aviso de `empleo/
+# fuentes.py`: es el único adaptador que no habla con una API documentada.
+token = "https://chevron.wd5.myworkdayjobs.com/jobs"
 
 [aviso]
 # Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
