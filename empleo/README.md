@@ -16,6 +16,12 @@ criterio no es tocar código.
 
 ## Antes que el código
 
+[**Upwork: el presupuesto manda**](UPWORK.md) — 10 Connects gratis al mes y 6
+por propuesta son una o dos propuestas mensuales: el problema no es encontrar
+ofertas sino repartir plata escasa. Ahí están las búsquedas guardadas, los
+booleanos de Upwork y de LinkedIn, y cómo se usa `python -m empleo.upwork`.
+
+
 [**Cómo se aplica bien**](COMO-APLICAR.md) — el modelo mental del que sale todo
 esto: el ATS ordena en vez de rechazar, el humano lee las primeras 20-40 de la
 cola, y de ahí salen las dos palancas que el código implementa (llegar temprano
