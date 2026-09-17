@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from agent.llm import GROQ_BASE_URL, build_llm, es_de_google, es_remoto
+from agent.llm import CEREBRAS_BASE_URL, GROQ_BASE_URL, build_llm, es_de_google, es_remoto
 from api.config import Settings
 
 
@@ -157,3 +157,58 @@ def test_el_local_tambien_tiene_tope_por_llamada(espias: None) -> None:
     assert OllamaEspia.ultimo["client_kwargs"] == {"timeout": TIMEOUT_LOCAL_S}
     # Generoso a propósito: el 14B tarda minutos cuando piensa.
     assert TIMEOUT_LOCAL_S >= 600
+
+
+def test_un_cerebras_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> None:
+    """El tercer brazo del experimento en papel: `cerebras/<id>` sale a Cerebras
+    y no a Ollama. Sin el prefijo quitado, se pediría un modelo que se llama
+    "cerebras/llama-…" y que no existe en ningún catálogo.
+    """
+    ajustes = Settings(CEREBRAS_API_KEY="clave-cerebras", BYTE_CEREBRAS_NUM_PREDICT=8192)
+
+    llm = build_llm(ajustes, "cerebras/llama-3.3-70b")
+
+    assert isinstance(llm, OpenAIEspia)
+    ultimo = OpenAIEspia.ultimo
+    assert ultimo["base_url"] == CEREBRAS_BASE_URL
+    assert ultimo["api_key"] == "clave-cerebras"
+    assert ultimo["model"] == "llama-3.3-70b"
+    assert ultimo["max_tokens"] == 8192
+    # Un solo intento: ante un 429 el relevo turna los modelos del brazo.
+    assert ultimo["max_retries"] == 1
+    assert ultimo["timeout"] == 120.0
+    assert OllamaEspia.ultimo == {}
+
+
+def test_a_cerebras_no_se_le_pide_el_reasoning_de_groq(espias: None) -> None:
+    """`reasoning_format` es propio de Groq y de los gpt-oss. Los Llama y Qwen
+    de Cerebras no separan el pensamiento del texto, así que mandarlo haría que
+    el servidor reciba un campo que no conoce — el mismo error que ya costó una
+    tarde con `model_kwargs` en Groq.
+    """
+    ajustes = Settings(CEREBRAS_API_KEY="clave-cerebras")
+
+    build_llm(ajustes, "cerebras/qwen-3-32b", reasoning=True)
+
+    assert OpenAIEspia.ultimo.get("extra_body") is None
+    assert "reasoning_format" not in str(OpenAIEspia.ultimo)
+
+
+def test_sin_clave_de_cerebras_no_se_arma(espias: None) -> None:
+    """Falla al construirlo y no en la primera llamada: un brazo que arranca sin
+    clave gasta una vuelta entera del vigía para descubrir que no puede pedir
+    nada.
+    """
+    with pytest.raises(ValueError, match="CEREBRAS_API_KEY"):
+        build_llm(Settings(CEREBRAS_API_KEY=""), "cerebras/llama-3.3-70b")
+
+
+def test_un_cerebras_cuenta_como_brazo_remoto() -> None:
+    """`es_remoto` decide qué sella cada escritura y qué esperas aplica el
+    relevo. Si Cerebras no entra ahí, sus operaciones quedarían marcadas como
+    del modelo local y la comparación entre brazos mediría cualquier cosa.
+    """
+    from agent.llm import es_remoto
+
+    assert es_remoto("cerebras/llama-3.3-70b") is True
+    assert es_remoto("qwen3:14b") is False

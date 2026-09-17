@@ -29,10 +29,20 @@ def es_de_groq(nombre: str) -> bool:
     return nombre.startswith("groq/")
 
 
+def es_de_cerebras(nombre: str) -> bool:
+    """`cerebras/<id>` se pide a Cerebras, también por el protocolo de OpenAI.
+
+    Un tercer brazo vale por traer una familia distinta, no un modelo más: los
+    otros dos son Gemini y los gpt-oss de Groq, y Cerebras sirve Llama y Qwen
+    (`paper/CRITERIO_COMPARACION.md`). El prefijo se quita antes de pedirlo.
+    """
+    return nombre.startswith("cerebras/")
+
+
 def es_remoto(nombre: str) -> bool:
     """Todo lo que no es Ollama. Un brazo remoto puede mezclar proveedores: cada
     escritura queda sellada con el modelo que la hizo (paper/CRITERIO_COMPARACION.md)."""
-    return es_de_google(nombre) or es_de_groq(nombre)
+    return es_de_google(nombre) or es_de_groq(nombre) or es_de_cerebras(nombre)
 
 
 def build_llm(
@@ -68,6 +78,8 @@ def build_llm(
         return _gemini(settings, nombre, reasoning=reasoning)
     if es_de_groq(nombre):
         return _groq(settings, nombre, reasoning=reasoning)
+    if es_de_cerebras(nombre):
+        return _cerebras(settings, nombre)
 
     from langchain_ollama import ChatOllama
 
@@ -130,6 +142,7 @@ def _gemini(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
 
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 
 # ⚠ SIN ESTO UNA LLAMADA COLGADA PARA EL BRAZO ENTERO. Medido el 2026-09-15:
 # tras dos 503, la llamada siguiente de Gemini se quedó esperando UNA HORA sin
@@ -200,6 +213,31 @@ def _groq(settings: Settings, nombre: str, *, reasoning: bool) -> Any:
         max_retries=1,
         timeout=TIMEOUT_REMOTO_S,
         extra_body=extra or None,
+    )
+
+
+def _cerebras(settings: Settings, nombre: str) -> Any:
+    """Cerebras por el protocolo de OpenAI, igual que Groq pero sin `reasoning`.
+
+    No lleva `reasoning_format`: eso es propio de Groq y de los gpt-oss. Los
+    Llama y Qwen que sirve Cerebras no separan el pensamiento del texto, así
+    que pedirlo haría que el SDK mande un campo que el servidor no conoce.
+
+    `max_retries=1` por lo mismo que en los otros dos: ante un 429 el reintento
+    lo hace el relevo, que sabe turnar los modelos de la lista del brazo.
+    """
+    if not settings.cerebras_api_key:
+        raise ValueError(f"CEREBRAS_API_KEY vacía: no se puede armar {nombre}")
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        base_url=CEREBRAS_BASE_URL,
+        api_key=settings.cerebras_api_key,
+        model=nombre.removeprefix("cerebras/"),
+        temperature=0.2,
+        max_tokens=settings.cerebras_num_predict,
+        max_retries=1,
+        timeout=TIMEOUT_REMOTO_S,
     )
 
 

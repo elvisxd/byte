@@ -107,9 +107,14 @@ class Settings(BaseSettings):
     # Modelos `groq/<id>` (p. ej. `groq/openai/gpt-oss-120b`). Sin tarjeta: 30
     # peticiones/min y 1.000/día por modelo, medido en la doc el 2026-09-15.
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    # Cerebras: el tercer brazo del experimento en papel. Sirve Llama y Qwen por
+    # el protocolo de OpenAI, así que trae una familia distinta a las otras dos
+    # sin pedir una dependencia nueva.
+    cerebras_api_key: str = Field(default="", alias="CEREBRAS_API_KEY")
     # Mismo razonamiento que `gemini_num_predict`: el pensamiento de gpt-oss
     # cuenta dentro del tope de salida.
     groq_num_predict: int = Field(default=8192, alias="BYTE_GROQ_NUM_PREDICT")
+    cerebras_num_predict: int = Field(default=8192, alias="BYTE_CEREBRAS_NUM_PREDICT")
     # ⚠ 60 SEGUNDOS, NO 45 NI 12. Medido el 2026-09-15: la capa gratuita de
     # Groq tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
     # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
