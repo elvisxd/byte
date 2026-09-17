@@ -9,7 +9,14 @@ from typing import Any
 
 import pytest
 
-from agent.llm import CEREBRAS_BASE_URL, GROQ_BASE_URL, build_llm, es_de_google, es_remoto
+from agent.llm import (
+    CEREBRAS_BASE_URL,
+    GROQ_BASE_URL,
+    NVIDIA_BASE_URL,
+    build_llm,
+    es_de_google,
+    es_remoto,
+)
 from api.config import Settings
 
 
@@ -201,6 +208,74 @@ def test_sin_clave_de_cerebras_no_se_arma(espias: None) -> None:
     """
     with pytest.raises(ValueError, match="CEREBRAS_API_KEY"):
         build_llm(Settings(CEREBRAS_API_KEY=""), "cerebras/llama-3.3-70b")
+
+
+def test_un_nvidia_va_por_el_protocolo_de_openai_y_conserva_la_barra_interna(
+    espias: None,
+) -> None:
+    """⚠ EL ID DE NIM LLEVA BARRA DENTRO, y eso es lo que este test protege.
+
+    `deepseek-ai/deepseek-v4-flash-0731` es el id real —el que contestó 200 al
+    sondeo del 2026-09-17—, así que el modelo completo del brazo es
+    `nvidia/deepseek-ai/deepseek-v4-flash-0731`. Quitar el prefijo tiene que
+    dejar la barra interna intacta: un `split("/")` o un `removeprefix` de más
+    pediría `deepseek-v4-flash-0731` a secas, que no existe, y el 404 no rota en
+    el relevo hasta que se le enseñó que es permanente.
+    """
+    ajustes = Settings(NVIDIA_NIM_API_KEY="clave-nvidia", BYTE_NVIDIA_NUM_PREDICT=8192)
+
+    llm = build_llm(ajustes, "nvidia/deepseek-ai/deepseek-v4-flash-0731")
+
+    assert isinstance(llm, OpenAIEspia)
+    ultimo = OpenAIEspia.ultimo
+    assert ultimo["base_url"] == NVIDIA_BASE_URL
+    assert ultimo["api_key"] == "clave-nvidia"
+    assert ultimo["model"] == "deepseek-ai/deepseek-v4-flash-0731"
+    assert ultimo["max_tokens"] == 8192
+    assert ultimo["max_retries"] == 1
+    assert ultimo["timeout"] == 120.0
+    assert OllamaEspia.ultimo == {}
+
+
+def test_a_nvidia_no_se_le_pide_el_reasoning_de_groq(espias: None) -> None:
+    """`reasoning_format` es propio de Groq y de los gpt-oss. Mandarlo a NIM haría
+    que el servidor reciba un campo que no conoce — el error que ya costó una
+    tarde con `model_kwargs`.
+    """
+    build_llm(
+        Settings(NVIDIA_NIM_API_KEY="clave-nvidia"), "nvidia/qwen/qwen3-next-80b", reasoning=True
+    )
+
+    assert OpenAIEspia.ultimo.get("extra_body") is None
+    assert "reasoning_format" not in str(OpenAIEspia.ultimo)
+
+
+def test_la_clave_de_nvidia_se_lee_del_nombre_que_esta_en_railway() -> None:
+    """⚠ `NVIDIA_NIM_API_KEY`, NO `NVIDIA_API_KEY`. Es el nombre con el que la
+    clave está puesta en Railway; con otro alias el brazo arrancaría con la clave
+    vacía y gastaría la jornada descubriéndolo. Es el fallo del 2026-09-15 con
+    `GEMINI_API_KEY` contra `GEMINI_API_KEY_GRATIS`.
+    """
+    assert Settings(NVIDIA_NIM_API_KEY="de-railway").nvidia_api_key == "de-railway"
+
+
+def test_sin_clave_de_nvidia_no_se_arma(espias: None) -> None:
+    """Falla al construirlo y no en la primera llamada: un brazo que arranca sin
+    clave gasta una vuelta entera del vigía para descubrir que no puede pedir nada.
+    """
+    with pytest.raises(ValueError, match="NVIDIA_NIM_API_KEY"):
+        build_llm(Settings(NVIDIA_NIM_API_KEY=""), "nvidia/deepseek-ai/deepseek-v4-flash-0731")
+
+
+def test_un_nvidia_cuenta_como_brazo_remoto() -> None:
+    """`es_remoto` decide qué sella cada escritura y qué esperas aplica el relevo.
+    Si NIM no entra ahí, sus operaciones quedarían marcadas como del modelo local
+    y la comparación entre brazos mediría cualquier cosa.
+    """
+    from agent.llm import es_remoto
+
+    assert es_remoto("nvidia/deepseek-ai/deepseek-v4-flash-0731") is True
+    assert es_remoto("qwen3:14b") is False
 
 
 def test_un_cerebras_cuenta_como_brazo_remoto() -> None:
