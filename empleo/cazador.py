@@ -65,6 +65,12 @@ async def recolectar(
         activas["weworkremotely"] = fuentes.weworkremotely
     if criterio.fuentes.get("hackernews", True):
         activas["hackernews"] = fuentes.hackernews
+    if criterio.fuentes.get("getonbrd", True):
+        # Las búsquedas salen de los términos `fuerte` del TOML: su API exige
+        # `query`, y tener una segunda lista en el código sería el mismo
+        # criterio escrito en dos lugares que se desincronizan.
+        consultas = criterio.stack.get("fuerte", ())
+        activas["getonbrd"] = lambda c: fuentes.getonbrd(c, consultas)
     if criterio.fuentes.get("upwork", False):
         token = os.environ.get("UPWORK_TOKEN", "")
         activas["upwork"] = lambda c: fuentes.upwork(c, token, consulta_upwork)

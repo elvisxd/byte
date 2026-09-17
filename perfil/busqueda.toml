@@ -83,6 +83,11 @@ remoteok = true
 remotive = true
 weworkremotely = true
 hackernews = true
+# Get on Board: el único que nace en la región. Las empresas que publican ahí ya
+# contratan latinoamericanos, así que sus ofertas no dependen de que alguien se
+# haya acordado de escribir "LATAM" en la descripción. Su API pide qué buscar:
+# usa los términos de `[stack] fuerte`, así que cambiarlos cambia esto también.
+getonbrd = true
 # Upwork solo se activa con una API key aprobada por ellos. Sin key no trae
 # nada y lo dice: no hay modo "probemos igual", porque el modo de probar igual
 # es el que termina en cuenta suspendida.
