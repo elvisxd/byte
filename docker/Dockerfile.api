@@ -27,6 +27,15 @@ COPY models/ models/
 COPY db/ db/
 COPY rag/ rag/
 COPY web/ web/
+# `api/routes/ofertas.py` importa `empleo` al cargar el módulo, así que sin esto
+# la imagen se construye y `import api.main` revienta adentro. Lo encontró el
+# job `imagen` del CI, que existe justamente para eso.
+COPY empleo/ empleo/
+# Sólo el criterio, NO `perfil/` entero: ahí viven `privado.md` y `privado.toml`
+# —dónde vas a estar viviendo, el vencimiento del permiso— y una imagen se
+# publica. El `.dockerignore` los excluye también, pero copiar un archivo
+# nombrado no depende de que nadie se olvide de mantener esa lista.
+COPY perfil/busqueda.toml perfil/busqueda.toml
 
 RUN useradd --create-home --uid 10001 byte && chown -R byte:byte /app
 USER byte

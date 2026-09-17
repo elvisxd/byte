@@ -36,6 +36,7 @@ from api.routes import (
     documents,
     execute,
     health,
+    ofertas,
     openai,
     runs,
     session,
@@ -551,6 +552,7 @@ def create_app(
         tools.router,
         execute.router,
         documents.router,
+        ofertas.router,
     ):
         app.include_router(router, prefix="/api/v1", responses=errores_comunes)
 
@@ -562,6 +564,15 @@ def create_app(
     static_dir = WEB_DIR / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/ofertas", include_in_schema=False)
+    async def ofertas_pagina() -> HTMLResponse:
+        """La página de pegar ofertas. Sirve el HTML; la credencial la pide el
+        endpoint, igual que en la página principal."""
+        page = WEB_DIR / "templates" / "ofertas.html"
+        if not page.is_file():
+            return HTMLResponse("<h1>Byte</h1><p>Falta web/templates/ofertas.html</p>")
+        return HTMLResponse(page.read_text(encoding="utf-8"))
 
     @app.get("/", include_in_schema=False)
     async def index() -> HTMLResponse:
