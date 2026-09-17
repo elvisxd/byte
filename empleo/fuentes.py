@@ -17,12 +17,14 @@ lo que llegue al prompt del modelo pasa por `wrap_untrusted` en `tools/empleo.py
 y nada de acá se ejecuta ni se obedece.
 """
 
+import email
+import imaplib
 import json
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET  # noqa: S405 - ver _rss_a_ofertas
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -434,6 +436,145 @@ def _fecha_hn(marca: object) -> str:
         return datetime.fromtimestamp(int(_texto(marca, 20)), tz=UTC).date().isoformat()
     except (ValueError, TypeError, OSError):
         return ""
+
+
+# --- LinkedIn: las alertas que llegan al correo ---
+
+# LinkedIn no publica feed y prohíbe el raspado, pero manda las alertas de
+# empleo por mail: eso es correo propio y leerlo no es scraping. La dirección
+# es fija desde hace años; `linkedin@em.linkedin.com` y `notifications-` son
+# encuestas y avisos de perfil, no ofertas.
+REMITENTE_LINKEDIN = "jobalerts-noreply@linkedin.com"
+IMAP_GMAIL = "imap.gmail.com"
+# Cuántos correos se leen por vuelta. Las alertas llegan una o dos veces al día
+# por búsqueda guardada; treinta cubre varios días de varias alertas sin que una
+# vuelta del cazador se convierta en una descarga de medio buzón.
+TOPE_CORREOS_LINKEDIN = 30
+
+# El cuerpo en texto plano viene en bloques de tres líneas separados por una
+# raya: título, empresa, ubicación, y una línea "View job: <url>". La ubicación
+# a veces falta —cuando la oferta no la declara— y a veces hay líneas sueltas
+# entre medio ("This company is actively hiring", "Apply with resume").
+_SEPARADOR_LINKEDIN = re.compile(r"^-{10,}$", re.MULTILINE)
+_VER_OFERTA = re.compile(r"View job:\s*(https://\S+)")
+_ID_OFERTA = re.compile(r"/jobs/view/(\d+)")
+# Las líneas de adorno que LinkedIn intercala y que no son ni empresa ni lugar.
+_RUIDO_LINKEDIN = re.compile(
+    r"^(this company is actively hiring|apply with resume|be an early applicant"
+    r"|easy apply|promoted|view job:|see all jobs|your job alert|new jobs match)",
+    re.IGNORECASE,
+)
+
+
+def ofertas_de_alerta_linkedin(cuerpo: str, fecha: str = "") -> list[Oferta]:
+    """Las ofertas de UN correo de alerta, ya en texto plano.
+
+    Se separa del acceso al buzón a propósito: parsear el formato de LinkedIn
+    es lo que se rompe cuando ellos cambian la plantilla, y así se prueba con
+    un correo pegado en un test en vez de con una cuenta de verdad.
+    """
+    ofertas: list[Oferta] = []
+    for bloque in _SEPARADOR_LINKEDIN.split(cuerpo):
+        enlace = _VER_OFERTA.search(bloque)
+        if not enlace:
+            continue
+        url = enlace.group(1)
+        identificador = _ID_OFERTA.search(url)
+        if not identificador:
+            continue
+
+        # Las líneas útiles del bloque, en orden, sin el adorno de LinkedIn.
+        lineas = [
+            linea.strip()
+            for linea in bloque.splitlines()
+            if linea.strip() and not _RUIDO_LINKEDIN.match(linea.strip())
+        ]
+        if not lineas:
+            continue
+        titulo = lineas[0]
+        empresa = lineas[1] if len(lineas) > 1 else ""
+        ubicacion = lineas[2] if len(lineas) > 2 else ""
+
+        ofertas.append(
+            Oferta(
+                fuente="linkedin",
+                id_externo=identificador.group(1)[:64],
+                titulo=titulo[:300],
+                empresa=empresa[:200],
+                # El link de seguimiento lleva un token de sesión larguísimo y
+                # personal. Se queda la URL canónica, que es la misma oferta sin
+                # el rastreo — y entra en el aviso sin comerse el mensaje.
+                url=f"https://www.linkedin.com/jobs/view/{identificador.group(1)}",
+                # El correo no trae la descripción, solo el encabezado. El
+                # puntuador va a tener menos texto donde buscar el stack; a
+                # cambio, estas ofertas no llegan por ningún otro lado.
+                descripcion=f"{titulo}\n{empresa}\n{ubicacion}",
+                ubicacion=ubicacion[:200],
+                publicada=fecha[:60],
+            )
+        )
+    return ofertas
+
+
+def linkedin_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
+    """Las alertas de los últimos `dias`, leídas del buzón por IMAP.
+
+    **Esto no es scraping**: LinkedIn manda estos correos al usuario, y leer el
+    propio buzón con una contraseña de aplicación es lo que esa contraseña
+    existe para hacer. Es también la única vía legítima a LinkedIn e Indeed, que
+    no publican feed y prohíben el raspado.
+
+    Es síncrona —`imaplib` lo es— y por eso el cazador la corre en un hilo: una
+    conexión IMAP bloqueando el bucle dejaría a las otras cinco fuentes
+    esperando.
+
+    Nunca lanza: sin credenciales, con la clave vencida o con Gmail caído, el
+    cazador sigue con las demás fuentes.
+    """
+    if not usuario or not clave:
+        logger.info("linkedin_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        return []
+
+    desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
+    try:
+        with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
+            buzon.login(usuario, clave)
+            # Solo lectura: esto no marca como leído ni mueve nada de tu correo.
+            buzon.select("INBOX", readonly=True)
+            estado, respuesta = buzon.search(
+                None, f'(FROM "{REMITENTE_LINKEDIN}" SINCE "{desde}")'
+            )
+            if estado != "OK" or not respuesta or not respuesta[0]:
+                return []
+            identificadores = respuesta[0].split()[-TOPE_CORREOS_LINKEDIN:]
+
+            ofertas: dict[str, Oferta] = {}
+            for identificador in identificadores:
+                estado, datos = buzon.fetch(identificador, "(RFC822)")
+                if estado != "OK" or not datos or not isinstance(datos[0], tuple):
+                    continue
+                for oferta in _ofertas_del_correo(datos[0][1]):
+                    # La misma oferta aparece en varias alertas: es una sola.
+                    ofertas.setdefault(oferta.id_externo, oferta)
+            return list(ofertas.values())
+    except (OSError, imaplib.IMAP4.error) as exc:
+        logger.warning("linkedin_imap_fallo", error_type=type(exc).__name__)
+        return []
+
+
+def _ofertas_del_correo(crudo: bytes) -> list[Oferta]:
+    """Saca el texto plano de un correo MIME y lo pasa al parser."""
+    mensaje = email.message_from_bytes(crudo)
+    fecha = _texto(mensaje.get("Date"), 60)
+    cuerpo = ""
+    for parte in mensaje.walk() if mensaje.is_multipart() else [mensaje]:
+        if parte.get_content_type() != "text/plain":
+            continue
+        carga = parte.get_payload(decode=True)
+        if isinstance(carga, bytes):
+            cuerpo = carga.decode(parte.get_content_charset() or "utf-8", errors="replace")
+            break
+    return ofertas_de_alerta_linkedin(cuerpo, fecha) if cuerpo else []
 
 
 # --- Upwork ---

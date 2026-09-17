@@ -305,6 +305,13 @@ class Relevo:
         # Los tokens de entrada de cada llamada, para saber a qué distancia del
         # tope por petición va este brazo (Groq gratuito: 8.000).
         entrada = (uso or {}).get("input_tokens") if isinstance(uso, dict) else None
+        # ⚠ Y LOS DE SALIDA, QUE SON LOS CAROS. En Gemini el pensamiento factura
+        # como salida y cuesta cinco veces más que la entrada ($3,75 vs $0,75
+        # por millón en 3.8-flash); en Groq, cuatro ($0,60 vs $0,15). Sin este
+        # número, el coste diario de un brazo es una estimación mía y no un
+        # dato, justo cuando toque decidir si alguno merece pagarse
+        # (paper/CRITERIO_COMPARACION.md, a las 50 predicciones por brazo).
+        salida = (uso or {}).get("output_tokens") if isinstance(uso, dict) else None
         # Lo que el proveedor sirvió de su caché: es lo único que dice si el
         # prefijo fijo (rol + instrucción + esquemas) se está reutilizando.
         detalle = (uso or {}).get("input_token_details") if isinstance(uso, dict) else None
@@ -312,6 +319,8 @@ class Relevo:
         peso = f" · {entrada} tokens de entrada" if entrada else ""
         if cache:
             peso += f" ({cache} de caché)"
+        if salida:
+            peso += f" · {salida} de salida"
         if self._estado.actual != nombre:
             print(f"[relevo] {_hora()} contesta {nombre}{peso}", flush=True)
         elif peso:
