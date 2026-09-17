@@ -17,3 +17,7 @@ n8n/
 cli/
 node_modules/
 *.md
+
+# Lo privado del perfil no entra en ninguna imagen. `*.md` ya se excluye, pero
+# `privado.toml` no lo cubría y una imagen se publica.
+perfil/privado.*
