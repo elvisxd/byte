@@ -23,12 +23,17 @@ from empleo.oferta import Oferta
 
 # Los nombres que `recolectar()` conoce. Sale de leer el cazador y no de una
 # lista escrita acá para que agregar una fuente no deje tests saliendo a la red.
+# Toda fuente nueva va acá. Si falta, los tests que creen estar apagando la red
+# salen a internet de verdad: `fuentes.get()` devuelve True por omisión. Pasó con
+# `empresas`, y el test trajo 1.734 puestos reales de Greenhouse antes de fallar.
 _TODAS_LAS_FUENTES = (
     "remoteok",
     "remotive",
     "weworkremotely",
     "hackernews",
     "getonbrd",
+    "empresas",
+    "linkedin",
     "upwork",
 )
 
@@ -1063,3 +1068,21 @@ def test_una_plataforma_desconocida_no_llama_a_ningun_lado() -> None:
 
     assert asyncio.run(correr()) == []
     assert pedidos == []
+
+
+def test_toda_fuente_del_cazador_esta_en_la_lista_que_los_tests_apagan() -> None:
+    """El default de `criterio.fuentes.get()` es True, así que una fuente que no
+    esté en `_TODAS_LAS_FUENTES` queda ENCENDIDA en los tests que creen haber
+    apagado la red — y salen a internet de verdad.
+
+    No es hipotético: pasó al agregar `empresas`, y un test trajo 1.734 puestos
+    reales de Greenhouse antes de fallar por una razón que no tenía nada que ver.
+    """
+    import re
+
+    fuente = Path(cazador.__file__).read_text(encoding="utf-8")
+    registradas = set(re.findall(r'activas\["(\w+)"\]', fuente))
+    assert registradas, "no se encontró ninguna fuente: cambió la forma de registrarlas"
+    assert registradas <= set(_TODAS_LAS_FUENTES), (
+        f"faltan en _TODAS_LAS_FUENTES: {sorted(registradas - set(_TODAS_LAS_FUENTES))}"
+    )

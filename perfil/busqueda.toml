@@ -147,26 +147,25 @@ mas_vieja = -10
 #   jobs.lever.co/TOKEN                                             -> ats = "lever"
 #   jobs.ashbyhq.com/TOKEN                                          -> ats = "ashby"
 #
-# ⚠ NINGUNO DE LOS TOKENS DE ABAJO ESTÁ VERIFICADO. Se escribieron sin poder
-# alcanzar esas APIs desde donde se armó esto, así que son la conjetura más
-# probable —casi siempre el nombre de la empresa en minúsculas— y varios van a
-# fallar, sobre todo los de empresas que se cambiaron de plataforma.
+# Los cinco de abajo RESPONDEN: se verificaron contra las APIs reales el
+# 2026-09-17 y entre los cinco devolvieron 1.734 puestos.
+#
+# Se probaron y se cayeron dos, por si querés reintentarlas con otro token:
+# Zapier en Greenhouse y Netflix en Lever, las dos con 404. Lo más probable es
+# que se hayan cambiado de plataforma; el token correcto sale de abrir su página
+# de empleos y mirar la URL.
+#
+# Para lo que agregues:
 #
 #   uv run python -m empleo.cazador --probar-empresas
 #
-# dice cuáles responden y cuántos puestos trae cada una. Borrá las que fallen o
-# corregiles el token, y agregá las que de verdad te interesen: esta lista vale
-# por lo que vos elijas, no por lo que vino de fábrica.
+# dice cuáles responden y cuántos puestos trae cada una. Esta lista vale por lo
+# que elijas vos, no por lo que vino de fábrica.
 
 [[empresas]]
 nombre = "GitLab"
 ats = "greenhouse"
 token = "gitlab"
-
-[[empresas]]
-nombre = "Zapier"
-ats = "greenhouse"
-token = "zapier"
 
 [[empresas]]
 nombre = "Cloudflare"
@@ -187,11 +186,6 @@ token = "anthropic"
 nombre = "Datadog"
 ats = "greenhouse"
 token = "datadog"
-
-[[empresas]]
-nombre = "Netflix"
-ats = "lever"
-token = "netflix"
 
 [[empresas]]
 nombre = "Linear"

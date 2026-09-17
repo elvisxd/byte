@@ -80,15 +80,22 @@ def _texto(valor: object, tope: int = 20_000) -> str:
     return str(valor)[:tope]
 
 
-async def _traer(cliente: httpx.AsyncClient, url: str) -> httpx.Response | None:
-    """Un GET con tope de tamaño. Devuelve None si algo salió mal."""
+async def _traer(
+    cliente: httpx.AsyncClient, url: str, max_bytes: int = MAX_BYTES
+) -> httpx.Response | None:
+    """Un GET con tope de tamaño. Devuelve None si algo salió mal.
+
+    El tope se puede subir por fuente: el board de una empresa grande con las
+    descripciones incluidas es legítimamente enorme —Anthropic devuelve 8,7 MB—
+    y no es el volcado de datos contra el que existe el tope general.
+    """
     try:
         respuesta = await cliente.get(url)
         respuesta.raise_for_status()
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.warning("fuente_fallo", url=url[:120], error_type=type(exc).__name__)
         return None
-    if len(respuesta.content) > MAX_BYTES:
+    if len(respuesta.content) > max_bytes:
         logger.warning("fuente_demasiado_grande", url=url[:120], bytes=len(respuesta.content))
         return None
     return respuesta
@@ -612,6 +619,11 @@ def _ofertas_del_correo(crudo: bytes) -> list[Oferta]:
 # Sirve para lo que los boards no dan: llegar a una empresa concreta el día que
 # abre el puesto, sin esperar a que lo publique en un agregador — muchas grandes
 # nunca lo hacen.
+# Un board grande con `content=true` pasa con holgura el tope general: medido,
+# el de Anthropic devuelve 8,7 MB de puro JSON legítimo. Con el tope de 8 MB esa
+# empresa se caía entera y en silencio.
+MAX_BYTES_EMPRESA = 30_000_000
+
 ATS_URL = {
     "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true",
     "lever": "https://api.lever.co/v0/postings/{token}?mode=json",
@@ -634,7 +646,13 @@ async def empresas(
         if not plantilla or not token:
             logger.warning("empresa_mal_configurada", empresa=nombre[:80], ats=ats[:40])
             continue
-        crudo = _json_de(await _traer(cliente, plantilla.format(token=urllib.parse.quote(token))))
+        crudo = _json_de(
+            await _traer(
+                cliente,
+                plantilla.format(token=urllib.parse.quote(token)),
+                max_bytes=MAX_BYTES_EMPRESA,
+            )
+        )
         if crudo is None:
             continue
         try:

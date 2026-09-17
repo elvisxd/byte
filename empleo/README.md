@@ -204,9 +204,12 @@ El `token` sale de mirar la URL de su página de empleos:
 | `jobs.lever.co/TOKEN` | `lever` |
 | `jobs.ashbyhq.com/TOKEN` | `ashby` |
 
-⚠ **Los tokens que vienen de fábrica no están verificados**: se escribieron sin
-poder alcanzar esas APIs, así que son la conjetura más probable y varios van a
-fallar. Esto dice cuáles responden:
+Los cinco que vienen de fábrica —GitLab, Cloudflare, Stripe, Anthropic y
+Datadog, más Linear en Ashby— **están verificados contra las APIs reales**:
+entre ellos devolvieron 1.734 puestos. Zapier y Netflix se probaron y dieron 404
+en sus plataformas, así que no vinieron.
+
+Para lo que agregues vos:
 
 ```bash
 uv run python -m empleo.cazador --probar-empresas
