@@ -256,6 +256,35 @@ Así que cuando las tarjetas vienen sin descripción, la página lo dice y **no
 elige ninguna**. Ordena, y te manda a abrir las de arriba. Para decidir sobre una
 en concreto, pegá esa sola completa.
 
+### Desplegarla, para pegar desde el teléfono
+
+La página también corre sola, sin el resto de Byte:
+
+```bash
+OFERTAS_CLAVE=$(openssl rand -hex 32) \
+  uv run uvicorn empleo.servidor:crear_app --factory
+```
+
+Vale la pena porque **el camino de `/ofertas` no usa Ollama, ni Postgres, ni el
+sandbox** — sólo la biblioteca estándar y `empleo/`. Por eso su imagen
+(`docker/Dockerfile.ofertas`) instala tres paquetes y nada más: la de la API
+completa arrastra langgraph, ollama y psycopg para no usarlos. Un servicio de
+centavos hace la parte que hay que poder usar desde cualquier navegador,
+mientras el agente completo sigue en la Mac.
+
+Sirve **las mismas rutas** que la API grande, así que `ofertas.js` es un solo
+archivo para los dos lados. Dos copias divergen.
+
+**Sin `OFERTAS_CLAVE` se niega a arrancar.** Va a tener una URL pública, y un
+endpoint que parsea texto arbitrario sin credencial es una invitación: fallar
+cerrado y ruidoso es mejor que andar callado y abierto. La página pide la clave
+una vez y la guarda en `sessionStorage` —no en `localStorage`— para que se borre
+al cerrar la pestaña.
+
+El CI construye esa imagen y verifica que arranque, que rechace sin clave y que
+analice con clave. Es lo que atrapa a alguien agregando un `import httpx` en ese
+camino: la imagen se construiría igual y reventaría al arrancar.
+
 ## Agregar una empresa sin adivinar
 
 El token no se adivina. Sourcegraph es `sourcegraph91`, con un número pegado que

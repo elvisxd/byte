@@ -5,6 +5,34 @@
 // también acá serían dos criterios que se desincronizan y nadie se entera.
 const API = "/api/v1";
 
+// La clave sólo hace falta cuando la página está desplegada: en la Mac, la API
+// grande autentica con la cookie que ya dejó la pantalla principal. Se guarda en
+// sessionStorage y no en localStorage a propósito — se borra al cerrar la
+// pestaña, que para una URL pública en un teléfono prestado es la diferencia.
+const CLAVE = "byte-ofertas-clave";
+
+function clave() {
+  try {
+    return sessionStorage.getItem(CLAVE) || "";
+  } catch {
+    return "";
+  }
+}
+
+function guardarClave(valor) {
+  try {
+    sessionStorage.setItem(CLAVE, valor);
+  } catch {
+    /* Modo privado: se pedirá de nuevo, que es molesto pero no roto. */
+  }
+}
+
+function pedirClave() {
+  const valor = window.prompt("Clave de acceso (OFERTAS_CLAVE)");
+  if (valor) guardarClave(valor.trim());
+  return Boolean(valor);
+}
+
 const form = document.getElementById("form-pegado");
 const pegado = document.getElementById("pegado");
 const connects = document.getElementById("connects");
@@ -106,14 +134,35 @@ form.addEventListener("submit", async (evento) => {
   boton.disabled = true;
   boton.textContent = "Analizando…";
   try {
-    const respuesta = await fetch(`${API}/ofertas/pegado`, {
+    const cuerpo = JSON.stringify({
+      texto: contenido,
+      connects: Number(connects.value) || 0,
+    });
+    const cabeceras = { "Content-Type": "application/json" };
+    if (clave()) cabeceras.Authorization = `Bearer ${clave()}`;
+
+    let respuesta = await fetch(`${API}/ofertas/pegado`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texto: contenido, connects: Number(connects.value) || 0 }),
+      headers: cabeceras,
+      body: cuerpo,
     });
+
+    // Un 401 puede ser dos cosas distintas: la cookie de la API grande venció, o
+    // esto está desplegado y falta la clave. Se pide una vez y se reintenta; si
+    // vuelve a fallar, ahí sí es la cookie.
+    if (respuesta.status === 401 && pedirClave()) {
+      respuesta = await fetch(`${API}/ofertas/pegado`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { ...cabeceras, Authorization: `Bearer ${clave()}` },
+        body: cuerpo,
+      });
+    }
     if (respuesta.status === 401) {
-      error.textContent = "Sesión vencida. Entrá de nuevo desde la página principal.";
+      error.textContent =
+        "Sin acceso. Si estás en la Mac, entrá desde la página principal; " +
+        "si es la versión desplegada, revisá la clave.";
       return;
     }
     if (!respuesta.ok) {
