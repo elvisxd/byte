@@ -48,6 +48,14 @@ from zoneinfo import ZoneInfo
 
 CUARENTENA_MINUTO_S = 60.0
 CUARENTENA_CAIDO_S = 120.0
+# ⚠ HAY FALLOS QUE NO SE CURAN ESPERANDO, Y TRATARLOS COMO CAÍDAS CUESTA VUELTAS.
+# Un 404 «model does not exist or you do not have access to it» y un 402 «payment
+# required» no cambian en dos minutos: piden editar la configuración o pagar, o
+# sea otro despliegue. Con `CUARENTENA_CAIDO_S` el modelo volvía a probarse en la
+# vuelta siguiente y en la siguiente, gastando una llamada fallida cada vez para
+# descubrir lo mismo. Con infinito sale de la rotación para esta sesión, que es
+# exactamente lo que durará la causa.
+CUARENTENA_PERMANENTE_S = float("inf")
 # Si todos están en cuarentena pero el primero vuelve en menos de esto, se
 # espera en vez de perder la vuelta. Medido el 2026-09-15: «todos agotados; el
 # primero vuelve en 0 min» y la vuelta se perdió por segundos.
@@ -88,7 +96,7 @@ def _hora() -> str:
 
 
 def tipo_de_agotamiento(exc: BaseException) -> str | None:
-    """`minuto`, `dia` o `caido` si el error es de cuota o de servicio; None si es otra cosa.
+    """`minuto`, `dia`, `caido` o `permanente`; None si el error no es de cuota ni de servicio.
 
     Un error de argumentos o de red no es agotamiento y no se tapa cambiando
     de modelo: subiría igual con el siguiente.
@@ -96,6 +104,20 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
     # Google pone el HTTP en `code`; el SDK de OpenAI (Groq) en `status_code`.
     codigo = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     texto = str(exc)
+    bajo_todo = texto.lower()
+    # ⚠ 404 Y 402 SON DEL MODELO, NO DEL SERVICIO, Y SON PERMANENTES. Medido el
+    # 2026-09-17 montando el brazo cerebras: `llama-3.3-70b` (con un guion de
+    # más) daba 404 «Model does not exist or you do not have access to it», y el
+    # nombre correcto daba 402 «Payment required». Los dos devolvían None acá, o
+    # sea que el error subía y LA VUELTA SE PERDÍA SIN PROBAR EL SEGUNDO MODELO
+    # de la lista — con dos configurados, el brazo moría por el primero y el
+    # segundo no se ejercitó ni una vez. Costó cuatro intentos averiguar algo que
+    # una rotación habría dicho en el primero.
+    #
+    # Van antes que todo lo demás porque el texto de un 402 puede contener
+    # palabras que las reglas de abajo confundirían.
+    if codigo in (402, 404) or "not_found_error" in bajo_todo or "payment_required" in bajo_todo:
+        return "permanente"
     if codigo == 429 or "RateLimit" in type(exc).__name__ or "RESOURCE_EXHAUSTED" in texto:
         bajo = texto.lower()
         return "dia" if ("perday" in bajo or "per day" in bajo or "daily" in bajo) else "minuto"
@@ -292,12 +314,20 @@ class Relevo:
             cuarentena = segundos_hasta_medianoche_pacifico(self.ahora() if self.ahora else None)
         elif tipo == "minuto":
             cuarentena = CUARENTENA_MINUTO_S
+        elif tipo == "permanente":
+            cuarentena = CUARENTENA_PERMANENTE_S
         else:
             cuarentena = CUARENTENA_CAIDO_S
         self._estado.hasta[nombre] = self.reloj() + cuarentena
+        # «vuelve en inf min» no dice nada; lo que hace falta saber de un fallo
+        # permanente es que no hay que esperarlo.
+        cuando = (
+            "no vuelve en esta sesión"
+            if cuarentena == float("inf")
+            else f"vuelve en {cuarentena / 60:.0f} min"
+        )
         print(
-            f"[relevo] {_hora()} {nombre} agotado ({tipo}): vuelve en {cuarentena / 60:.0f} min · "
-            f"{str(exc)[:80]}",
+            f"[relevo] {_hora()} {nombre} agotado ({tipo}): {cuando} · {str(exc)[:80]}",
             flush=True,
         )
 
@@ -345,6 +375,13 @@ class Relevo:
 
     def _nadie(self) -> RelevoAgotado:
         espera = self._espera_hasta_el_primero()
+        if espera == float("inf"):
+            # Todos permanentes: no es «espera más», es «arregla la lista».
+            return RelevoAgotado(
+                f"ningún modelo del brazo se puede usar ({', '.join(self.nombres)}): "
+                "404 o 402 en todos. Revisar los nombres contra /v1/models del proveedor "
+                "y si la cuenta tiene acceso; esperar no lo arregla."
+            )
         return RelevoAgotado(
             f"todos los modelos están agotados ({', '.join(self.nombres)}); "
             f"el primero vuelve en {espera / 60:.0f} min"
