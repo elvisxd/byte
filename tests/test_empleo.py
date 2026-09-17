@@ -809,3 +809,98 @@ def test_la_empresa_de_getonbrd_queda_vacia_en_vez_de_adivinada() -> None:
             return await fuentes.getonbrd(cliente, ("llm",))
 
     assert asyncio.run(correr())[0].empresa == ""
+
+
+# --- LinkedIn: las alertas del correo ---
+
+# Un correo de alerta real, recortado. El formato es el que importa: bloques
+# separados por una raya, con líneas de adorno que LinkedIn intercala.
+_ALERTA_LINKEDIN = """Your job alert for Ingeniero de software in United States
+New jobs match your preferences.
+
+Senior Full-Stack Software Engineer, AI
+Mainstay
+United States
+View job: https://www.linkedin.com/comm/jobs/view/4418178203/?trackingId=xvldjHAn%3D%3D&midToken=AQH
+
+---------------------------------------------------------
+
+Senior AI Engineer - AI Product
+This company is actively hiring
+ClickUp
+United States
+View job: https://www.linkedin.com/comm/jobs/view/4406708660/?trackingId=5rKveLI9WhLYpI4UrVJDA
+
+---------------------------------------------------------
+
+Senior Full Stack Software Engineer
+Apply with resume & profile
+Talently
+Dallas, TX
+View job: https://www.linkedin.com/comm/jobs/view/4455341444/?trackingId=dw6WXBGWO3rCEj62iYjVuw
+
+---------------------------------------------------------
+
+See all jobs on LinkedIn: https://www.linkedin.com/comm/jobs/search-results/?keywords=Ingeniero
+"""
+
+
+def test_las_lineas_de_adorno_no_se_leen_como_la_empresa() -> None:
+    """LinkedIn intercala "This company is actively hiring" y "Apply with
+    resume & profile" entre el título y la empresa, y no siempre las mismas.
+    Tomando la segunda línea a secas, media alerta llegaría al teléfono con
+    "This Company Is Actively Hiring" donde va el nombre de quien contrata.
+    """
+    ofertas = fuentes.ofertas_de_alerta_linkedin(_ALERTA_LINKEDIN)
+
+    por_titulo = {o.titulo: o for o in ofertas}
+    assert por_titulo["Senior AI Engineer - AI Product"].empresa == "ClickUp"
+    assert por_titulo["Senior Full Stack Software Engineer"].empresa == "Talently"
+    assert por_titulo["Senior Full Stack Software Engineer"].ubicacion == "Dallas, TX"
+
+
+def test_el_pie_del_correo_no_se_cuenta_como_oferta() -> None:
+    """El correo termina con "See all jobs", el upsell de Premium y el pie
+    legal. Todos traen enlaces: contarlos como ofertas metería tres líneas de
+    basura en un aviso que solo muestra cuatro.
+    """
+    ofertas = fuentes.ofertas_de_alerta_linkedin(_ALERTA_LINKEDIN)
+
+    assert len(ofertas) == 3
+    assert all("/jobs/view/" in o.url for o in ofertas)
+
+
+def test_el_link_va_sin_el_token_de_seguimiento() -> None:
+    """El enlace del correo lleva `midToken`, `trkEmail` y un `otpToken` de
+    varios cientos de caracteres, atados a la sesión de quien lo recibió. Uno
+    solo se come el aviso entero —el panel corta en 1000— y además es un dato
+    personal que no tiene por qué viajar a Telegram.
+    """
+    oferta = fuentes.ofertas_de_alerta_linkedin(_ALERTA_LINKEDIN)[0]
+
+    assert oferta.url == "https://www.linkedin.com/jobs/view/4418178203"
+    assert "midToken" not in oferta.url
+    assert "trackingId" not in oferta.url
+
+
+def test_sin_credenciales_no_se_intenta_conectar_al_buzon() -> None:
+    """Sin `GMAIL_APP_PASSWORD` la fuente está apagada, y apagada significa que
+    no se abre una conexión IMAP para que el servidor conteste que faltó la
+    contraseña. Igual que Upwork sin su key.
+    """
+    assert fuentes.linkedin_por_imap("", "") == []
+    assert fuentes.linkedin_por_imap("alguien@gmail.com", "") == []
+
+
+def test_un_buzon_caido_no_se_lleva_la_vuelta_entera(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gmail rechazando el login —clave revocada, verificación en dos pasos
+    apagada— no puede dejar sin aviso a las otras cinco fuentes. La vuelta sigue
+    y el fallo queda en el log.
+    """
+
+    def explota(*_args: object, **_kwargs: object) -> object:
+        raise OSError("sin red")
+
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", explota)
+
+    assert fuentes.linkedin_por_imap("alguien@gmail.com", "clave") == []

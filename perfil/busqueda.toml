@@ -88,6 +88,13 @@ hackernews = true
 # haya acordado de escribir "LATAM" en la descripción. Su API pide qué buscar:
 # usa los términos de `[stack] fuerte`, así que cambiarlos cambia esto también.
 getonbrd = true
+# LinkedIn, leyendo las alertas que ya te manda al correo. No es raspado: son
+# correos tuyos, y es la única vía legítima a LinkedIn —no publica feed y
+# prohíbe el scraping—. Necesita GMAIL_USUARIO y GMAIL_APP_PASSWORD en el
+# `.env`; sin eso no trae nada y lo dice. Las ofertas salen de las búsquedas
+# guardadas que tengas en LinkedIn, así que el criterio de qué llega se define
+# allá y acá solo se puntúa.
+linkedin = false
 # Upwork solo se activa con una API key aprobada por ellos. Sin key no trae
 # nada y lo dice: no hay modo "probemos igual", porque el modo de probar igual
 # es el que termina en cuenta suspendida.

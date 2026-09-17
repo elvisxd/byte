@@ -71,6 +71,14 @@ async def recolectar(
         # criterio escrito en dos lugares que se desincronizan.
         consultas = criterio.stack.get("fuerte", ())
         activas["getonbrd"] = lambda c: fuentes.getonbrd(c, consultas)
+    if criterio.fuentes.get("linkedin", False):
+        usuario = os.environ.get("GMAIL_USUARIO", "")
+        clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+        # `imaplib` es síncrona: en el bucle bloquearía a las otras cinco
+        # fuentes mientras negocia TLS y descarga treinta correos.
+        activas["linkedin"] = lambda _c: asyncio.to_thread(
+            fuentes.linkedin_por_imap, usuario, clave
+        )
     if criterio.fuentes.get("upwork", False):
         token = os.environ.get("UPWORK_TOKEN", "")
         activas["upwork"] = lambda c: fuentes.upwork(c, token, consulta_upwork)
