@@ -111,3 +111,42 @@ Tres desenlaces posibles a las 50 predicciones por brazo:
   sirve. Si es el remoto, se decide si pagar por él con números delante.
 - **Ninguno resuelve mejor que el otro pero los dos resuelven**: la
   diferencia es coste y velocidad, y la Mac gana por ser gratis y local.
+
+## 2026-09-17: los brazos remotos se mudan a la nube, y eso cambia UNA cosa
+
+Desde hoy `gemini` y `groq` corren en Railway (`railway-vigia-service/` del repo
+del dashboard), no en la Mac. El motivo es que nunca la necesitaron —van por
+API, sin GPU y sin Ollama— y sí la sufrían: con la Mac dormida de noche y
+apagada cuando el usuario no está, cada ausencia se llevaba los tres brazos.
+
+Esto **no** es una adaptación al modelo remoto de las que este criterio
+prohíbe, y no toca nada de lo que se compara: mismo prompt, mismas
+herramientas, mismos eventos, misma ventana (08:00–20:30), mismo tope diario,
+registro propio por brazo y cada operación sellada con el modelo que la
+escribió. Lo que cambia es qué máquina hace la llamada HTTP, y eso el modelo no
+lo ve.
+
+⚠ **LO QUE SÍ CAMBIA ES LA DISPONIBILIDAD, Y SE DECLARA EN VEZ DE DISIMULARSE.**
+Hasta hoy los tres brazos compartían las ausencias de la Mac: cuando ella no
+estaba, no había muestra de ninguno, así que los tres cubrían exactamente los
+mismos días. Desde hoy el local sigue atado a la Mac y los remotos no, o sea
+que **habrá días con muestra remota y sin muestra local**.
+
+Eso obliga a algo al comparar, y es lo único que obliga: **la comparación se
+hace sobre los días en que los DOS brazos escribieron**, no sobre todo lo que
+haya en cada base. La fecha de cada fila (`hecha_en` en `predicciones`) es lo
+que permite hacer el corte, y las 50 predicciones del umbral se cuentan sobre
+ese subconjunto. Lo que sobre del brazo remoto no se tira —es muestra buena
+para mirar al modelo por su cuenta— pero no entra en el contraste entre brazos.
+
+Se consideró y se descartó la alternativa: encender los brazos remotos solo
+cuando la Mac está apagada. Sería peor, no mejor — los días de uno serían
+exactamente los que le faltan al otro y no habría ni un día en común que
+comparar.
+
+⚠ **Y LA ZONA HORARIA DEL CONTENEDOR ES PARTE DEL EXPERIMENTO.** `vigia.py` abre
+y cierra su jornada con `datetime.now()`, la hora de SU máquina. Un contenedor
+en UTC correría la ventana desplazada respecto a la Mac y los brazos dejarían de
+despertarse por los mismos cierres de 4h, que es lo primero que este criterio
+exige mantener igual. El servicio lleva `TZ` fijada a la de la Mac; si alguien
+la cambia, cambia los eventos.
