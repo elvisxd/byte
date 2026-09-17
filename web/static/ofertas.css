@@ -1,0 +1,112 @@
+/* Sólo lo propio de la página de ofertas: el resto sale de app.css, que ya
+   define los colores, la tipografía y los botones. */
+
+.pagina-ofertas {
+  display: block;
+  padding: 2rem 1rem 4rem;
+  overflow-y: auto;
+}
+
+.ofertas-cabecera,
+.ofertas-main {
+  max-width: 54rem;
+  margin: 0 auto;
+}
+
+.volver {
+  color: var(--texto-tenue, #8a8f98);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+#pegado {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--borde, #2c2f36);
+  background: var(--fondo-alt, #16181d);
+  color: inherit;
+  resize: vertical;
+}
+
+.controles {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  flex-wrap: wrap;
+}
+
+.controles input[type="number"] {
+  width: 5rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--borde, #2c2f36);
+  background: var(--fondo-alt, #16181d);
+  color: inherit;
+}
+
+.ayuda {
+  color: var(--texto-tenue, #8a8f98);
+  font-size: 0.85rem;
+}
+
+.resumen {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: var(--fondo-alt, #16181d);
+  border: 1px solid var(--borde, #2c2f36);
+}
+
+/* El aviso de que las tarjetas no traen descripción. Va destacado porque cambia
+   cómo hay que leer la lista: el orden vale, el veredicto no. */
+.resumen.parcial {
+  border-color: #b7791f;
+}
+
+.oferta {
+  border: 1px solid var(--borde, #2c2f36);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.oferta.aplicar {
+  border-color: #2f855a;
+  background: rgba(47, 133, 90, 0.08);
+}
+
+.oferta-cabecera {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.puntaje {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 3ch;
+  text-align: right;
+}
+
+.veredicto {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.veredicto.si {
+  color: #48bb78;
+}
+
+.datos,
+.motivos {
+  color: var(--texto-tenue, #8a8f98);
+  font-size: 0.85rem;
+  margin-top: 0.3rem;
+}

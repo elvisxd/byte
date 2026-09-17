@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Byte — Ofertas</title>
+    <link rel="icon" href="/static/byte.svg" type="image/svg+xml" />
+    <!-- CSS y JS en archivos aparte: la CSP no permite inline. -->
+    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="stylesheet" href="/static/ofertas.css" />
+  </head>
+  <body class="pagina-ofertas">
+    <header class="ofertas-cabecera">
+      <a href="/" class="volver">← Byte</a>
+      <h1>¿A cuáles aplico?</h1>
+      <p class="subtitulo">
+        Abrí la búsqueda de Upwork o LinkedIn, seleccioná todo (Ctrl-A), copiá y pegá acá.
+        Con el menú y el pie adentro: se descartan solos.
+      </p>
+    </header>
+
+    <main class="ofertas-main">
+      <form id="form-pegado">
+        <textarea
+          id="pegado"
+          rows="10"
+          placeholder="Pegá acá la página entera de resultados…"
+          aria-label="Página de resultados pegada"
+        ></textarea>
+        <div class="controles">
+          <label for="connects">
+            Connects disponibles
+            <span class="ayuda">(sólo Upwork; el plan Basic da 10 por mes)</span>
+          </label>
+          <input id="connects" type="number" min="0" max="1000" value="10" />
+          <button type="submit" class="primario" id="boton-analizar">Analizar</button>
+        </div>
+        <p id="error" class="error" role="alert"></p>
+      </form>
+
+      <section id="resumen" class="resumen" hidden></section>
+      <section id="resultados" aria-live="polite"></section>
+    </main>
+
+    <script src="/static/ofertas.js"></script>
+  </body>
+</html>

@@ -227,6 +227,35 @@ igual que "hoy no publicó nada"—, y ese comando es lo que separa las dos cosa
 Borrá las que fallen y agregá las que de verdad te interesen: la lista vale por
 lo que elijas vos.
 
+## Pegar una página y que decida
+
+```
+http://localhost:8000/ofertas
+```
+
+Abrís la búsqueda de Upwork o de LinkedIn, **Ctrl-A, copiás y pegás**. Con el
+menú, los filtros y el pie adentro: se descartan solos y dice cuántos descartó
+—si ese número es enorme, el parseo salió mal y hay que mirarlo, no confiar.
+
+Existe como página y no sólo como comando porque el flujo real es copiar de una
+pestaña y pegar en otra, y ahí el portapapeles va de navegador a navegador sin
+pasar por una terminal.
+
+**Los Connects sólo se reparten si lo pegado es de Upwork.** En LinkedIn
+postular es gratis: mostrar un costo ahí sería inventar una restricción que no
+existe.
+
+### Lo que la página no puede afirmar
+
+Las tarjetas de LinkedIn traen título, empresa, lugar, sueldo y cuánta gente
+aplicó — **no la descripción del puesto**. Con eso el orden sigue valiendo, porque
+competencia y frescura son datos duros, pero decir "aplicá a esta" con un puntaje
+sacado de un título de seis palabras sería inventar una certeza.
+
+Así que cuando las tarjetas vienen sin descripción, la página lo dice y **no
+elige ninguna**. Ordena, y te manda a abrir las de arriba. Para decidir sobre una
+en concreto, pegá esa sola completa.
+
 ## Agregar una empresa sin adivinar
 
 El token no se adivina. Sourcegraph es `sourcegraph91`, con un número pegado que
