@@ -80,6 +80,56 @@ def _relevo(*modelos: _Modelo, reloj: _Reloj | None = None, espera_s: float = 0.
     return Relevo([(m.nombre, m) for m in modelos], espera_s=espera_s, reloj=r, dormir=r.dormir)
 
 
+def test_un_404_o_un_402_son_del_modelo_y_son_permanentes() -> None:
+    """Costó cuatro intentos con el brazo cerebras: antes devolvían None, el error
+    subía y la vuelta se perdía SIN probar el segundo modelo de la lista."""
+    assert (
+        tipo_de_agotamiento(_Error(404, "Model does not exist or you do not have access"))
+        == "permanente"
+    )
+    assert (
+        tipo_de_agotamiento(_Error(402, "Payment required to access this resource")) == "permanente"
+    )
+    # También por el texto, que es como los envuelve el SDK de OpenAI.
+    assert tipo_de_agotamiento(_Error(0, "{'type': 'not_found_error'}")) == "permanente"
+    assert tipo_de_agotamiento(_Error(0, "{'type': 'payment_required'}")) == "permanente"
+    # Y no se confunden con lo que sí se cura esperando.
+    assert tipo_de_agotamiento(_Error(503, "high demand")) == "caido"
+    assert tipo_de_agotamiento(_Error(413, "Request too large")) == "caido"
+    # Una clave inválida NO es del modelo: rotar gastaría una llamada por cada
+    # uno para fallar igual, así que sigue subiendo.
+    assert tipo_de_agotamiento(_Error(401, "invalid api key")) is None
+
+
+async def test_un_modelo_permanente_no_se_reintenta_y_deja_paso_al_siguiente() -> None:
+    reloj = _Reloj()
+    malo = _Modelo("malo", _Error(404, "Model does not exist"))
+    bueno = _Modelo("bueno")
+    relevo = _relevo(malo, bueno, reloj=reloj)
+
+    # La vuelta NO se pierde: rota al segundo en la misma llamada.
+    assert await _todo(relevo) == ["bueno:0", "bueno:1"]
+    assert relevo.actual == "bueno"
+    assert malo.llamadas == 1
+
+    # Y no se vuelve a intentar, ni pasado un día: la causa no se cura esperando.
+    reloj.t += 60 * 60 * 24
+    assert await _todo(relevo) == ["bueno:0", "bueno:1"]
+    assert malo.llamadas == 1, "un 404 no se reintenta nunca en esta sesión"
+
+
+async def test_con_todos_permanentes_el_error_dice_que_esperar_no_sirve() -> None:
+    relevo = _relevo(
+        _Modelo("uno", _Error(404, "Model does not exist")),
+        _Modelo("dos", _Error(402, "Payment required")),
+    )
+    with pytest.raises(RelevoAgotado) as e:
+        await _todo(relevo)
+    # Ni «vuelve en inf min», ni «espera»: lo que hace falta es arreglar la lista.
+    assert "esperar no lo arregla" in str(e.value)
+    assert "inf" not in str(e.value)
+
+
 def test_clasifica_los_errores() -> None:
     assert tipo_de_agotamiento(_Error(429, "quota exceeded")) == "minuto"
     assert tipo_de_agotamiento(_Error(429, "GenerateRequestsPerDayPerProjectPerModel")) == "dia"
