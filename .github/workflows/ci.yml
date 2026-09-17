@@ -96,6 +96,34 @@ jobs:
             || { docker logs sandbox-ci; exit 1; }
           docker rm -f sandbox-ci
 
+      - name: Construir la imagen de la página de ofertas
+        run: docker build -f docker/Dockerfile.ofertas -t byte-ofertas:ci .
+
+      - name: La página de ofertas arranca, pide clave y analiza
+        run: |
+          # Esta imagen no instala las dependencias del proyecto: el camino de
+          # /ofertas usa sólo la biblioteca estándar. Si alguien agrega un import
+          # de httpx o selectolax ahí, la imagen se construye igual y revienta al
+          # arrancar — este paso es lo que lo encuentra antes de desplegar.
+          CLAVE="$(openssl rand -hex 16)"
+          docker run --rm -d --name ofertas-ci \
+            -e OFERTAS_CLAVE="$CLAVE" -p 8100:8000 byte-ofertas:ci
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8100/salud && break
+            sleep 1
+          done
+          # Sin clave tiene que rechazar: es una URL pública.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:8100/api/v1/ofertas/pegado \
+            -H 'Content-Type: application/json' -d '{"texto":"x"}')" = "401" \
+            || { docker logs ofertas-ci; exit 1; }
+          # Con clave, analiza de verdad.
+          curl -sf -X POST http://127.0.0.1:8100/api/v1/ofertas/pegado \
+            -H "Authorization: Bearer $CLAVE" -H 'Content-Type: application/json' \
+            -d '{"texto":"Senior AI Engineer\nProposals: Less than 5\nPayment verified"}' \
+            | grep -q '"sitio":"upwork"' || { docker logs ofertas-ci; exit 1; }
+          docker rm -f ofertas-ci
+
       - name: La app importa dentro de la imagen
         run: docker run --rm byte-api:ci python -c "import api.main; print('import ok')"
 

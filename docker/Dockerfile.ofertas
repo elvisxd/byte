@@ -1,0 +1,30 @@
+# La página de ofertas, sola. Imagen mínima a propósito.
+#
+# No instala las dependencias del proyecto: el camino de /ofertas usa sólo la
+# biblioteca estándar más `empleo/`, así que alcanza con el servidor HTTP. Meter
+# el `uv sync` completo traería langgraph, ollama, psycopg y selectolax —cientos
+# de megas y un arranque lento— para no usar nada de eso.
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn>=0.32" "pydantic>=2.8"
+
+# Sólo lo que el servicio lee. Si mañana necesita algo más, va a fallar acá y no
+# en producción con un ImportError a las nueve de la mañana.
+COPY empleo/ /app/empleo/
+COPY web/ /app/web/
+COPY perfil/busqueda.toml /app/perfil/busqueda.toml
+
+# Sin root: el proceso no tiene nada que escribir.
+RUN useradd --create-home --uid 10001 byte
+USER byte
+
+EXPOSE 8000
+
+# `crear_app` se niega a arrancar sin OFERTAS_CLAVE, así que un despliegue sin
+# esa variable falla acá y se ve en los logs, en vez de quedar abierto.
+CMD ["sh", "-c", "uvicorn empleo.servidor:crear_app --factory --host 0.0.0.0 --port ${PORT:-8000}"]
