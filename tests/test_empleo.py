@@ -23,12 +23,17 @@ from empleo.oferta import Oferta
 
 # Los nombres que `recolectar()` conoce. Sale de leer el cazador y no de una
 # lista escrita acá para que agregar una fuente no deje tests saliendo a la red.
+# Toda fuente nueva va acá. Si falta, los tests que creen estar apagando la red
+# salen a internet de verdad: `fuentes.get()` devuelve True por omisión. Pasó con
+# `empresas`, y el test trajo 1.734 puestos reales de Greenhouse antes de fallar.
 _TODAS_LAS_FUENTES = (
     "remoteok",
     "remotive",
     "weworkremotely",
     "hackernews",
     "getonbrd",
+    "empresas",
+    "linkedin",
     "upwork",
 )
 
@@ -926,3 +931,158 @@ def test_un_buzon_caido_no_se_lleva_la_vuelta_entera(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", explota)
 
     assert fuentes.linkedin_por_imap("alguien@gmail.com", "clave") == []
+
+
+# --- Modalidad: híbrido y presencial ---
+
+
+def test_una_oferta_hibrida_no_llega_al_telefono() -> None:
+    """El caso que originó esto: un backend senior híbrido en Santiago, imposible
+    de postular desde Estados Unidos. No es un puesto peor, es un puesto que no
+    existe para vos — y los boards de la región están llenos."""
+    hibrida = _oferta(
+        titulo="Senior Backend Technical Lead",
+        descripcion="LangGraph, Python, FastAPI. Modalidad híbrida en Santiago.",
+    )
+    puntaje = puntuar(hibrida, CRITERIO)
+    assert "hibrido" in puntaje.senales
+    # Con el stack coincidiendo entero, igual queda debajo del mínimo del aviso.
+    assert puntaje.total < CRITERIO.puntaje_minimo
+
+
+def test_cien_por_ciento_remoto_sin_hibrido_no_es_hibrido() -> None:
+    """ "100% remote, no hybrid" contiene la palabra que la descartaría y significa
+    exactamente lo contrario. Sin mirar la negación primero, las ofertas que mejor
+    sirven serían las que más se castigan."""
+    for texto in (
+        "100% remote, no hybrid, work from anywhere",
+        "Fully remote. No on-site requirement.",
+        "Remote-first company with an optional office",
+    ):
+        senales = detectar_senales(_oferta(descripcion=texto))
+        assert "hibrido" not in senales, texto
+        assert "presencial" not in senales, texto
+
+
+def test_lo_hibrido_sigue_en_el_digest_aunque_no_se_avise() -> None:
+    """Ninguna señal descarta sola, tampoco esta. Si el criterio quedó demasiado
+    duro —una híbrida que igual aceptarías— tiene que poder verse en algún lado."""
+    hibrida = _oferta(titulo="Senior Backend", descripcion="Híbrido en Santiago. Python.")
+    seleccion = cazador.seleccionar([hibrida], CRITERIO, Memoria(Path("/no/existe.json")))
+    assert len(seleccion) == 1
+    assert "hibrido" in seleccion[0][1].senales
+
+
+# --- Empresas por su propio sistema de postulación ---
+
+
+def test_greenhouse_manda_la_descripcion_como_html_escapado() -> None:
+    """Llega "&lt;p&gt;" literal dentro del JSON. Sin des-escapar, ni las señales ni
+    la brecha contra el CV encuentran una sola palabra de la descripción."""
+    ofertas = fuentes._greenhouse(
+        "Stripe",
+        {
+            "jobs": [
+                {
+                    "id": 1,
+                    "title": "Senior Engineer",
+                    "absolute_url": "https://x",
+                    "location": {"name": "Remote - US"},
+                    "content": (
+                        "&lt;p&gt;Build with &lt;b&gt;Python&lt;/b&gt; and Kubernetes&lt;/p&gt;"
+                    ),
+                    "updated_at": "2026-09-16T10:00:00-04:00",
+                }
+            ]
+        },
+    )
+    assert "Python" in ofertas[0].descripcion
+    assert "&lt;" not in ofertas[0].descripcion
+    assert ofertas[0].empresa == "Stripe"
+
+
+def test_lever_manda_la_fecha_en_milisegundos() -> None:
+    """Leerla como segundos daría 1970, y toda oferta de Lever entraría al tramo
+    más viejo de frescura: la empresa aportaría sólo puestos que parecen muertos."""
+    oferta = fuentes._lever(
+        "Netflix",
+        [
+            {
+                "id": "ab",
+                "text": "Staff Engineer",
+                "hostedUrl": "https://y",
+                "categories": {"location": "Remote", "commitment": "Full-time"},
+                "descriptionPlain": "Go and gRPC",
+                "createdAt": 1789000000000,
+            }
+        ],
+    )[0]
+    assert oferta.publicada.startswith("2026-")
+
+
+def test_una_empresa_que_falla_no_arrastra_a_las_demas() -> None:
+    """Un token equivocado o una empresa que se cambió de plataforma es lo más
+    común acá. Tiene que costar esa empresa, no el aviso del día."""
+
+    def manejador(pedido: httpx.Request) -> httpx.Response:
+        if "rota" in str(pedido.url):
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={"jobs": [{"id": 7, "title": "Senior Engineer", "absolute_url": "https://ok"}]},
+        )
+
+    async def correr() -> list[Oferta]:
+        async with _cliente(manejador) as cliente:
+            return await fuentes.empresas(
+                cliente, (("Rota", "greenhouse", "rota"), ("Sana", "greenhouse", "sana"))
+            )
+
+    ofertas = asyncio.run(correr())
+    assert [o.empresa for o in ofertas] == ["Sana"]
+
+
+def test_una_empresa_sin_token_no_se_consulta() -> None:
+    """Una fila incompleta del TOML no puede producir un error por corrida que no
+    dice nada nuevo: se descarta al leer la configuración."""
+    from empleo.criterio import _empresas
+
+    assert _empresas([{"nombre": "X", "ats": "greenhouse"}]) == ()
+    assert _empresas([{"nombre": "X", "ats": "greenhouse", "token": "x"}]) == (
+        ("X", "greenhouse", "x"),
+    )
+
+
+def test_una_plataforma_desconocida_no_llama_a_ningun_lado() -> None:
+    """Un `ats` mal escrito en el TOML no puede terminar en un GET a una URL
+    armada a medias."""
+    pedidos: list[str] = []
+
+    def manejador(pedido: httpx.Request) -> httpx.Response:
+        pedidos.append(str(pedido.url))
+        return httpx.Response(200, json={})
+
+    async def correr() -> list[Oferta]:
+        async with _cliente(manejador) as cliente:
+            return await fuentes.empresas(cliente, (("X", "workday", "x"),))
+
+    assert asyncio.run(correr()) == []
+    assert pedidos == []
+
+
+def test_toda_fuente_del_cazador_esta_en_la_lista_que_los_tests_apagan() -> None:
+    """El default de `criterio.fuentes.get()` es True, así que una fuente que no
+    esté en `_TODAS_LAS_FUENTES` queda ENCENDIDA en los tests que creen haber
+    apagado la red — y salen a internet de verdad.
+
+    No es hipotético: pasó al agregar `empresas`, y un test trajo 1.734 puestos
+    reales de Greenhouse antes de fallar por una razón que no tenía nada que ver.
+    """
+    import re
+
+    fuente = Path(cazador.__file__).read_text(encoding="utf-8")
+    registradas = set(re.findall(r'activas\["(\w+)"\]', fuente))
+    assert registradas, "no se encontró ninguna fuente: cambió la forma de registrarlas"
+    assert registradas <= set(_TODAS_LAS_FUENTES), (
+        f"faltan en _TODAS_LAS_FUENTES: {sorted(registradas - set(_TODAS_LAS_FUENTES))}"
+    )

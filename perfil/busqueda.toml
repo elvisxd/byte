@@ -69,6 +69,19 @@ sin_patrocinio = 25
 # sola—, pero deja de competir de igual a igual con una "worldwide".
 # Si querés volver a mirar puestos locales, esto vuelve a 0 en una línea.
 solo_us = 20
+# Híbrido y presencial. Pesan más que cualquier otra penalización porque no son
+# un puesto peor: son un puesto imposible. Estando en Estados Unidos, una oferta
+# híbrida en Santiago no se puede ni postular.
+#
+# Con 45, una oferta híbrida cae debajo del mínimo del aviso aunque el stack
+# coincida entero: en los hechos deja de llegarte al teléfono. No se descarta en
+# el código —ninguna señal descarta sola— así que sigue apareciendo en el digest
+# del disco, que es donde se ve si el criterio quedó demasiado duro.
+#
+# Ojo: una oferta que dice "100% remote, no hybrid" NO cuenta como híbrida. La
+# negación se detecta primero y gana.
+hibrido = 45
+presencial = 45
 
 [situacion]
 # Esto cambia cómo se leen las señales de visa, así que conviene tenerlo
@@ -83,6 +96,8 @@ remoteok = true
 remotive = true
 weworkremotely = true
 hackernews = true
+# Empresas por su propia página de Careers (ver `[[empresas]]` más abajo).
+empresas = true
 # Get on Board: el único que nace en la región. Las empresas que publican ahí ya
 # contratan latinoamericanos, así que sus ofertas no dependen de que alguien se
 # haya acordado de escribir "LATAM" en la descripción. Su API pide qué buscar:
@@ -120,6 +135,62 @@ hasta_48h = 15
 hasta_96h = 8
 hasta_7d = 0
 mas_vieja = -10
+
+# Empresas a las que se les pregunta directo, sin esperar a que publiquen en un
+# agregador —muchas grandes nunca lo hacen—. Se consulta el JSON público que
+# alimenta su propia página de Careers: no se raspa nada.
+#
+# El `token` es el identificador de la empresa en su plataforma, y sale de mirar
+# la URL de su página de empleos:
+#
+#   boards.greenhouse.io/TOKEN  ·  job-boards.greenhouse.io/TOKEN   -> ats = "greenhouse"
+#   jobs.lever.co/TOKEN                                             -> ats = "lever"
+#   jobs.ashbyhq.com/TOKEN                                          -> ats = "ashby"
+#
+# Los cinco de abajo RESPONDEN: se verificaron contra las APIs reales el
+# 2026-09-17 y entre los cinco devolvieron 1.734 puestos.
+#
+# Se probaron y se cayeron dos, por si querés reintentarlas con otro token:
+# Zapier en Greenhouse y Netflix en Lever, las dos con 404. Lo más probable es
+# que se hayan cambiado de plataforma; el token correcto sale de abrir su página
+# de empleos y mirar la URL.
+#
+# Para lo que agregues:
+#
+#   uv run python -m empleo.cazador --probar-empresas
+#
+# dice cuáles responden y cuántos puestos trae cada una. Esta lista vale por lo
+# que elijas vos, no por lo que vino de fábrica.
+
+[[empresas]]
+nombre = "GitLab"
+ats = "greenhouse"
+token = "gitlab"
+
+[[empresas]]
+nombre = "Cloudflare"
+ats = "greenhouse"
+token = "cloudflare"
+
+[[empresas]]
+nombre = "Stripe"
+ats = "greenhouse"
+token = "stripe"
+
+[[empresas]]
+nombre = "Anthropic"
+ats = "greenhouse"
+token = "anthropic"
+
+[[empresas]]
+nombre = "Datadog"
+ats = "greenhouse"
+token = "datadog"
+
+[[empresas]]
+nombre = "Linear"
+ats = "ashby"
+token = "linear"
 
 [aviso]
 # Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y

@@ -23,6 +23,14 @@ from empleo.oferta import Oferta
 # Lo que se busca en el texto de la oferta. Cada patrón se probó contra la forma
 # en que estas frases aparecen de verdad, no contra la forma "correcta": nadie
 # escribe "visa sponsorship is not available", escriben "we can't sponsor".
+# Frases que dicen explícitamente que NO hay oficina. Si alguna aparece, las
+# señales `hibrido` y `presencial` se descartan aunque sus palabras estén en el
+# texto: "100% remote, no hybrid" las contiene a las dos y significa lo opuesto.
+NIEGA_OFICINA = re.compile(
+    r"\b((no|sin|not)\s*(a\s*)?(hybrid|h[ií]brido|on[ -]?site|in[ -]?office|office|oficina)"
+    r"|fully remote|100% remote|remote[ -]first|totalmente remoto|remoto total)\b"
+)
+
 SENALES: dict[str, re.Pattern[str]] = {
     "latam": re.compile(
         r"\b(lat(?:in)?[ -]?am(?:erica)?n?|south america|central america|the americas"
@@ -42,6 +50,24 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|remote\.com|independent contractor)\b"
     ),
     "freelance": re.compile(r"\b(freelance|per[ -]project|hourly rate|short[ -]term contract)\b"),
+    # Híbrido y presencial: el caso que originó esto es una oferta de Santiago
+    # marcada "híbrida" a la que no se puede aplicar desde Estados Unidos. No
+    # es un puesto peor, es un puesto imposible, y encima los boards de la
+    # región están llenos.
+    #
+    # Se busca la negación PRIMERO y gana: "fully remote, no hybrid" y "no
+    # on-site requirement" dicen lo contrario de lo que sus palabras sugieren,
+    # y son frases comunes justo en las ofertas que sí sirven.
+    "hibrido": re.compile(
+        r"\b(h[ií]brid[oa]|hybrid|"
+        r"\d+\s*(days?|d[ií]as?)\s*(a|per|por)\s*(week|semana)\s*(in|at|en)\s*"
+        r"(the\s*)?(office|oficina)|"
+        r"(some|algunos)\s*(days?|d[ií]as?)\s*(in|at|en)\s*(the\s*)?(office|oficina))\b"
+    ),
+    "presencial": re.compile(
+        r"\b(presencial|on[ -]?site|in[ -]?office|in[ -]?person|"
+        r"work from (our|the) office|desde (la|nuestra) oficina)\b"
+    ),
     "junior": re.compile(
         r"\b(junior|jr\.?|entry[ -]level|intern(ship)?|new grad|graduate program"
         r"|0[ -–-]2 years|1[ -–-]2 years)\b"
@@ -93,6 +119,8 @@ class Criterio:
     # exactamente lo que hacés.
     tope_stack: int = 60
     frescura: dict[str, int] = field(default_factory=dict)
+    # `(nombre, ats, token)` por empresa, del `[[empresas]]` del TOML.
+    empresas: tuple[tuple[str, str, str], ...] = ()
 
 
 # Cuánto vale encontrar un término de cada grupo.
@@ -105,7 +133,13 @@ DEFECTOS_PREFERENCIAS = {
     "contractor": 12,
     "freelance": 5,
 }
-DEFECTOS_PENALIZACIONES = {"junior": 40, "sin_patrocinio": 25, "solo_us": 0}
+DEFECTOS_PENALIZACIONES = {
+    "junior": 40,
+    "sin_patrocinio": 25,
+    "solo_us": 0,
+    "hibrido": 45,
+    "presencial": 45,
+}
 
 # Cuánto vale llegar temprano. Los tramos salen de que el reclutador no lee las
 # 300 postulaciones: lee las primeras 20 o 40 de la cola, y el ATS ordena esa
@@ -156,6 +190,7 @@ def cargar_criterio(ruta: Path) -> Criterio:
     penalizaciones = {**DEFECTOS_PENALIZACIONES, **_enteros(crudo.get("penalizaciones"))}
     aviso = crudo.get("aviso") or {}
     frescura = {**DEFECTOS_FRESCURA, **_enteros(crudo.get("frescura"))}
+    empresas = _empresas(crudo.get("empresas"))
     return Criterio(
         stack=stack,
         pesos_stack=dict(PESOS),
@@ -164,11 +199,33 @@ def cargar_criterio(ruta: Path) -> Criterio:
         necesita_patrocinio=bool((crudo.get("situacion") or {}).get("necesita_patrocinio", False)),
         fuentes={k: bool(v) for k, v in (crudo.get("fuentes") or {}).items()},
         frescura=frescura,
+        empresas=empresas,
         tope_por_aviso=int(aviso.get("tope_por_aviso", 8)),
         puntaje_minimo=int(aviso.get("puntaje_minimo", 25)),
         tope_por_empresa=int(aviso.get("tope_por_empresa", 2)),
         descartar_despues_de_dias=int(aviso.get("descartar_despues_de_dias", 0)),
     )
+
+
+def _empresas(seccion: object) -> tuple[tuple[str, str, str], ...]:
+    """El `[[empresas]]` del TOML, saltando las entradas incompletas.
+
+    Una fila a la que le falta el token es una empresa que no se va a poder
+    consultar; dejarla entrar sólo produce un error por corrida que no dice
+    nada nuevo.
+    """
+    if not isinstance(seccion, list):
+        return ()
+    salida = []
+    for fila in seccion:
+        if not isinstance(fila, dict):
+            continue
+        nombre = str(fila.get("nombre", "")).strip()
+        ats = str(fila.get("ats", "")).strip().lower()
+        token = str(fila.get("token", "")).strip()
+        if nombre and ats and token:
+            salida.append((nombre, ats, token))
+    return tuple(salida)
 
 
 def _enteros(seccion: object) -> dict[str, int]:
@@ -221,6 +278,10 @@ def detectar_senales(oferta: Oferta) -> tuple[str, ...]:
     encontradas = [nombre for nombre, patron in SENALES.items() if patron.search(texto)]
     if "sin_patrocinio" in encontradas and "patrocinio" in encontradas:
         encontradas.remove("patrocinio")
+    # Una oferta que declara que no hay oficina no es híbrida ni presencial por
+    # nombrar esas palabras para negarlas.
+    if NIEGA_OFICINA.search(texto):
+        encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
     # Upwork es freelance por definición: el texto de la oferta no tiene por qué
     # decirlo y perderíamos la señal.
     if oferta.fuente == "upwork" and "freelance" not in encontradas:

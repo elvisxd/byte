@@ -53,6 +53,7 @@ contestar— es lo que está automatizado acá.
 | We Work Remotely | RSS oficial por categoría | puestos senior, menos ruido |
 | Hacker News | API de Algolia sobre "Ask HN: Who is hiring?" | donde de verdad aparecen "visa sponsorship" y "anywhere in the world" |
 | Upwork | API GraphQL oficial, **solo con key aprobada** | freelance |
+| Empresas | el JSON público de su propia página de Careers (Greenhouse, Lever, Ashby) | las grandes, que muchas veces nunca publican en un agregador |
 
 Ninguna se raspa: las cuatro primeras publican API o RSS. Indeed y LinkedIn no
 están porque no tienen feed público y prohíben el raspado — entrar ahí sería
@@ -157,3 +158,64 @@ esperando a un feed lento, la nueva **se saltea en silencio y sale con código
 horas. Queda anotado en el log como `turno_ocupado`, así que un cron que no
 imprime nada y otro que se salteó se distinguen mirando ahí. `--probar` no toma
 el cerrojo: mirar qué devuelven los feeds tiene que poder hacerse siempre.
+
+## Híbrido y presencial
+
+Una oferta híbrida en Santiago no es un puesto peor: es un puesto imposible si
+estás en otro país. Y los boards de la región están llenos, así que sin esto el
+aviso se llena de cosas a las que no se puede ni aplicar.
+
+`hibrido` y `presencial` restan 45 —más que cualquier otra señal—, con lo que
+una oferta híbrida cae debajo del mínimo del aviso aunque el stack coincida
+entero. En los hechos deja de llegarte al teléfono, pero **sigue en el digest
+del disco**: ninguna señal descarta sola, y si el criterio quedó demasiado duro
+tiene que poder verse.
+
+La parte con test propio es la negación: `100% remote, no hybrid` y `no on-site
+requirement` contienen las palabras que las hundirían y significan lo contrario.
+La negación se busca primero y gana. Sin eso, las ofertas que mejor sirven serían
+justo las más castigadas.
+
+De Get on Board se lee además la modalidad que el board declara como campo
+aparte. ⚠ El nombre exacto de ese campo **no está verificado** —su documentación
+no se pudo alcanzar desde donde se escribió esto—, así que se prueban varias
+claves y, si ninguna aparece, la clasificación la hace igual la señal de texto
+sobre el título y la descripción. `--probar` imprime la oferta cruda para fijar
+la clave correcta en una corrida.
+
+## Empresas grandes, directo
+
+Las empresas grandes rara vez publican en los agregadores. Se les pregunta a su
+propia página de Careers, por el mismo JSON público que la alimenta — no se
+raspa nada:
+
+```toml
+[[empresas]]
+nombre = "GitLab"
+ats = "greenhouse"
+token = "gitlab"
+```
+
+El `token` sale de mirar la URL de su página de empleos:
+
+| URL de la página de empleos | `ats` |
+|---|---|
+| `boards.greenhouse.io/TOKEN` · `job-boards.greenhouse.io/TOKEN` | `greenhouse` |
+| `jobs.lever.co/TOKEN` | `lever` |
+| `jobs.ashbyhq.com/TOKEN` | `ashby` |
+
+Los cinco que vienen de fábrica —GitLab, Cloudflare, Stripe, Anthropic y
+Datadog, más Linear en Ashby— **están verificados contra las APIs reales**:
+entre ellos devolvieron 1.734 puestos. Zapier y Netflix se probaron y dieron 404
+en sus plataformas, así que no vinieron.
+
+Para lo que agregues vos:
+
+```bash
+uv run python -m empleo.cazador --probar-empresas
+```
+
+Un token equivocado falla en silencio —la empresa aporta cero ofertas, que se ve
+igual que "hoy no publicó nada"—, y ese comando es lo que separa las dos cosas.
+Borrá las que fallen y agregá las que de verdad te interesen: la lista vale por
+lo que elijas vos.
