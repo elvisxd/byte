@@ -285,3 +285,48 @@ disimulada:
 
 El `token` de Workday es la URL entera de su página de empleos, porque hacen
 falta tres datos —inquilino, shard y sitio— y un token corto sólo lleva uno.
+
+## Qué palabras poner en la búsqueda
+
+No se adivinan: se cuentan.
+
+```bash
+uv run python -m empleo.mercado
+```
+
+Trae las ofertas de todas las fuentes, se queda **sólo con las que encajan con
+tu perfil** —el mercado entero pide WordPress; eso es cierto y no sirve— y
+cuenta qué términos aparecen. Los separa en tres montones porque llevan a
+decisiones distintas:
+
+| montón | qué hacer con él |
+|---|---|
+| **Piden y tu CV ya dice** | va en el titular de LinkedIn y en las dos primeras líneas de una propuesta |
+| **Piden y tu CV no menciona** | si lo tenés, escribilo; si no, ya sabés qué te van a preguntar |
+| **Buscás y nadie pide** | términos de tu `[stack]` que no aparecieron nunca: búsquedas que no traen nada |
+
+Y arma las cadenas de búsqueda con lo que acaba de medir. Sin comodines, así que
+**la misma cadena sirve en Upwork y en LinkedIn** — LinkedIn acepta los mismos
+`AND`/`OR`/`NOT` pero no acepta `*`, y ese es el error que rompe una búsqueda sin
+avisar.
+
+Tres reglas que lo mantienen honesto, las tres con test:
+
+- Un término repetido dentro de una oferta cuenta **una vez**. Si no, el ranking
+  lo gana quien escribe más largo.
+- Un término que aparece en una sola oferta no cuenta: con una, cualquier
+  tecnología parece una tendencia.
+- **Del peso muerto no se habla con menos de 80 ofertas.** Decir "nadie pide
+  TypeScript" tras mirar cuatro no es una medición, es una casualidad con
+  formato de conclusión — y haría borrar de la búsqueda algo que sí sirve.
+
+Desde el chat es `radiografia_mercado`, con `BYTE_EMPLEO_TOOLS=true`.
+
+### Cada cuánto
+
+Una vez por semana alcanza y sobra: el mercado no cambia de un día para el otro,
+y correrlo a diario sólo produce ruido que parece señal.
+
+```cron
+0 9 * * 1 cd ~/byte && /usr/local/bin/uv run python -m empleo.mercado
+```
