@@ -769,6 +769,156 @@ def _ashby(nombre: str, crudo: object) -> list[Oferta]:
     return salida
 
 
+# --- Workday ---
+
+# ⚠ ESTA ES LA EXCEPCIÓN A LA REGLA DEL MÓDULO, Y ESTÁ ACÁ PARA QUE SE VEA.
+#
+# Greenhouse, Lever y Ashby **documentan** su API pública de empleos. Workday
+# no: esto es el endpoint que su propia página de Careers llama por dentro. No
+# pide autenticación y devuelve JSON —no se raspa HTML—, pero tampoco hay una
+# promesa pública de que siga existiendo ni de que se pueda usar así. Se agregó
+# a pedido explícito, sabiendo eso, porque es la única vía a empresas grandes
+# que no publican en ningún agregador.
+#
+# Consecuencias prácticas de que no esté documentado, las tres medidas:
+#
+# 1. El listado NO trae la descripción. Sin ella, la señal de híbrido y la
+#    brecha contra el CV quedan casi ciegas: por eso se pide el detalle, pero
+#    sólo de las ofertas cuyo título ya coincide con algo que buscás y con un
+#    tope duro. Pedir 500 detalles sería golpear su servidor por nada.
+# 2. `postedOn` no es una fecha: es texto relativo ("Posted Today", "Posted 30+
+#    Days Ago"). Se traduce a horas aproximadas, y se dice que es aproximado.
+# 3. La forma puede cambiar sin aviso. Todo se lee defensivamente y, si no se
+#    entiende, esa empresa aporta cero en vez de tirar la corrida.
+
+# Cuántas ofertas se piden en el listado y cuántos detalles se buscan después.
+POR_PAGINA_WORKDAY = 20
+TOPE_DETALLES_WORKDAY = 15
+
+_HOST_WORKDAY = re.compile(r"^https?://([\w-]+)\.(wd\d+)\.myworkdayjobs\.com/(?:[\w-]+/)?([\w-]+)")
+
+# "Posted 30+ Days Ago" y compañía. Workday no publica la fecha real en el
+# listado, así que esto es una aproximación declarada, no una medición.
+_HACE_DIAS = re.compile(r"(\d+)\+?\s*days?", re.I)
+
+
+def partes_de_workday(url: str) -> tuple[str, str, str] | None:
+    """`(tenant, shard, site)` a partir de la URL de su página de empleos.
+
+    Se pide la URL entera y no un token corto porque Workday necesita tres
+    datos, y los tres están a la vista en esa dirección: nadie los adivina, y
+    copiarla del navegador no se equivoca.
+    """
+    encontrado = _HOST_WORKDAY.match(url.strip())
+    return (encontrado.group(1), encontrado.group(2), encontrado.group(3)) if encontrado else None
+
+
+def _antiguedad_workday(texto: str) -> str:
+    """El texto relativo de Workday, como fecha ISO aproximada."""
+    bajo = texto.lower()
+    if "today" in bajo or "hoy" in bajo:
+        dias = 0
+    elif "yesterday" in bajo or "ayer" in bajo:
+        dias = 1
+    else:
+        encontrado = _HACE_DIAS.search(bajo)
+        if not encontrado:
+            return ""
+        dias = int(encontrado.group(1))
+    return (datetime.now(tz=UTC) - timedelta(days=dias)).isoformat()
+
+
+async def workday(
+    cliente: httpx.AsyncClient,
+    listado: tuple[tuple[str, str, str], ...],
+    consultas: tuple[str, ...],
+) -> list[Oferta]:
+    """Los puestos de las empresas en Workday. `token` es la URL de sus empleos."""
+    salida: list[Oferta] = []
+    for nombre, _ats, url in listado:
+        partes = partes_de_workday(url)
+        if partes is None:
+            logger.warning("workday_url_invalida", empresa=nombre[:80])
+            continue
+        salida.extend(await _una_empresa_workday(cliente, nombre, partes, consultas))
+    return salida
+
+
+async def _una_empresa_workday(
+    cliente: httpx.AsyncClient,
+    nombre: str,
+    partes: tuple[str, str, str],
+    consultas: tuple[str, ...],
+) -> list[Oferta]:
+    tenant, shard, site = partes
+    base = f"https://{tenant}.{shard}.myworkdayjobs.com"
+    crudo = _json_de(
+        await _traer_post(
+            cliente,
+            f"{base}/wday/cxs/{tenant}/{site}/jobs",
+            {"appliedFacets": {}, "limit": POR_PAGINA_WORKDAY, "offset": 0, "searchText": ""},
+        )
+    )
+    puestos = crudo.get("jobPostings") if isinstance(crudo, dict) else None
+    if not isinstance(puestos, list):
+        logger.warning("workday_forma_inesperada", empresa=nombre[:80])
+        return []
+
+    ofertas: list[Oferta] = []
+    detalles_pedidos = 0
+    for item in puestos:
+        if not isinstance(item, dict):
+            continue
+        ruta = _texto(item.get("externalPath"), 300)
+        titulo = _texto(item.get("title"), 300)
+        if not ruta or not titulo:
+            continue
+
+        # El detalle cuesta una llamada, así que sólo se pide cuando el título
+        # ya dice que la oferta puede interesar. El resto entra sin descripción:
+        # se ve en el digest, puntúa bajo, y no se gastó nada en traerla.
+        descripcion = ""
+        interesa = any(c in titulo.lower() for c in consultas)
+        if interesa and detalles_pedidos < TOPE_DETALLES_WORKDAY:
+            detalles_pedidos += 1
+            descripcion = await _detalle_workday(cliente, base, tenant, site, ruta)
+
+        ofertas.append(
+            Oferta(
+                fuente="workday",
+                id_externo=f"{tenant}:{ruta}"[:200],
+                titulo=titulo,
+                empresa=nombre,
+                url=f"{base}/en-US/{site}{ruta}"[:600],
+                descripcion=descripcion,
+                ubicacion=_texto(item.get("locationsText"), 200),
+                publicada=_antiguedad_workday(_texto(item.get("postedOn"), 80)),
+            )
+        )
+    return ofertas
+
+
+async def _detalle_workday(
+    cliente: httpx.AsyncClient, base: str, tenant: str, site: str, ruta: str
+) -> str:
+    crudo = _json_de(await _traer(cliente, f"{base}/wday/cxs/{tenant}/{site}{ruta}"))
+    info = crudo.get("jobPostingInfo") if isinstance(crudo, dict) else None
+    if not isinstance(info, dict):
+        return ""
+    return _texto_plano(_texto(info.get("jobDescription")))
+
+
+async def _traer_post(cliente: httpx.AsyncClient, url: str, cuerpo: dict) -> httpx.Response | None:
+    """Como `_traer`, pero POST: el listado de Workday no se pide con GET."""
+    try:
+        respuesta = await cliente.post(url, json=cuerpo)
+        respuesta.raise_for_status()
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        logger.warning("fuente_fallo", url=url[:120], error_type=type(exc).__name__)
+        return None
+    return respuesta
+
+
 _LECTORES_ATS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby}
 
 
@@ -849,6 +999,31 @@ async def upwork(cliente: httpx.AsyncClient, token: str, consulta: str) -> list[
             )
         )
     return ofertas
+
+
+def identificar_empresa(url: str) -> tuple[str, str] | None:
+    """`(ats, token)` a partir de la URL de la página de empleos de una empresa.
+
+    Existe porque el token NO se adivina. Sourcegraph es `sourcegraph91`, con un
+    número pegado que nadie deduce del nombre; y una empresa que se cambió de
+    plataforma responde 404 sin decir por qué. La URL, en cambio, está a la vista
+    en el navegador y trae el dato exacto.
+    """
+    limpia = url.strip()
+    patrones = (
+        ("greenhouse", r"(?:job-)?boards\.greenhouse\.io/([\w-]+)"),
+        ("greenhouse", r"greenhouse\.io/embed/job_board\?for=([\w-]+)"),
+        ("lever", r"jobs\.lever\.co/([\w-]+)"),
+        ("ashby", r"jobs\.ashbyhq\.com/([\w-]+)"),
+    )
+    for ats, patron in patrones:
+        encontrado = re.search(patron, limpia, re.I)
+        if encontrado:
+            return ats, encontrado.group(1)
+    # Workday necesita los tres datos de la URL, así que su "token" es la URL.
+    if partes_de_workday(limpia) is not None:
+        return "workday", limpia
+    return None
 
 
 # --- Orquestación ---

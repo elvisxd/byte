@@ -71,12 +71,20 @@ async def recolectar(
         # criterio escrito en dos lugares que se desincronizan.
         consultas = criterio.stack.get("fuerte", ())
         activas["getonbrd"] = lambda c: fuentes.getonbrd(c, consultas)
+    # Workday va aparte de las otras tres: necesita los términos que buscás para
+    # decidir de qué ofertas vale la pena pedir la descripción, porque su
+    # listado no la trae. Ver el comentario largo en `fuentes.py`.
+    en_workday = tuple(e for e in criterio.empresas if e[1] == "workday")
+    if criterio.fuentes.get("workday", True) and en_workday:
+        terminos = criterio.stack.get("fuerte", ()) + criterio.stack.get("medio", ())
+        activas["workday"] = lambda c: fuentes.workday(c, en_workday, terminos)
     if criterio.fuentes.get("empresas", True) and criterio.empresas:
         # Las empresas grandes rara vez publican en los agregadores: se les
         # pregunta a su propia página de Careers, que es de donde salen los
         # puestos el día que abren.
-        listado = criterio.empresas
-        activas["empresas"] = lambda c: fuentes.empresas(c, listado)
+        listado = tuple(e for e in criterio.empresas if e[1] != "workday")
+        if listado:
+            activas["empresas"] = lambda c: fuentes.empresas(c, listado)
     if criterio.fuentes.get("linkedin", False):
         usuario = os.environ.get("GMAIL_USUARIO", "")
         clave = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -336,10 +344,59 @@ async def probar_empresas(criterio: Criterio) -> str:
     return "\n".join(lineas)
 
 
+async def agregar_empresa(nombre: str, url: str) -> str:
+    """Resuelve la URL de una página de empleos, la prueba, e imprime el TOML.
+
+    No escribe en el archivo a propósito: `busqueda.toml` lleva comentarios que
+    explican cada decisión, y un script que edita eso los pierde. Imprime el
+    bloque para pegar, que es un paso y no se equivoca.
+    """
+    identificada = fuentes.identificar_empresa(url)
+    if identificada is None:
+        return (
+            f"No reconozco esa URL: {url[:120]}\n"
+            "Tienen que ser la página de empleos de la empresa, del estilo\n"
+            "  boards.greenhouse.io/TOKEN · jobs.lever.co/TOKEN\n"
+            "  jobs.ashbyhq.com/TOKEN · EMPRESA.wdN.myworkdayjobs.com/SITIO"
+        )
+
+    ats, token = identificada
+    entrada = (nombre, ats, token)
+    async with fuentes.cliente_http() as cliente:
+        if ats == "workday":
+            encontradas = await fuentes.workday(cliente, (entrada,), ())
+        else:
+            encontradas = await fuentes.empresas(cliente, (entrada,))
+
+    if not encontradas:
+        return (
+            f"Reconocí {ats}/{token}, pero no devolvió ningún puesto.\n"
+            "Puede ser que no tenga vacantes abiertas, o que la URL no sea la de "
+            "su board. Probá abrirla en el navegador y copiar la de la lista de "
+            "puestos, no la de la página de marketing."
+        )
+
+    comillas = '"'
+    return (
+        f"{len(encontradas)} puestos. Ejemplo: {encontradas[0].titulo[:70]}\n\n"
+        f"Pegá esto en perfil/busqueda.toml:\n\n"
+        f"[[empresas]]\n"
+        f"nombre = {comillas}{nombre}{comillas}\n"
+        f"ats = {comillas}{ats}{comillas}\n"
+        f"token = {comillas}{token}{comillas}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
         "--probar", action="store_true", help="Muestra qué devuelve cada fuente y no avisa"
+    )
+    parser.add_argument(
+        "--agregar-empresa",
+        nargs=2,
+        metavar=("NOMBRE", "URL"),
+        help="Resuelve la URL de una página de empleos, la prueba, e imprime el TOML",
     )
     parser.add_argument(
         "--probar-empresas",
@@ -364,6 +421,9 @@ def main() -> None:
     if args.minimo is not None:
         criterio = replace(criterio, puntaje_minimo=args.minimo)
 
+    if args.agregar_empresa:
+        print(asyncio.run(agregar_empresa(*args.agregar_empresa)))
+        return
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
         return

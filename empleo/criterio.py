@@ -100,6 +100,8 @@ class Criterio:
     preferencias: dict[str, int] = field(default_factory=dict)
     penalizaciones: dict[str, int] = field(default_factory=dict)
     necesita_patrocinio: bool = False
+    # Países donde un puesto presencial o híbrido SÍ sirve. Vacío = ninguno.
+    presencial_aceptable_en: tuple[str, ...] = ()
     fuentes: dict[str, bool] = field(default_factory=dict)
     tope_por_aviso: int = 8
     puntaje_minimo: int = 25
@@ -175,13 +177,20 @@ def cargar_criterio(ruta: Path) -> Criterio:
     recién clonado el repo y que el usuario lo ajuste después de ver el primer
     aviso, no antes.
     """
-    crudo: dict = {}
-    if ruta.is_file():
-        try:
-            crudo = tomllib.loads(ruta.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            crudo = {}
+    crudo = _leer_toml(ruta)
+    # `privado.toml` se superpone al público y NO se versiona. Existe porque
+    # este repo es público: algunas preferencias delatan cosas que no tienen por
+    # qué leerse —dónde vas a estar viviendo, por ejemplo— y ponerlas en
+    # `busqueda.toml` sería publicarlas. Las secciones se mezclan clave a clave,
+    # así que el privado puede pisar un solo valor sin repetir el archivo.
+    privado = _leer_toml(ruta.parent / "privado.toml")
+    for seccion, valores in privado.items():
+        if isinstance(valores, dict) and isinstance(crudo.get(seccion), dict):
+            crudo[seccion] = {**crudo[seccion], **valores}
+        else:
+            crudo[seccion] = valores
 
+    situacion = crudo.get("situacion") or {}
     stack_crudo = crudo.get("stack") or {}
     stack = {
         grupo: tuple(str(t).lower() for t in (stack_crudo.get(grupo) or [])) for grupo in PESOS
@@ -196,7 +205,12 @@ def cargar_criterio(ruta: Path) -> Criterio:
         pesos_stack=dict(PESOS),
         preferencias=preferencias,
         penalizaciones=penalizaciones,
-        necesita_patrocinio=bool((crudo.get("situacion") or {}).get("necesita_patrocinio", False)),
+        necesita_patrocinio=bool(situacion.get("necesita_patrocinio", False)),
+        presencial_aceptable_en=tuple(
+            str(x).strip().lower()
+            for x in (situacion.get("presencial_aceptable_en") or [])
+            if str(x).strip()
+        ),
         fuentes={k: bool(v) for k, v in (crudo.get("fuentes") or {}).items()},
         frescura=frescura,
         empresas=empresas,
@@ -205,6 +219,16 @@ def cargar_criterio(ruta: Path) -> Criterio:
         tope_por_empresa=int(aviso.get("tope_por_empresa", 2)),
         descartar_despues_de_dias=int(aviso.get("descartar_despues_de_dias", 0)),
     )
+
+
+def _leer_toml(ruta: Path) -> dict:
+    """El TOML, o vacío. Que falte o esté roto no puede frenar la búsqueda."""
+    if not ruta.is_file():
+        return {}
+    try:
+        return tomllib.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
 
 
 def _empresas(seccion: object) -> tuple[tuple[str, str, str], ...]:
@@ -272,7 +296,7 @@ class Puntaje:
     antiguedad_horas: float | None = None
 
 
-def detectar_senales(oferta: Oferta) -> tuple[str, ...]:
+def detectar_senales(oferta: Oferta, aceptable_en: tuple[str, ...] = ()) -> tuple[str, ...]:
     """Qué señales trae el texto. `sin_patrocinio` anula a `patrocinio`."""
     texto = oferta.buscable()
     encontradas = [nombre for nombre, patron in SENALES.items() if patron.search(texto)]
@@ -281,6 +305,12 @@ def detectar_senales(oferta: Oferta) -> tuple[str, ...]:
     # Una oferta que declara que no hay oficina no es híbrida ni presencial por
     # nombrar esas palabras para negarlas.
     if NIEGA_OFICINA.search(texto):
+        encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
+    # Ir a una oficina sólo es un problema si la oficina está donde no vas a
+    # estar. Un presencial en Caracas no es el mismo puesto que uno en Santiago
+    # para alguien que se muda a Venezuela: el primero es aplicable y el segundo
+    # no, y sin esto los dos se hundían igual.
+    elif aceptable_en and any(pais in texto for pais in aceptable_en):
         encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
     # Upwork es freelance por definición: el texto de la oferta no tiene por qué
     # decirlo y perderíamos la señal.
@@ -315,7 +345,7 @@ def puntuar(oferta: Oferta, criterio: Criterio, ahora: datetime | None = None) -
         motivos.append(f"+{del_stack} stack: {', '.join(encontrados[:8])}")
 
     total = del_stack
-    senales = detectar_senales(oferta)
+    senales = detectar_senales(oferta, criterio.presencial_aceptable_en)
 
     for senal in senales:
         puntos = criterio.preferencias.get(senal, 0)

@@ -54,6 +54,7 @@ contestar— es lo que está automatizado acá.
 | Hacker News | API de Algolia sobre "Ask HN: Who is hiring?" | donde de verdad aparecen "visa sponsorship" y "anywhere in the world" |
 | Upwork | API GraphQL oficial, **solo con key aprobada** | freelance |
 | Empresas | el JSON público de su propia página de Careers (Greenhouse, Lever, Ashby) | las grandes, que muchas veces nunca publican en un agregador |
+| Workday | el endpoint que su propia página llama por dentro — **sin documentar**, ver abajo | las que no están en ninguna de las otras tres |
 
 Ninguna se raspa: las cuatro primeras publican API o RSS. Indeed y LinkedIn no
 están porque no tienen feed público y prohíben el raspado — entrar ahí sería
@@ -219,3 +220,62 @@ Un token equivocado falla en silencio —la empresa aporta cero ofertas, que se 
 igual que "hoy no publicó nada"—, y ese comando es lo que separa las dos cosas.
 Borrá las que fallen y agregá las que de verdad te interesen: la lista vale por
 lo que elijas vos.
+
+## Agregar una empresa sin adivinar
+
+El token no se adivina. Sourcegraph es `sourcegraph91`, con un número pegado que
+no sale del nombre, y una empresa que se cambió de plataforma devuelve 404 sin
+decir por qué. Pero la URL de su página de empleos está a la vista en el
+navegador y trae el dato exacto:
+
+```bash
+uv run python -m empleo.cazador --agregar-empresa "Vercel" https://jobs.ashbyhq.com/vercel
+```
+
+Reconoce la plataforma, prueba el board de verdad y te imprime el bloque listo
+para pegar en `perfil/busqueda.toml`. No lo escribe solo a propósito: ese archivo
+lleva los comentarios que explican cada decisión, y un script que lo edita los
+pierde.
+
+## Presencial donde sí podés estar
+
+Un presencial en Caracas y uno en Santiago no son el mismo puesto para alguien
+que se está mudando a Venezuela: el primero es aplicable y el segundo no. Sin
+distinguirlos, los dos se hunden igual.
+
+`situacion.presencial_aceptable_en` es la lista de países donde lo presencial y
+lo híbrido dejan de penalizar. **Va en `perfil/privado.toml`, que no se
+versiona**, porque esa lista dice dónde vas a estar viviendo — el dato que
+decidimos no publicar en un repo público. Se copia de `privado.ejemplo.toml` y se
+superpone a `busqueda.toml` sección por sección, así que cambia un solo valor sin
+repetir el archivo.
+
+Vacía por omisión: quien no declaró nada está donde está, y una oficina en otro
+país le sigue siendo inaplicable.
+
+## Workday: la excepción, y por qué
+
+Greenhouse, Lever y Ashby **documentan** su API pública de empleos. Workday no.
+Lo que usamos es el endpoint que su propia página de Careers llama por dentro:
+no pide autenticación y devuelve JSON —no se raspa HTML—, pero tampoco hay
+promesa pública de que siga existiendo ni de que se pueda usar así.
+
+Se agregó a pedido explícito y sabiendo eso, porque es la única vía a empresas
+grandes que no publican en ningún agregador. Queda escrito acá y no escondido en
+un comentario.
+
+Tres consecuencias de que no esté documentado, las tres medidas y ninguna
+disimulada:
+
+1. **El listado no trae la descripción.** Sin ella, la señal de híbrido y la
+   brecha contra el CV quedan casi ciegas. Por eso se pide el detalle — pero
+   sólo de las ofertas cuyo título ya coincide con algo que buscás, y con tope
+   duro. Pedir cientos de detalles sería golpear su servidor por nada, y en una
+   API que no es pública el respeto es parte del trato.
+2. **`postedOn` no es una fecha**, es texto: "Posted Today", "Posted 30+ Days
+   Ago". Se traduce a horas aproximadas y se dice que es aproximado.
+3. **La forma puede cambiar sin aviso.** Todo se lee defensivamente: si no se
+   entiende, esa empresa aporta cero en vez de tirar la corrida.
+
+El `token` de Workday es la URL entera de su página de empleos, porque hacen
+falta tres datos —inquilino, shard y sitio— y un token corto sólo lleva uno.

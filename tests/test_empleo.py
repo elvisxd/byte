@@ -33,6 +33,7 @@ _TODAS_LAS_FUENTES = (
     "hackernews",
     "getonbrd",
     "empresas",
+    "workday",
     "linkedin",
     "upwork",
 )
@@ -1086,3 +1087,159 @@ def test_toda_fuente_del_cazador_esta_en_la_lista_que_los_tests_apagan() -> None
     assert registradas <= set(_TODAS_LAS_FUENTES), (
         f"faltan en _TODAS_LAS_FUENTES: {sorted(registradas - set(_TODAS_LAS_FUENTES))}"
     )
+
+
+# --- Presencial donde sí podés estar ---
+
+
+def test_un_presencial_donde_te_mudas_deja_de_penalizar() -> None:
+    """Ir a una oficina sólo es un problema si la oficina está donde no vas a
+    estar. Un presencial en Caracas y uno en Santiago no son el mismo puesto para
+    alguien que se muda a Venezuela, y sin esto los dos se hundían igual."""
+    criterio = replace(CRITERIO, presencial_aceptable_en=("venezuela",))
+
+    def presencial(lugar: str) -> int:
+        oferta = _oferta(descripcion="Presencial. Python, FastAPI.", ubicacion=lugar)
+        return puntuar(oferta, criterio).total
+
+    assert presencial("Caracas, Venezuela") > CRITERIO.puntaje_minimo
+    assert presencial("Santiago, Chile") < CRITERIO.puntaje_minimo
+
+
+def test_sin_lista_de_paises_todo_lo_presencial_sigue_penalizando() -> None:
+    """El default no puede ser permisivo: quien no declaró a dónde se muda está
+    donde está, y una oficina en otro país le sigue siendo inaplicable."""
+    assert CRITERIO.presencial_aceptable_en == ()
+    oferta = _oferta(descripcion="Presencial. Python.", ubicacion="Caracas, Venezuela")
+    assert "presencial" in puntuar(oferta, CRITERIO).senales
+
+
+def test_el_toml_privado_pisa_al_publico_sin_repetirlo(tmp_path: Path) -> None:
+    """La lista de países dice dónde vas a estar viviendo, y este repo es público.
+    El overlay tiene que poder cambiar UN valor sin copiar el archivo entero, o
+    termina desincronizado con el público."""
+    (tmp_path / "busqueda.toml").write_text(
+        "[situacion]\nnecesita_patrocinio = false\n\n[aviso]\npuntaje_minimo = 25\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "privado.toml").write_text(
+        '[situacion]\npresencial_aceptable_en = ["venezuela"]\n', encoding="utf-8"
+    )
+    criterio = cargar_criterio(tmp_path / "busqueda.toml")
+    assert criterio.presencial_aceptable_en == ("venezuela",)
+    # Lo que el privado no menciona sobrevive.
+    assert criterio.necesita_patrocinio is False
+    assert criterio.puntaje_minimo == 25
+
+
+# --- Workday ---
+
+
+def test_la_url_de_workday_da_los_tres_datos_que_hacen_falta() -> None:
+    """Workday necesita inquilino, shard y sitio. Ninguno se adivina y los tres
+    están en la URL, por eso su `token` es la URL y no un nombre corto."""
+    assert fuentes.partes_de_workday("https://chevron.wd5.myworkdayjobs.com/jobs") == (
+        "chevron",
+        "wd5",
+        "jobs",
+    )
+    # La misma página con el idioma en el medio, que es como la copia el navegador.
+    assert fuentes.partes_de_workday("https://chevron.wd5.myworkdayjobs.com/en-US/jobs") == (
+        "chevron",
+        "wd5",
+        "jobs",
+    )
+    assert fuentes.partes_de_workday("https://careers.chevron.com/search-jobs") is None
+
+
+def test_workday_traduce_su_fecha_relativa_a_algo_comparable() -> None:
+    """No manda la fecha: manda "Posted 30+ Days Ago". Sin traducirla, toda oferta
+    de Workday queda sin fecha y pierde el bono por llegar temprano — que es la
+    palanca más barata que tenemos."""
+
+    def horas(texto: str) -> float:
+        # Se mide contra el reloj DESPUÉS de traducir: la función usa `now()` por
+        # dentro, y comparar contra un `now()` anterior da diferencias negativas
+        # de microsegundos que hacen fallar al test sin que nada esté roto.
+        publicada = datetime.fromisoformat(fuentes._antiguedad_workday(texto))
+        return abs((datetime.now(tz=UTC) - publicada).total_seconds()) / 3600
+
+    assert horas("Posted Today") < 1
+    assert 23 < horas("Posted Yesterday") < 25
+    assert 719 < horas("Posted 30+ Days Ago") < 721
+    # Lo que no se entiende queda sin fecha, que no suma ni resta.
+    assert fuentes._antiguedad_workday("Posted recently") == ""
+
+
+def test_workday_solo_pide_el_detalle_de_lo_que_puede_interesar() -> None:
+    """Su listado no trae descripción y el detalle cuesta una llamada por oferta.
+    Pedirlas todas sería golpear su servidor cientos de veces por ofertas que el
+    título ya descarta — y esto NO es una API documentada: el respeto es parte
+    del trato."""
+    detalles: list[str] = []
+
+    def manejador(pedido: httpx.Request) -> httpx.Response:
+        if pedido.method == "POST":
+            return httpx.Response(
+                200,
+                json={
+                    "jobPostings": [
+                        {
+                            "title": "Senior Python Engineer",
+                            "externalPath": "/job/py",
+                            "locationsText": "Caracas",
+                            "postedOn": "Posted Today",
+                        },
+                        {
+                            "title": "Petroleum Geologist",
+                            "externalPath": "/job/geo",
+                            "locationsText": "Houston",
+                            "postedOn": "Posted Today",
+                        },
+                    ]
+                },
+            )
+        detalles.append(str(pedido.url))
+        return httpx.Response(200, json={"jobPostingInfo": {"jobDescription": "<p>FastAPI</p>"}})
+
+    async def correr() -> list[Oferta]:
+        async with _cliente(manejador) as cliente:
+            return await fuentes.workday(
+                cliente,
+                (("Chevron", "workday", "https://chevron.wd5.myworkdayjobs.com/jobs"),),
+                ("python",),
+            )
+
+    ofertas = asyncio.run(correr())
+    # Las dos ofertas llegan; sólo una gastó una llamada de detalle.
+    assert len(ofertas) == 2
+    assert len(detalles) == 1 and "/job/py" in detalles[0]
+    con_descripcion = [o for o in ofertas if o.descripcion]
+    assert [o.titulo for o in con_descripcion] == ["Senior Python Engineer"]
+    assert "FastAPI" in con_descripcion[0].descripcion
+
+
+# --- Identificar una empresa por su URL ---
+
+
+def test_la_url_del_board_da_el_token_que_nadie_adivina() -> None:
+    """Sourcegraph es `sourcegraph91`: un número pegado que no sale del nombre. Ese
+    es el motivo entero de que esto exista — adivinar el token da 404 sin decir
+    por qué, y la URL está a la vista en el navegador."""
+    assert fuentes.identificar_empresa("https://boards.greenhouse.io/sourcegraph91") == (
+        "greenhouse",
+        "sourcegraph91",
+    )
+    assert fuentes.identificar_empresa("https://job-boards.greenhouse.io/grafanalabs") == (
+        "greenhouse",
+        "grafanalabs",
+    )
+    assert fuentes.identificar_empresa("https://jobs.lever.co/netflix") == ("lever", "netflix")
+    assert fuentes.identificar_empresa("https://jobs.ashbyhq.com/openai") == ("ashby", "openai")
+    assert fuentes.identificar_empresa("https://www.google.com/careers") is None
+
+
+def test_para_workday_el_token_es_la_url_entera() -> None:
+    """Porque hacen falta tres datos y un token corto sólo lleva uno."""
+    url = "https://chevron.wd5.myworkdayjobs.com/jobs"
+    assert fuentes.identificar_empresa(url) == ("workday", url)
