@@ -293,9 +293,7 @@ async def getonbrd(cliente: httpx.AsyncClient, consultas: tuple[str, ...]) -> li
     return list(ofertas.values())
 
 
-def _oferta_getonbrd(
-    clave: str, atributos: dict[str, object], enlaces: object = None
-) -> Oferta:
+def _oferta_getonbrd(clave: str, atributos: dict[str, object], enlaces: object = None) -> Oferta:
     """Una oferta de Get on Board, con los campos que el puntuador sabe leer."""
     # `links.public_url` es la URL que publica el board. Se prefiere a armarla
     # con el slug: si mañana cambian el formato, el link sigue llevando a la
@@ -541,9 +539,7 @@ def linkedin_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
             buzon.login(usuario, clave)
             # Solo lectura: esto no marca como leído ni mueve nada de tu correo.
             buzon.select("INBOX", readonly=True)
-            estado, respuesta = buzon.search(
-                None, f'(FROM "{REMITENTE_LINKEDIN}" SINCE "{desde}")'
-            )
+            estado, respuesta = buzon.search(None, f'(FROM "{REMITENTE_LINKEDIN}" SINCE "{desde}")')
             if estado != "OK" or not respuesta or not respuesta[0]:
                 return []
             identificadores = respuesta[0].split()[-TOPE_CORREOS_LINKEDIN:]
