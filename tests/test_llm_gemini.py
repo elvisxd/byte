@@ -12,7 +12,9 @@ import pytest
 from agent.llm import (
     CEREBRAS_BASE_URL,
     GROQ_BASE_URL,
+    MISTRAL_BASE_URL,
     NVIDIA_BASE_URL,
+    OPENROUTER_BASE_URL,
     build_llm,
     es_de_google,
     es_remoto,
@@ -275,6 +277,86 @@ def test_un_nvidia_cuenta_como_brazo_remoto() -> None:
     from agent.llm import es_remoto
 
     assert es_remoto("nvidia/deepseek-ai/deepseek-v4-flash-0731") is True
+    assert es_remoto("qwen3:14b") is False
+
+
+def test_un_mistral_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> None:
+    """La familia Mistral no está en ningún otro brazo. Sin quitar el prefijo se
+    pediría un modelo llamado "mistral/mistral-large-latest", que no existe.
+    """
+    ajustes = Settings(MISTRAL_API_KEY="clave-mistral", BYTE_MISTRAL_NUM_PREDICT=8192)
+
+    llm = build_llm(ajustes, "mistral/mistral-large-latest")
+
+    assert isinstance(llm, OpenAIEspia)
+    ultimo = OpenAIEspia.ultimo
+    assert ultimo["base_url"] == MISTRAL_BASE_URL
+    assert ultimo["api_key"] == "clave-mistral"
+    assert ultimo["model"] == "mistral-large-latest"
+    assert ultimo["max_tokens"] == 8192
+    # Un solo intento, y acá más que en ningún otro: la capa gratuita de Mistral
+    # es la más estrecha de las cuatro y un reintento del SDK se comería la cuota
+    # del minuto sin dejar que el relevo cambie de modelo.
+    assert ultimo["max_retries"] == 1
+    assert OllamaEspia.ultimo == {}
+
+
+def test_openrouter_conserva_el_sufijo_free_porque_es_lo_que_decide_si_cuesta(
+    espias: None,
+) -> None:
+    """⚠ EL TEST QUE IMPIDE UNA FACTURA.
+
+    `deepseek/deepseek-chat-v3-0324:free` y el mismo id sin `:free` son la misma
+    familia y facturas distintas. El id lleva barra Y dos puntos, así que el
+    modelo del brazo es `openrouter/deepseek/deepseek-chat-v3-0324:free`: quitar
+    el prefijo tiene que dejar los dos intactos. Cualquier limpieza «de más»
+    —un `split(":")`, un `split("/")`— se convierte en dinero, y la regla del
+    proyecto es no pagar una IA antes de saber si es rentable.
+    """
+    ajustes = Settings(OPENROUTER_API_KEY="clave-or", BYTE_OPENROUTER_NUM_PREDICT=8192)
+
+    llm = build_llm(ajustes, "openrouter/deepseek/deepseek-chat-v3-0324:free")
+
+    assert isinstance(llm, OpenAIEspia)
+    ultimo = OpenAIEspia.ultimo
+    assert ultimo["base_url"] == OPENROUTER_BASE_URL
+    assert ultimo["model"] == "deepseek/deepseek-chat-v3-0324:free"
+    assert ultimo["model"].endswith(":free")
+    assert ultimo["api_key"] == "clave-or"
+
+
+def test_ni_mistral_ni_openrouter_llevan_el_reasoning_de_groq(espias: None) -> None:
+    """`reasoning_format` es propio de Groq y de los gpt-oss. OpenRouter enruta a
+    docenas de modelos y la mayoría no lo conoce; mandarlo haría que el servidor
+    reciba un campo que no entiende, el error que ya costó una tarde.
+    """
+    build_llm(Settings(MISTRAL_API_KEY="k"), "mistral/mistral-large-latest", reasoning=True)
+    assert OpenAIEspia.ultimo.get("extra_body") is None
+
+    build_llm(Settings(OPENROUTER_API_KEY="k"), "openrouter/qwen/qwen3-8b:free", reasoning=True)
+    assert OpenAIEspia.ultimo.get("extra_body") is None
+    assert "reasoning_format" not in str(OpenAIEspia.ultimo)
+
+
+def test_sin_clave_no_se_arma_ni_mistral_ni_openrouter(espias: None) -> None:
+    """Falla al construirlo y no en la primera llamada: un brazo que arranca sin
+    clave gasta una vuelta entera del vigía para descubrir que no puede pedir nada.
+    """
+    with pytest.raises(ValueError, match="MISTRAL_API_KEY"):
+        build_llm(Settings(MISTRAL_API_KEY=""), "mistral/mistral-large-latest")
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        build_llm(Settings(OPENROUTER_API_KEY=""), "openrouter/qwen/qwen3-8b:free")
+
+
+def test_mistral_y_openrouter_cuentan_como_brazos_remotos() -> None:
+    """`es_remoto` decide qué sella cada escritura. Si no entran ahí, sus
+    operaciones quedarían marcadas como del modelo local y la comparación entre
+    brazos mediría cualquier cosa.
+    """
+    from agent.llm import es_remoto
+
+    assert es_remoto("mistral/mistral-large-latest") is True
+    assert es_remoto("openrouter/deepseek/deepseek-chat-v3-0324:free") is True
     assert es_remoto("qwen3:14b") is False
 
 

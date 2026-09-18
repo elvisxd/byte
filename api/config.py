@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     # vacía, que es el fallo del 2026-09-15 con `GEMINI_API_KEY`.
     nvidia_api_key: str = Field(default="", alias="NVIDIA_NIM_API_KEY")
     nvidia_num_predict: int = Field(default=8192, alias="BYTE_NVIDIA_NUM_PREDICT")
+    # Mistral: capa gratuita por el protocolo de OpenAI. Trae la familia Mistral,
+    # que no está en ningún otro brazo. Es la capa más estrecha de las cuatro.
+    mistral_api_key: str = Field(default="", alias="MISTRAL_API_KEY")
+    mistral_num_predict: int = Field(default=8192, alias="BYTE_MISTRAL_NUM_PREDICT")
+    # OpenRouter: un intermediario, una clave para muchas familias. Sus ids gratis
+    # llevan el sufijo `:free`, y ese sufijo es lo que decide si la petición cuesta.
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    openrouter_num_predict: int = Field(default=8192, alias="BYTE_OPENROUTER_NUM_PREDICT")
     # ⚠ 60 SEGUNDOS, NO 45 NI 12. Medido el 2026-09-15: la capa gratuita de
     # Groq tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
     # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
