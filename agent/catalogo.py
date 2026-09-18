@@ -26,10 +26,14 @@ Así que el descarte se guarda en disco, en el volumen, junto a los registros.
 ═══ QUÉ SE GUARDA Y QUÉ NO ═══
 
 ⚠ NO TODO FALLO ES UN VEREDICTO, Y CONFUNDIRLOS BORRA MODELOS BUENOS. Un 429 es
-cuota, un 503 es carga ajena y un 413 es el tamaño de ESTA petición (el brazo
-Groq da 413 varias veces al día contra su tope de 8.000 y es el brazo con más
-muestra de la comparación). Ninguno dice nada del modelo. Acá entra solo lo
+cuota, un 503 es carga ajena y un 413 es el presupuesto POR MINUTO del proveedor
+—medido el 2026-09-18: en el brazo groq un input de 7604 pasa y uno de 7283 del
+mismo modelo falla siete segundos antes, así que no es el tamaño—. Ninguno dice
+nada del modelo, y el 413 menos que ninguno: es el reloj. Acá entra solo lo
 estructural: el 404 y el 402 que `relevo.py` ya separó como `permanente`.
+
+El brazo Groq da varios 413 al día y es el brazo con más muestra de la
+comparación: anotarlo lo habría borrado del relevo por ser el que más trabaja.
 
 ⚠ Y DENTRO DE LO PERMANENTE HAY GRADOS, que es la otra mitad del problema:
 

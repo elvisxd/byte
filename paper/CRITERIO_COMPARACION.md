@@ -235,11 +235,34 @@ persona a mano.
 ### Qué entra en el catálogo, y qué no
 
 Solo lo estructural: el 404 y el 402 que el relevo ya separa como `permanente`.
-**Un 429 es cuota, un 503 es carga ajena y un 413 es el tamaño de ESTA
-petición**, y ninguno dice nada del modelo. El brazo `groq` da 413 varias veces
-al día contra su tope de 8.000 tokens y es el brazo con más muestra: anotarlo
-como descartado lo habría borrado del relevo por ser el que más trabaja. Hay un
-test por cada uno de esos tres códigos.
+**Un 429 es cuota, un 503 es carga ajena y un 413 es el presupuesto por minuto
+del proveedor**, y ninguno dice nada del modelo. El brazo `groq` da varios 413
+al día y es el brazo con más muestra: anotarlo como descartado lo habría borrado
+del relevo por ser el que más trabaja. Hay un test por cada uno de esos tres
+códigos.
+
+⚠ **CORRECCIÓN DEL MISMO DÍA: el 413 NO es el tamaño de la petición**, y esta
+sección decía que sí. Medido el 2026-09-18 entre las 15:12 y las 15:17 EDT:
+
+```
+15:17:35  20b   contesta   7283 de entrada
+15:17:42  20b   413                         ← 7 s después, mismo modelo
+15:17:45  120b  contesta   7604 de entrada   ← MÁS grande, y pasa
+```
+
+Lo que discrimina es cuántos tokens lleva gastados el minuto, **y la salida
+cuenta**: en esa misma vuelta una sola llamada gastó 6.097 tokens de salida —el
+76% de los 8.000 del minuto— mientras las otras gastaron entre 505 y 1.373.
+
+Esto cambia dos conclusiones. La primera: **esperar SÍ lo arregla**, al contrario
+de lo que decía `relevo.py`; la espera corta del relevo es precisamente lo que
+salvó esa vuelta. La segunda: **acortar el prompt no es el arreglo**, o no el
+principal — lo que se come el presupuesto de ese brazo es una salida ocasional
+que se desborda, no la entrada, que lleva días estable entre 6k y 7,6k.
+
+Lo que lo escondió fue el log: `_agotar` recortaba el error a 80 caracteres y
+«tokens per minute (TPM): Limit 8000, Requested N» cae pasado ese corte. Ahora
+las cifras de presupuesto se imprimen enteras.
 
 Y dentro de lo permanente hay grados, porque la clasificación es asimétrica:
 `sin_herramientas` no se revisa nunca, `sin_acceso` se revisa al mes (puede ser

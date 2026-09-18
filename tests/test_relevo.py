@@ -19,6 +19,8 @@ from agent.relevo import (
     Relevo,
     RelevoAgotado,
     espera_sugerida,
+    por_minuto,
+    presupuesto_del_413,
     segundos_hasta_medianoche_pacifico,
     tipo_de_agotamiento,
 )
@@ -593,3 +595,47 @@ async def test_sin_catalogo_todo_sigue_igual():
     """El brazo local y cualquier corrida de prueba van sin catálogo."""
     relevo = Relevo([("uno", _Modelo("uno"))], espera_s=0)
     assert [t async for t in relevo.astream("hola")] == ["uno:0", "uno:1"]
+
+
+# ── el 413 es por minuto, no por tamaño ─────────────────────────────────────
+# Medido el 2026-09-18 en el brazo groq: un input de 7604 pasa y uno de 7283 del
+# MISMO modelo falla siete segundos antes. Lo que discrimina no es el tamaño de
+# la petición sino cuántos tokens lleva gastados el minuto. El comentario del
+# módulo decía lo contrario y de ahí salía «ninguna espera lo arregla», que es
+# justo al revés: la espera corta del relevo es lo que salva esa vuelta.
+
+GROQ_413 = (
+    "Error code: 413 - {'error': {'message': 'Request too large for model "
+    "`openai/gpt-oss-20b` in organization `org_x` service tier `on_demand` on "
+    "tokens per minute (TPM): Limit 8000, Requested 8500, please reduce your "
+    "message size and try again.'}}"
+)
+
+
+def test_el_413_trae_su_presupuesto():
+    assert presupuesto_del_413(GROQ_413) == (8000, 8500)
+    assert por_minuto(GROQ_413)
+
+
+def test_un_413_sin_cifras_no_revienta():
+    assert presupuesto_del_413("Request too large") is None
+
+
+def test_el_413_sigue_siendo_caido():
+    """Curable con tiempo, como un 429 de minuto — y nunca un veredicto del modelo."""
+
+    class _E(Exception):
+        status_code = 413
+
+    assert tipo_de_agotamiento(_E(GROQ_413)) == "caido"
+
+
+async def test_las_cifras_del_413_salen_en_el_log(capsys):
+    """⚠ El recorte a 80 caracteres escondía «Limit 8000» y con él la causa."""
+    relevo = Relevo(
+        [("20b", _Modelo("20b", _Error(413, GROQ_413))), ("120b", _Modelo("120b"))],
+        espera_s=0,
+    )
+    [t async for t in relevo.astream("hola")]
+    salida = capsys.readouterr().out
+    assert "tope 8000 por minuto, pedido 8500" in salida
