@@ -94,7 +94,27 @@ necesita_patrocinio = false
 # nada. Upwork es la excepción y está explicada en `empleo/README.md`.
 remoteok = true
 remotive = true
-weworkremotely = true
+# We Work Remotely: APAGADO desde 2026-09-18.
+#
+# Postular en WWR es una función paga. No es un muro sobre algunas ofertas: en
+# su propia pantalla de suscripción, "Apply to unlimited remote jobs on WWR"
+# figura como beneficio INCLUIDO en el plan. Un link del feed terminó en
+# `/job-seekers/onboarding/step_3?context=paywall&payment_plan=top_access`, que
+# es el paso 3 de 3 de ese onboarding.
+#
+# En septiembre de 2026 pedían USD 34.95/año por WWR solo, o 59.95 por el bundle
+# TopAccess (WWR + PeoplePerHour + Arc + Toptal), los dos pagos por adelantado y
+# con renovación automática anual.
+#
+# Un link al que no podés aplicar sin pagar no es una oferta: es publicidad. Y
+# el cazador existe para mandarte links a los que sí podés aplicar, así que
+# mandarlos igual sería gastarte la atención cinco veces al día.
+#
+# Si revierten el cobro, esto vuelve cambiando `false` por `true` (y borrando el
+# test que lo fija, que dice por qué). Mientras tanto, si ves una oferta de WWR
+# que te interesa: tenés la empresa y el puesto, así que buscala en la web de la
+# empresa y aplicá ahí — que además suele ser la fila más corta.
+weworkremotely = false
 hackernews = true
 # Empresas por su propia página de Careers (ver `[[empresas]]` más abajo).
 empresas = true

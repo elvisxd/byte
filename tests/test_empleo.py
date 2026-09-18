@@ -1245,3 +1245,18 @@ def test_para_workday_el_token_es_la_url_entera() -> None:
     """Porque hacen falta tres datos y un token corto sólo lleva uno."""
     url = "https://chevron.wd5.myworkdayjobs.com/jobs"
     assert fuentes.identificar_empresa(url) == ("workday", url)
+
+
+def test_we_work_remotely_viene_apagado_a_proposito() -> None:
+    """Postular en WWR es una función paga: "Apply to unlimited remote jobs on
+    WWR" figura como beneficio incluido en su plan, y un link del feed terminó
+    en `/job-seekers/onboarding/step_3?context=paywall&payment_plan=top_access`.
+
+    Esto no es una preferencia, es la razón por la que la fuente está apagada.
+    Sin este test, la próxima vez que alguien —yo incluido— repase `[fuentes]` y
+    vea un `false` suelto, lo prende "para tener más ofertas" y vuelven los links
+    que piden tarjeta al final. Si WWR revierte el cobro, este test se borra en
+    el mismo commit que la prende, y ahí queda escrito por qué.
+    """
+    ruta = Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
+    assert cargar_criterio(ruta).fuentes["weworkremotely"] is False
