@@ -1405,3 +1405,33 @@ def test_venezuela_ya_cuenta_como_latam() -> None:
     Lo que sí hace falta configurar es que uno PRESENCIAL allá deje de hundirse,
     y eso vive en el overlay privado porque dice dónde vas a estar viviendo."""
     assert "latam" in detectar_senales(_con_texto("Remote role, team across Venezuela"))
+
+
+def test_un_pendiente_rompe_el_silencio_aunque_no_haya_ofertas() -> None:
+    """Lo que tus postulaciones piden tiene fecha de vencimiento. Perder un video
+    sin mandar cuesta la postulación entera; perder una oferta cuesta una de las
+    varias que salen cada día. Así que interrumpe siempre, haya ofertas o no."""
+    criterio = Criterio(puntaje_minimo=25, horas_sin_aviso=24)
+    conteo = {"remoteok": 99}
+    # Sin pendientes y sin ofertas, callado.
+    assert cazador.texto_para_telegram([_par(10)], criterio, conteo, 1.0) == ""
+    # Con un pendiente, se manda igual.
+    texto = cazador.texto_para_telegram(
+        [_par(10)], criterio, conteo, 1.0, "Tus postulaciones piden algo:\n  [pide algo] x"
+    )
+    assert "piden algo" in texto
+    assert "fuentes →" in texto
+
+
+def test_el_pendiente_va_arriba_de_las_ofertas() -> None:
+    """Se lee de arriba abajo y en el teléfono se ven tres líneas: lo que vence
+    tiene que estar antes que lo que recién aparece."""
+    criterio = Criterio(puntaje_minimo=25)
+    texto = cazador.texto_para_telegram(
+        [_par(40)],
+        criterio,
+        {"remoteok": 99},
+        1.0,
+        "Tus postulaciones piden algo:\n  [pide algo] x",
+    )
+    assert texto.index("piden algo") < texto.index("Ofertas —")

@@ -135,6 +135,18 @@ getonbrd = true
 # guardadas que tengas en LinkedIn, así que el criterio de qué llega se define
 # allá y acá solo se puntúa.
 linkedin = false
+# Respuestas a tus postulaciones, leídas de tu propio buzón por IMAP —el mismo
+# camino y la misma contraseña de aplicación que `linkedin`, y también en solo
+# lectura: no marca, no mueve, no borra—.
+#
+# Sólo interrumpen dos estados: una entrevista y algo que pide acción tuya. Los
+# rechazos y los acuses se clasifican y se guardan, pero no llegan al teléfono:
+# cinco "gracias por postularte" por semana es la forma más rápida de que dejes
+# de abrir el canal.
+#
+# Lo que sí llega, llega SIEMPRE, haya ofertas o no: un video que no mandaste
+# vence, y perder eso cuesta una postulación entera.
+postulaciones = true
 # Upwork solo se activa con una API key aprobada por ellos. Sin key no trae
 # nada y lo dice: no hay modo "probemos igual", porque el modo de probar igual
 # es el que termina en cuenta suspendida.

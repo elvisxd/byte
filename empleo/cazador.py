@@ -31,6 +31,7 @@ from empleo.aviso import avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
+from empleo.postulaciones import AVISABLES, Respuesta, bloque
 
 logger = get_logger("empleo.cazador")
 
@@ -226,6 +227,7 @@ def texto_para_telegram(
     criterio: Criterio,
     conteo: dict[str, int],
     horas_de_silencio: float | None,
+    pendientes: str = "",
 ) -> str:
     """Lo que se manda al teléfono, o `""` si esta vuelta no merece interrumpir.
 
@@ -242,8 +244,15 @@ def texto_para_telegram(
        idéntico a un día tranquilo. Una línea cada `horas_sin_aviso` alcanza
        para distinguirlos, y sigue siendo una en vez de cinco.
     """
+    # Lo que tus postulaciones piden interrumpe SIEMPRE, haya ofertas o no. Es
+    # trabajo tuyo con fecha de vencimiento —un video que no mandaste, un
+    # formulario a medias— y perderlo cuesta una postulación entera, mientras
+    # que perder una oferta cuesta una de las varias que salen cada día.
     if _dignas(seleccion, criterio):
-        return armar_aviso(seleccion, criterio, conteo)
+        aviso = armar_aviso(seleccion, criterio, conteo)
+        return f"{pendientes}\n\n{aviso}" if pendientes else aviso
+    if pendientes:
+        return f"{pendientes}\n\n{_pie_fuentes(conteo)}"
 
     revisadas = sum(n for n in conteo.values() if n > 0)
     if conteo and not revisadas:
@@ -351,6 +360,37 @@ def escribir_digest(
     return destino
 
 
+async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
+    """Lo que tus postulaciones piden y todavía no te avisé.
+
+    Memoria aparte de la de las ofertas: son cosas distintas con vidas distintas,
+    y mezclarlas haría que borrar una borre la otra. Se anota el Message-ID, que
+    es único por correo y no cambia porque lo leas.
+
+    `imaplib` es síncrona, así que va a un hilo igual que la fuente de LinkedIn:
+    una conexión IMAP en el bucle deja esperando a todo lo demás.
+    """
+    if not criterio.fuentes.get("postulaciones", True):
+        return []
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not usuario or not clave:
+        return []
+
+    respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave)
+    memoria = Memoria(carpeta / "postulaciones.json")
+    nuevas = [r for r in respuestas if r.estado in AVISABLES and not memoria.conoce(r.id_mensaje)]
+    # Se anota acá y no después de avisar, al revés que las ofertas: un pendiente
+    # repetido cinco veces por día es peor que uno perdido, porque el correo
+    # sigue en tu bandeja mientras que la oferta caduca.
+    for r in nuevas:
+        memoria.anotar(r.id_mensaje)
+    if nuevas:
+        memoria.guardar()
+    logger.info("postulaciones_revisadas", total=len(respuestas), pendientes=len(nuevas))
+    return nuevas
+
+
 async def una_vuelta(
     criterio: Criterio, carpeta: Path, consulta_upwork: str, con_aviso: bool
 ) -> str:
@@ -362,7 +402,10 @@ async def una_vuelta(
     # —corrés el comando, querés ver el resultado— y el del teléfono sólo
     # interrumpe cuando hay algo que decir.
     texto = armar_aviso(seleccion, criterio, conteo)
-    al_telefono = texto_para_telegram(seleccion, criterio, conteo, _horas_de_silencio(carpeta))
+    pendientes = bloque(await _pendientes(criterio, carpeta))
+    al_telefono = texto_para_telegram(
+        seleccion, criterio, conteo, _horas_de_silencio(carpeta), pendientes
+    )
 
     if con_aviso and al_telefono:
         # Se anota **después** de avisar y solo lo que se avisó: si el panel está
