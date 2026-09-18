@@ -162,15 +162,22 @@ def _linea(oferta: Oferta, puntaje: Puntaje) -> str:
     )
 
 
-def armar_aviso(
-    seleccion: list[tuple[Oferta, Puntaje]], criterio: Criterio, conteo: dict[str, int]
-) -> str:
-    """El mensaje que llega al teléfono."""
-    dignas = [
+def _dignas(
+    seleccion: list[tuple[Oferta, Puntaje]], criterio: Criterio
+) -> list[tuple[Oferta, Puntaje]]:
+    """Las que llegan al teléfono: puntaje suficiente y todavía a tiempo."""
+    return [
         par
         for par in seleccion
         if par[1].total >= criterio.puntaje_minimo and _bastante_fresca(par[1], criterio)
     ]
+
+
+def armar_aviso(
+    seleccion: list[tuple[Oferta, Puntaje]], criterio: Criterio, conteo: dict[str, int]
+) -> str:
+    """El mensaje que llega al teléfono."""
+    dignas = _dignas(seleccion, criterio)
     cabecera = f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}"
     if not dignas:
         revisadas = sum(n for n in conteo.values() if n > 0)
@@ -184,6 +191,78 @@ def armar_aviso(
     resto = len(dignas) - len(muestra)
     extra = f"\n\n(+{resto} más en el digest)" if resto > 0 else ""
     return f"{cabecera} — {len(dignas)} nuevas\n\n{cuerpo}{extra}\n\n{_pie_fuentes(conteo)}"
+
+
+ULTIMO_AVISO = "ultimo_aviso.txt"
+
+
+def _horas_de_silencio(carpeta: Path) -> float | None:
+    """Cuánto hace que no se manda nada. `None` si no hay registro.
+
+    Vive en un archivo y no en memoria porque cada vuelta es un proceso nuevo
+    —en Railway, un contenedor nuevo—. Sin el volumen montado esto se pierde en
+    cada vuelta y el resultado es que la línea de "sigo vivo" sale siempre, que
+    es el comportamiento seguro: de más, nunca de menos.
+    """
+    try:
+        cuando = datetime.fromisoformat((carpeta / ULTIMO_AVISO).read_text("utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return (datetime.now() - cuando).total_seconds() / 3600
+
+
+def _anotar_aviso(carpeta: Path) -> None:
+    try:
+        carpeta.mkdir(parents=True, exist_ok=True)
+        (carpeta / ULTIMO_AVISO).write_text(datetime.now().isoformat(), encoding="utf-8")
+    except OSError as exc:
+        # No poder anotarlo sólo hace que la próxima vuelta mande un "sigo vivo"
+        # de más. No vale tumbar la vuelta por eso.
+        logger.warning("ultimo_aviso_no_escrito", error_type=type(exc).__name__)
+
+
+def texto_para_telegram(
+    seleccion: list[tuple[Oferta, Puntaje]],
+    criterio: Criterio,
+    conteo: dict[str, int],
+    horas_de_silencio: float | None,
+) -> str:
+    """Lo que se manda al teléfono, o `""` si esta vuelta no merece interrumpir.
+
+    Cinco veces por día hábil, un "no encontré nada" no es información: es el
+    mensaje que te enseña a no abrir el canal, y entonces el día que llega uno
+    bueno tampoco lo abrís. Así que si no hay nada, no se manda nada.
+
+    Pero el silencio miente en dos casos, y los dos se avisan igual:
+
+    1. **Ninguna fuente trajo nada.** Eso no es "hoy no había ofertas", es que el
+       cazador está ciego —se cayó la red, cambió un feed, venció una key— y
+       desde el teléfono se ve idéntico a un día tranquilo.
+    2. **Hace demasiado que no se manda nada.** Un cron muerto también se ve
+       idéntico a un día tranquilo. Una línea cada `horas_sin_aviso` alcanza
+       para distinguirlos, y sigue siendo una en vez de cinco.
+    """
+    if _dignas(seleccion, criterio):
+        return armar_aviso(seleccion, criterio, conteo)
+
+    revisadas = sum(n for n in conteo.values() if n > 0)
+    if conteo and not revisadas:
+        return (
+            f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}\n"
+            f"Ninguna fuente devolvió nada. No es que no haya ofertas: "
+            f"algo se rompió.\n{_pie_fuentes(conteo)}"
+        )
+
+    if criterio.horas_sin_aviso > 0 and (
+        horas_de_silencio is None or horas_de_silencio >= criterio.horas_sin_aviso
+    ):
+        return (
+            f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}\n"
+            f"Sigo mirando. Nada sobre {criterio.puntaje_minimo} puntos "
+            f"desde el último aviso, entre {revisadas} revisadas en esta vuelta.\n"
+            f"{_pie_fuentes(conteo)}"
+        )
+    return ""
 
 
 def _bastante_fresca(puntaje: Puntaje, criterio: Criterio) -> bool:
@@ -279,16 +358,25 @@ async def una_vuelta(
     memoria = Memoria(carpeta / "vistas.json")
     seleccion = seleccionar(ofertas, criterio, memoria)
     destino = escribir_digest(carpeta, seleccion, conteo)
+    # Dos textos distintos a propósito: el de la consola cuenta siempre qué pasó
+    # —corrés el comando, querés ver el resultado— y el del teléfono sólo
+    # interrumpe cuando hay algo que decir.
     texto = armar_aviso(seleccion, criterio, conteo)
+    al_telefono = texto_para_telegram(seleccion, criterio, conteo, _horas_de_silencio(carpeta))
 
-    if con_aviso:
+    if con_aviso and al_telefono:
         # Se anota **después** de avisar y solo lo que se avisó: si el panel está
         # caído, estas ofertas tienen que volver a aparecer en la próxima vuelta.
-        if avisar(texto):
+        if avisar(al_telefono):
+            _anotar_aviso(carpeta)
             for oferta, puntaje in seleccion:
                 if puntaje.total >= criterio.puntaje_minimo:
                     memoria.anotar(oferta.clave, oferta.huella)
             memoria.guardar()
+    elif con_aviso:
+        # Queda en el log: una vuelta silenciosa y una que no corrió se
+        # distinguen mirando acá, que es lo que el teléfono ya no distingue.
+        logger.info("vuelta_silenciosa", nuevas=len(seleccion))
     logger.info("vuelta_terminada", nuevas=len(seleccion), digest=str(destino), **conteo)
     return texto
 

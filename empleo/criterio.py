@@ -123,6 +123,11 @@ class Criterio:
     # penalización de frescura y sigue arriba, y a las cuatro semanas ya
     # entrevistaron a alguien. Las viejas siguen en el digest. 0 lo apaga.
     descartar_despues_de_dias: int = 0
+    # Cuántas horas de silencio se aguantan antes de mandar una línea de
+    # "sigo vivo". Sin esto, "no había nada" y "el cron está muerto" se ven
+    # exactamente igual desde el teléfono: los dos son no recibir nada. 0 lo
+    # apaga y el silencio pasa a ser total.
+    horas_sin_aviso: int = 24
     # Cuánto puede aportar el stack como máximo. Sin tope, una oferta que lista
     # treinta tecnologías en un párrafo de "nice to have" le gana a una que pide
     # exactamente lo que hacés.
@@ -248,6 +253,7 @@ def cargar_criterio(ruta: Path) -> Criterio:
         puntaje_minimo=int(aviso.get("puntaje_minimo", 25)),
         tope_por_empresa=int(aviso.get("tope_por_empresa", 2)),
         descartar_despues_de_dias=int(aviso.get("descartar_despues_de_dias", 0)),
+        horas_sin_aviso=int(aviso.get("horas_sin_aviso", 24)),
     )
 
 

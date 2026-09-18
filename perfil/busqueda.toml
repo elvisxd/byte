@@ -263,6 +263,17 @@ tope_por_empresa = 2
 # cuatro que llegaban tenían 29 días — a esa altura ya entrevistaron a alguien.
 # Siguen en el digest del disco. Poner 0 lo apaga.
 descartar_despues_de_dias = 7
+# Cuántas horas de silencio se aguantan antes de mandar una línea de "sigo vivo".
+#
+# Cuando no hay nada sobre el mínimo, el cazador NO manda nada. Cinco "no
+# encontré nada" por día hábil no son información: son el mensaje que te enseña
+# a no abrir el canal, y entonces el día que llega uno bueno tampoco lo abrís.
+#
+# Pero el silencio total mentiría: un cron muerto se ve igual que un día
+# tranquilo. Con esto, cada 24 h de silencio sale una sola línea. Poner 0 lo
+# apaga y el silencio pasa a ser total. (Que ninguna fuente devuelva nada se
+# avisa siempre, sin importar este número: eso no es un día tranquilo.)
+horas_sin_aviso = 24
 # Puntaje mínimo para que una oferta llegue al teléfono. Las que quedan abajo
 # se guardan igual en el digest de disco, por si el criterio quedó muy duro.
 puntaje_minimo = 25

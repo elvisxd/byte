@@ -1286,3 +1286,66 @@ def test_un_overlay_privado_roto_no_tumba_la_vuelta(monkeypatch: pytest.MonkeyPa
     assert criterio.presencial_aceptable_en == ()
     # Y el resto del criterio llegó entero, que es lo que importa.
     assert criterio.fuentes["remoteok"] is True
+
+
+# --- Cuándo vale la pena interrumpir ---
+
+
+def _par(total: int) -> tuple[Oferta, Puntaje]:
+    oferta = _oferta(fuente="remoteok")
+    return oferta, Puntaje(total=total, motivos=(), senales=(), terminos=(), antiguedad_horas=1.0)
+
+
+def test_una_vuelta_sin_nada_no_manda_mensaje() -> None:
+    """Cinco "no encontré nada" por día hábil enseñan a no abrir el canal, y
+    entonces el día que llega uno bueno tampoco se abre."""
+    criterio = Criterio(puntaje_minimo=25)
+    texto = cazador.texto_para_telegram([_par(10)], criterio, {"remoteok": 99}, 1.0)
+    assert texto == ""
+
+
+def test_con_algo_sobre_el_minimo_manda_el_aviso_de_siempre() -> None:
+    criterio = Criterio(puntaje_minimo=25)
+    texto = cazador.texto_para_telegram([_par(40)], criterio, {"remoteok": 99}, 1.0)
+    assert "fuentes →" in texto
+    assert texto == cazador.armar_aviso([_par(40)], criterio, {"remoteok": 99})
+
+
+def test_si_ninguna_fuente_trajo_nada_se_avisa_igual() -> None:
+    """Eso no es "hoy no había ofertas": es que el cazador está ciego. Desde el
+    teléfono los dos casos se ven idénticos si no se dice."""
+    criterio = Criterio(puntaje_minimo=25)
+    texto = cazador.texto_para_telegram([], criterio, {"remoteok": -1, "remotive": -1}, 1.0)
+    assert "algo se rompió" in texto
+
+
+def test_despues_de_muchas_horas_calladas_sale_una_linea() -> None:
+    """Un cron muerto también se ve igual que un día tranquilo. Una línea por
+    día alcanza para distinguirlos, y sigue siendo una en vez de cinco."""
+    criterio = Criterio(puntaje_minimo=25, horas_sin_aviso=24)
+    assert cazador.texto_para_telegram([_par(10)], criterio, {"remoteok": 99}, 23.0) == ""
+    tarde = cazador.texto_para_telegram([_par(10)], criterio, {"remoteok": 99}, 25.0)
+    assert "Sigo mirando" in tarde
+
+
+def test_sin_registro_previo_se_manda_la_linea() -> None:
+    """La primera vuelta después de un despliegue no tiene el archivo. Mandar de
+    más ahí es lo seguro: confirma que el camino al teléfono funciona."""
+    criterio = Criterio(puntaje_minimo=25, horas_sin_aviso=24)
+    assert "Sigo mirando" in cazador.texto_para_telegram(
+        [_par(10)], criterio, {"remoteok": 99}, None
+    )
+
+
+def test_en_cero_el_silencio_es_total() -> None:
+    criterio = Criterio(puntaje_minimo=25, horas_sin_aviso=0)
+    assert cazador.texto_para_telegram([_par(10)], criterio, {"remoteok": 99}, None) == ""
+
+
+def test_el_silencio_se_mide_contra_lo_anotado(tmp_path: Path) -> None:
+    """Cada vuelta es un proceso nuevo —en Railway, un contenedor nuevo—, así que
+    esto tiene que sobrevivir en disco o el "sigo vivo" sale en cada vuelta."""
+    assert cazador._horas_de_silencio(tmp_path) is None
+    cazador._anotar_aviso(tmp_path)
+    horas = cazador._horas_de_silencio(tmp_path)
+    assert horas is not None and horas < 0.1
