@@ -26,11 +26,13 @@ import urllib.parse
 import xml.etree.ElementTree as ET  # noqa: S405 - ver _rss_a_ofertas
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from email.header import decode_header, make_header
 
 import httpx
 
 from api.logging import get_logger
 from empleo.oferta import Oferta
+from empleo.postulaciones import Respuesta, clasificar
 
 logger = get_logger("empleo.fuentes")
 
@@ -1036,4 +1038,77 @@ def cliente_http() -> httpx.AsyncClient:
         timeout=TIMEOUT_S,
         follow_redirects=True,
         headers={"User-Agent": AGENTE, "Accept": "application/json, application/rss+xml, */*"},
+    )
+
+
+# --- Respuestas a tus postulaciones ---
+
+# Cuántos correos se miran por vuelta. El buzón trae de todo; lo que importa son
+# los últimos días, y pedir más es tiempo de IMAP por correos ya clasificados.
+TOPE_CORREOS_POSTULACIONES = 60
+
+
+def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respuesta]:
+    """Las respuestas a tus postulaciones, leídas del buzón.
+
+    Mismo camino y misma contraseña de aplicación que las alertas de LinkedIn, y
+    **solo lectura**: no marca como leído, no mueve nada, no borra nada.
+
+    Se buscan los correos del período entero y no sólo los no leídos: que hayas
+    abierto el mail no significa que hayas hecho lo que pedía —el caso que
+    originó esto es un "falta el video" leído y olvidado once días—.
+
+    Nunca lanza: sin credenciales o con Gmail caído, la vuelta sigue.
+    """
+    if not usuario or not clave:
+        logger.info("postulaciones_sin_credenciales", detail="falta GMAIL_APP_PASSWORD")
+        return []
+
+    desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
+    try:
+        with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
+            buzon.login(usuario, clave)
+            buzon.select("INBOX", readonly=True)
+            estado, respuesta = buzon.search(None, f'(SINCE "{desde}")')
+            if estado != "OK" or not respuesta or not respuesta[0]:
+                return []
+            identificadores = respuesta[0].split()[-TOPE_CORREOS_POSTULACIONES:]
+
+            encontradas: list[Respuesta] = []
+            for identificador in identificadores:
+                estado, datos = buzon.fetch(identificador, "(RFC822)")
+                if estado != "OK" or not datos or not isinstance(datos[0], tuple):
+                    continue
+                hallada = _respuesta_del_correo(datos[0][1])
+                if hallada is not None:
+                    encontradas.append(hallada)
+            return encontradas
+    except (OSError, imaplib.IMAP4.error) as exc:
+        logger.warning("postulaciones_imap_fallo", error_type=type(exc).__name__)
+        return []
+
+
+def _respuesta_del_correo(crudo: bytes) -> Respuesta | None:
+    """Clasifica un correo MIME. `None` si no es una respuesta de postulación."""
+    mensaje = email.message_from_bytes(crudo)
+    asunto = _texto(str(make_header(decode_header(mensaje.get("Subject", "")))), 300)
+    cuerpo = ""
+    for parte in mensaje.walk() if mensaje.is_multipart() else [mensaje]:
+        if parte.get_content_type() != "text/plain":
+            continue
+        carga = parte.get_payload(decode=True)
+        if isinstance(carga, bytes):
+            cuerpo = carga.decode(parte.get_content_charset() or "utf-8", errors="replace")
+            break
+    # Sólo el principio: las plantillas dicen lo importante arriba y el pie trae
+    # enlaces de baja y avisos legales que sólo agregan falsos positivos.
+    estado = clasificar(asunto, cuerpo[:4000])
+    if not estado:
+        return None
+    return Respuesta(
+        id_mensaje=_texto(mensaje.get("Message-ID"), 200) or asunto,
+        remitente=_texto(mensaje.get("From"), 200),
+        asunto=asunto,
+        fecha=_texto(mensaje.get("Date"), 60),
+        estado=estado,
     )
