@@ -215,6 +215,15 @@ class Settings(BaseSettings):
     # Paper trading: dónde vive el registro de operaciones. Necesita también
     # BYTE_PAPER_SCRIPTS, que apunta a los indicadores del repo de trading.
     paper_db: str = Field(default="", alias="BYTE_PAPER_DB")
+    # La ficha de cada modelo de cada proveedor: qué lista su catálogo, qué
+    # contestó una vuelta de verdad y qué quedó descartado y por qué
+    # (`agent/catalogo.py`). Vacío = no se anota nada, que es lo que quiere el
+    # brazo local y cualquier corrida de prueba: sin volumen no hay dónde
+    # guardarlo y un apunte perdido no debe costar una vuelta.
+    #
+    # Se comparte entre todos los brazos a propósito: que el GLM de OpenRouter no
+    # tenga herramientas es un hecho del proveedor, no de un brazo.
+    catalogo_db: str = Field(default="", alias="BYTE_CATALOGO_DB")
     # Token interno compartido con el servicio sandbox. Sin él no se registra la
     # herramienta de ejecución: el sandbox rechaza todo pedido sin token.
     sandbox_token: str = Field(default="", alias="SANDBOX_TOKEN")

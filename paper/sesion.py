@@ -38,6 +38,7 @@ import os
 import time
 from typing import Any
 
+from agent.catalogo import Catalogo
 from agent.graph import build_graph
 from agent.llm import build_llm, es_de_groq, es_remoto
 from agent.relevo import Relevo
@@ -200,6 +201,88 @@ def armar(
     return registro, grafo, etiqueta_modelo
 
 
+def _catalogo_y_lista(ajustes: Settings, nombres: list[str]) -> tuple[Any, list[str]]:
+    """Abre el catálogo y quita de la lista lo que ya se sabe inservible.
+
+    ⚠ QUITARLO DE LA LISTA NO ES LO MISMO QUE DEJAR QUE EL RELEVO LO SALTE, y la
+    diferencia es la reserva del primero. `Relevo._disponibles` aplica la reserva
+    de `paper/CRITERIO_HORARIOS.md` solo cuando el primero de los VIVOS sigue
+    siendo el primero de la LISTA; con el primero en cuarentena permanente eso no
+    se cumple nunca, así que el modelo bueno se gastaba en vueltas de gestión y
+    los cierres de 4h los hacía el de abajo. Filtrando acá, el primero de la
+    lista vuelve a ser un modelo que existe.
+
+    Y no quita nada que pueda estar solo ocupado: `catalogo.filtrar` solo mira
+    veredictos `descartado`, que únicamente escribe un 404/402 —ver
+    `agent/catalogo.py`—.
+    """
+    # ⚠ EL SUFIJO `:free` SE EXIGE ACÁ, EN CÓDIGO, Y NO SOLO EN EL SONDEO. La
+    # lista de este brazo entra por una variable de entorno de Railway
+    # (`MODELOS_OPENROUTER`), así que un id al que se le caiga el sufijo al
+    # editarla es una petición COBRADA sin que falle nada: el mismo id con y sin
+    # `:free` existe y contesta 200. La regla del proyecto es no pagar una IA
+    # antes de saber si es rentable, así que estos se van aunque dejen el brazo
+    # sin modelos — un brazo muerto se ve en el log, una factura no.
+    cobrados = [n for n in nombres if n.startswith("openrouter/") and not n.endswith(":free")]
+    if cobrados:
+        print(
+            f"[catalogo] fuera por COBRARSE (les falta «:free»): {', '.join(cobrados)}",
+            flush=True,
+        )
+        nombres = [n for n in nombres if n not in cobrados]
+        if not nombres:
+            raise ValueError(
+                "todos los modelos de este brazo son de pago: "
+                f"{', '.join(cobrados)}. Les falta el sufijo «:free» y sin él la "
+                "petición se cobra. Revisar MODELOS_OPENROUTER."
+            )
+
+    if not ajustes.catalogo_db:
+        return None, nombres
+
+    # Que el catálogo no se pueda abrir no puede impedir que el brazo corra: es un
+    # apunte, no un requisito (ver `Relevo._avisar_catalogo`).
+    try:
+        catalogo = Catalogo(ajustes.catalogo_db)
+    except Exception as exc:
+        print(f"[catalogo] no se pudo abrir {ajustes.catalogo_db}: {exc}", flush=True)
+        return None, nombres
+
+    for modelo in cobrados:
+        # El brazo ya sigue sin él; anotarlo solo sirve para que el parte lo
+        # explique, así que un fallo acá se dice y no se propaga.
+        try:
+            catalogo.marcar_se_cobra(modelo)
+        except Exception as exc:
+            print(f"[catalogo] no se pudo anotar {modelo}: {exc}", flush=True)
+
+    usables, fuera = catalogo.filtrar(nombres)
+    for ficha in fuera:
+        cuando = (
+            "no se revisa"
+            if not ficha["revisable_desde"]
+            else f"se revisa {ficha['revisable_desde'][:10]}"
+        )
+        print(
+            f"[catalogo] fuera {ficha['modelo']}: {ficha['motivo']} "
+            f"({ficha['codigo'] or 's/HTTP'}, {cuando}) · {(ficha['evidencia'] or '')[:70]}",
+            flush=True,
+        )
+    # ⚠ SI EL FILTRO LO VACÍA, MANDA LA LISTA ORIGINAL. Un catálogo equivocado
+    # —un 404 puntual clasificado como `sin_acceso`— dejaría al brazo sin ningún
+    # modelo y sin muestra, que es peor que gastar una llamada comprobándolo. Con
+    # la lista entera, el relevo reintenta, y si de verdad están todos rotos su
+    # propio error ya dice qué hacer: «revisar los nombres contra /v1/models».
+    if not usables:
+        print(
+            "[catalogo] ⚠ el catálogo descarta TODOS los modelos de este brazo; "
+            "se prueba la lista entera igual, por si la ficha está vieja.",
+            flush=True,
+        )
+        return catalogo, nombres
+    return catalogo, usables
+
+
 def _armar_remoto(
     ajustes: Settings, ruta_db: str, nombres: list[str], registro: Registro
 ) -> tuple[Registro, Any, Any]:
@@ -211,6 +294,7 @@ def _armar_remoto(
     """
     if not all(es_remoto(n) for n in nombres):
         raise ValueError(f"el relevo mezcla modelos locales y remotos: {nombres}")
+    catalogo, nombres = _catalogo_y_lista(ajustes, nombres)
     # La espera entre llamadas es la del proveedor más lento de la lista: el
     # tope por minuto de Groq es de tokens y obliga a 45 s (ver api/config.py).
     espera_s = ajustes.gemini_espera_s
@@ -221,6 +305,7 @@ def _armar_remoto(
         # la traza. Los modelos que piensan lo hacen igual con o sin esto.
         [(n, build_llm(ajustes, n, reasoning=True)) for n in nombres],
         espera_s=espera_s,
+        catalogo=catalogo,
     )
 
     # ⚠ LA ETIQUETA DEL REGISTRO ES SIEMPRE `relevo.actual`, TAMBIÉN ANTES DE
