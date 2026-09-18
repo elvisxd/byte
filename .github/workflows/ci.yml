@@ -124,6 +124,35 @@ jobs:
             | grep -q '"sitio":"upwork"' || { docker logs ofertas-ci; exit 1; }
           docker rm -f ofertas-ci
 
+      - name: Construir la imagen del cazador
+        run: docker build -f docker/Dockerfile.cazador -t byte-cazador:ci .
+
+      - name: El cazador arranca y no pide red para saber qué buscar
+        run: |
+          # `--probar` recorre las fuentes; acá sólo se comprueba que la imagen
+          # tenga todos los paquetes y que el criterio cargue. Sin esto, un
+          # import que falta se descubre a las nueve de la mañana, cuando el
+          # cron no avisa nada y parece que no había ofertas.
+          docker run --rm byte-cazador:ci python -c "
+          from pathlib import Path
+          from empleo.criterio import cargar_criterio
+          import empleo.cazador
+          c = cargar_criterio(Path('/app/perfil/busqueda.toml'))
+          assert c.fuentes['weworkremotely'] is False, c.fuentes
+          print('cazador ok')
+          "
+
+      - name: El overlay privado entra por variable y no por archivo
+        run: |
+          docker run --rm -e BYTE_PERFIL_PRIVADO='[situacion]
+          presencial_aceptable_en = ["venezuela"]' byte-cazador:ci python -c "
+          from pathlib import Path
+          from empleo.criterio import cargar_criterio
+          c = cargar_criterio(Path('/app/perfil/busqueda.toml'))
+          assert c.presencial_aceptable_en == ('venezuela',), c.presencial_aceptable_en
+          print('overlay ok')
+          "
+
       - name: La app importa dentro de la imagen
         run: docker run --rm byte-api:ci python -c "import api.main; print('import ok')"
 

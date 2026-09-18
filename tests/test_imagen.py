@@ -13,6 +13,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 DOCKERFILE = (RAIZ / "docker" / "Dockerfile.api").read_text("utf-8")
+CAZADOR = (RAIZ / "docker" / "Dockerfile.cazador").read_text("utf-8")
 
 
 def _paquetes_locales() -> set[str]:
@@ -58,3 +59,22 @@ def test_la_imagen_no_copia_el_perfil_entero() -> None:
     depender de que nadie se olvide de mantener esa lista no es un cerrojo."""
     assert not re.search(r"^COPY perfil/ ", DOCKERFILE, re.M)
     assert re.search(r"^COPY perfil/busqueda\.toml ", DOCKERFILE, re.M)
+
+
+def test_la_imagen_del_cazador_copia_todo_lo_que_importa() -> None:
+    """El cazador corre en un cron: si le falta un paquete, el síntoma es "hoy no
+    llegó ningún aviso" a las nueve de la mañana, que desde el teléfono se ve
+    igual que "hoy no había nada". Por eso se verifica acá y no al desplegar."""
+    locales = _paquetes_locales()
+    copiados = set(re.findall(r"^COPY (\w+)/ \1/$", CAZADOR, re.M))
+    faltan = _importados_por("empleo", locales) - copiados - {"empleo"}
+    assert not faltan, f"Dockerfile.cazador no copia: {sorted(faltan)}"
+    assert re.search(r"^COPY empleo/ empleo/$", CAZADOR, re.M)
+
+
+def test_la_imagen_del_cazador_no_lleva_el_perfil_privado() -> None:
+    """El overlay privado dice dónde vas a estar viviendo. Viaja por
+    `BYTE_PERFIL_PRIVADO`, que es una variable del servicio, nunca dentro de una
+    imagen que se publica."""
+    assert not re.search(r"^COPY perfil/ ", CAZADOR, re.M)
+    assert re.search(r"^COPY perfil/busqueda\.toml ", CAZADOR, re.M)
