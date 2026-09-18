@@ -43,7 +43,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 CUARENTENA_MINUTO_S = 60.0
@@ -62,6 +62,27 @@ CUARENTENA_PERMANENTE_S = float("inf")
 ESPERA_CORTA_S = 150.0
 # Las cuotas diarias de la API de Gemini se renuevan a medianoche del Pacífico.
 PACIFICO = ZoneInfo("America/Los_Angeles")
+
+
+class Catalogo(Protocol):
+    """Lo que el relevo necesita de `agent/catalogo.py`, sin importarlo.
+
+    ⚠ LA CUARENTENA `permanente` DURA UNA SESIÓN Y EL HECHO QUE LA CAUSA DURA
+    MÁS. Su propio mensaje lo dice —«no vuelve en esta sesión»— y eso bastaba
+    mientras la causa fuese un typo en la configuración: el despliegue siguiente
+    lo arreglaba. Pero el 2026-09-18 apareció otra causa: el brazo openrouter
+    recibió 404 «No endpoints found that support tool use» de
+    `z-ai/glm-5.2:free`, o sea un modelo SIN llamada a herramientas, que es lo
+    único que este agente hace. Eso no lo arregla ningún reinicio, y tras el
+    reinicio el relevo lo volvía a intentar. Con este protocolo el
+    descubrimiento sale del proceso y queda en el volumen.
+
+    Es opcional y se llama a prueba de fallos: ver `_avisar_catalogo`.
+    """
+
+    def descartar(self, modelo: str, *, codigo: int | None, texto: str) -> Any: ...
+
+    def funciono(self, modelo: str) -> Any: ...
 
 
 class RelevoAgotado(RuntimeError):
@@ -95,14 +116,24 @@ def _hora() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def codigo_http(exc: BaseException) -> int | None:
+    """El HTTP del error, si lo trae.
+
+    Google lo pone en `code`; el SDK de OpenAI (Groq, Cerebras, NVIDIA, Mistral,
+    OpenRouter) en `status_code`. Lo leen dos sitios —la clasificación y la ficha
+    del catálogo—, así que vive en una función y no en dos copias.
+    """
+    codigo = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    return codigo if isinstance(codigo, int) else None
+
+
 def tipo_de_agotamiento(exc: BaseException) -> str | None:
     """`minuto`, `dia`, `caido` o `permanente`; None si el error no es de cuota ni de servicio.
 
     Un error de argumentos o de red no es agotamiento y no se tapa cambiando
     de modelo: subiría igual con el siguiente.
     """
-    # Google pone el HTTP en `code`; el SDK de OpenAI (Groq) en `status_code`.
-    codigo = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    codigo = codigo_http(exc)
     texto = str(exc)
     bajo_todo = texto.lower()
     # ⚠ 404 Y 402 SON DEL MODELO, NO DEL SERVICIO, Y SON PERMANENTES. Medido el
@@ -212,6 +243,7 @@ class Relevo:
         reloj: Callable[[], float] = time.monotonic,
         dormir: Callable[[float], Awaitable[None]] = asyncio.sleep,
         ahora: Callable[[], datetime] | None = None,
+        catalogo: Catalogo | None = None,
         _estado: _Estado | None = None,
     ) -> None:
         if not modelos:
@@ -221,6 +253,7 @@ class Relevo:
         self.reloj = reloj
         self.dormir = dormir
         self.ahora = ahora
+        self.catalogo = catalogo
         self._estado = _estado or _Estado()
 
     @property
@@ -271,6 +304,7 @@ class Relevo:
             reloj=self.reloj,
             dormir=self.dormir,
             ahora=self.ahora,
+            catalogo=self.catalogo,
             _estado=self._estado,
         )
 
@@ -299,6 +333,23 @@ class Relevo:
         if falta > 0:
             await self.dormir(falta)
         self._estado.ultima_llamada = self.reloj()
+
+    def _avisar_catalogo(self, metodo: str, *args: Any, **kwargs: Any) -> None:
+        """Llama al catálogo sin que pueda tumbar la vuelta.
+
+        ⚠ EL CATÁLOGO ES UN APUNTE, NO UN REQUISITO. Vive en un SQLite del
+        volumen que escriben hasta seis vigías a la vez; un `database is locked`,
+        un volumen sin montar o un disco lleno tienen que costar un apunte
+        perdido y una línea de log, nunca la vuelta —que es lo único que produce
+        muestra—. De ahí el `except Exception` a secas: acá cualquier fallo del
+        apunte es menos grave que propagarlo.
+        """
+        if self.catalogo is None:
+            return
+        try:
+            getattr(self.catalogo, metodo)(*args, **kwargs)
+        except Exception as exc:
+            print(f"[relevo] {_hora()} no se pudo anotar en el catálogo: {exc}", flush=True)
 
     def _agotar(self, nombre: str, tipo: str, exc: BaseException) -> None:
         sugerida = espera_sugerida(exc)
@@ -330,6 +381,14 @@ class Relevo:
             f"[relevo] {_hora()} {nombre} agotado ({tipo}): {cuando} · {str(exc)[:80]}",
             flush=True,
         )
+        # ⚠ SOLO LO PERMANENTE ENTRA EN EL CATÁLOGO, Y ES LA LÍNEA QUE IMPORTA DE
+        # ESTE MÉTODO. Un `minuto` es cuota, un `caido` es carga ajena o el tope
+        # por petición: ninguno dice nada del modelo. El brazo Groq da 413
+        # —`caido`— varias veces al día y es el que más muestra lleva de la
+        # comparación; anotarlo como descartado lo borraría del relevo por ser
+        # el que más trabaja.
+        if tipo == "permanente":
+            self._avisar_catalogo("descartar", nombre, codigo=codigo_http(exc), texto=str(exc))
 
     def _contesto(self, nombre: str, uso: Any = None) -> None:
         # Los tokens de entrada de cada llamada, para saber a qué distancia del
@@ -353,6 +412,11 @@ class Relevo:
             peso += f" · {salida} de salida"
         if self._estado.actual != nombre:
             print(f"[relevo] {_hora()} contesta {nombre}{peso}", flush=True)
+            # En la TRANSICIÓN, no en cada vuelta: son unas pocas escrituras por
+            # proceso en vez de una por llamada, y lo que hace falta saber es que
+            # este modelo contestó una vuelta de verdad —con herramientas y
+            # 7-10k de entrada—, no cuántas.
+            self._avisar_catalogo("funciono", nombre)
         elif peso:
             print(f"[relevo] {_hora()} {nombre}{peso}", flush=True)
         self._estado.actual = nombre

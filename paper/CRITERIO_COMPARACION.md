@@ -216,3 +216,64 @@ guarda para los cierres de 4h— y sus 503 constantes, el primero de la lista ca
 no ha escrito. `groq` en cambio es 67% su `120b`. Así que lo que salga a las 50 es
 el Brier de *la lista* de Gemini tal como el relevo la recorre, no el de su mejor
 modelo, y el informe tiene que decirlo con esa letra.
+
+## 2026-09-18: el catálogo de modelos, y lo que sí toca a la comparación
+
+`agent/catalogo.py` guarda en el volumen la ficha de cada modelo de cada
+proveedor: qué lista su `/v1/models`, qué contestó una vuelta de verdad y qué
+quedó descartado y por qué. Antes eso vivía en memoria y se perdía en cada
+reinicio.
+
+Lo hizo falta un caso concreto. El 2026-09-18 a las 12:00 EDT el brazo openrouter
+recibió de `z-ai/glm-5.2:free` un **404 «No endpoints found that support tool
+use»**: un modelo sin llamada a herramientas, que es lo único que este agente
+hace. No es cuota ni carga: no va a servir nunca. El relevo lo mandó a cuarentena
+permanente —bien— pero esa cuarentena dice literalmente «no vuelve en esta
+sesión», así que el reinicio siguiente lo habría reintentado. Lo quitó una
+persona a mano.
+
+### Qué entra en el catálogo, y qué no
+
+Solo lo estructural: el 404 y el 402 que el relevo ya separa como `permanente`.
+**Un 429 es cuota, un 503 es carga ajena y un 413 es el tamaño de ESTA
+petición**, y ninguno dice nada del modelo. El brazo `groq` da 413 varias veces
+al día contra su tope de 8.000 tokens y es el brazo con más muestra: anotarlo
+como descartado lo habría borrado del relevo por ser el que más trabaja. Hay un
+test por cada uno de esos tres códigos.
+
+Y dentro de lo permanente hay grados, porque la clasificación es asimétrica:
+`sin_herramientas` no se revisa nunca, `sin_acceso` se revisa al mes (puede ser
+un typo o un catálogo que cambió), `hay_que_pagar` espera a que cambie la cuenta.
+Cualquier 404 que no coincida con una frase conocida cae en `sin_acceso`, o sea
+en el lado revisable: **equivocarse hacia «revisable» cuesta una petición al mes;
+equivocarse hacia «nunca» tira un modelo que funcionaba y nadie se enteraría**.
+
+### Lo que esto sí le cambia a la comparación
+
+El filtro se aplica a los seis brazos, `gemini` y `groq` incluidos, y eso hay que
+justificarlo porque el criterio dice que su conducta no se toca a mitad de
+muestra. Se aplica porque **lo único que quita son modelos que no pueden
+contestar**: ninguna predicción que habría existido se pierde. Lo que cambia es
+una sola cosa, y en la dirección que este criterio ya pedía.
+
+`Relevo._disponibles` aplica la reserva de `CRITERIO_HORARIOS.md` —guardar el
+primero de la lista para los cierres de 4h— solo cuando el primero de los VIVOS
+sigue siendo el primero de la LISTA. Con el primero en cuarentena permanente eso
+no se cumple nunca, así que el modelo bueno se gastaba en vueltas de gestión.
+Filtrando la lista antes de construir el relevo, el primero vuelve a ser un
+modelo que existe y la reserva vuelve a funcionar.
+
+⚠ **Y SI EL CATÁLOGO DESCARTA A TODOS, MANDA LA LISTA ORIGINAL.** Una ficha vieja
+—un 404 puntual clasificado como `sin_acceso`— dejaría al brazo sin una sola
+vuelta en el día, que es peor que gastar una llamada comprobándolo. Con la lista
+entera el relevo reintenta, y si de verdad están todos rotos su propio error ya
+dice qué hacer.
+
+### El sufijo `:free`, ahora en código
+
+La lista de cada brazo entra por una variable de entorno de Railway
+(`MODELOS_OPENROUTER`), así que un id al que se le caiga el `:free` al editarla es
+una petición **cobrada** sin que falle nada: el mismo id sin sufijo existe y
+contesta 200. Hasta hoy la regla solo la comprobaba el sondeo del dashboard.
+Ahora el brazo se niega a llamarlo, y si eran todos, se niega a arrancar: un brazo
+muerto se ve en el log y una factura no.

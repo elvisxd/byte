@@ -6,6 +6,7 @@ error, que el modelo que contestó quede en `actual` (es lo que sella cada
 operación), y que NO se cambie de modelo a mitad de una respuesta.
 """
 
+import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -515,3 +516,80 @@ def test_el_log_lleva_entrada_y_salida_para_poder_costear(capsys) -> None:
     assert "6000 tokens de entrada" in linea
     assert "4000 de caché" in linea
     assert "1500 de salida" in linea
+
+
+# ── el apunte en el catálogo ────────────────────────────────────────────────
+# La cuarentena `permanente` dura una sesión y el hecho que la causa dura más:
+# el 2026-09-18 el brazo openrouter descubrió que `z-ai/glm-5.2:free` no tiene
+# llamada a herramientas, y tras el reinicio lo habría vuelto a intentar. Lo que
+# se protege acá es QUÉ llega al catálogo, porque un apunte de más borra un
+# modelo bueno: solo lo permanente, nunca una cuota ni un 413.
+
+
+class _CatalogoFalso:
+    def __init__(self, revienta: bool = False) -> None:
+        self.descartados: list[tuple[str, int | None, str]] = []
+        self.funcionaron: list[str] = []
+        self.revienta = revienta
+
+    def descartar(self, modelo: str, *, codigo: int | None, texto: str) -> None:
+        if self.revienta:
+            raise sqlite3.OperationalError("database is locked")
+        self.descartados.append((modelo, codigo, texto))
+
+    def funciono(self, modelo: str) -> None:
+        if self.revienta:
+            raise sqlite3.OperationalError("database is locked")
+        self.funcionaron.append(modelo)
+
+
+async def test_el_404_se_anota_en_el_catalogo():
+    cat = _CatalogoFalso()
+    glm = _Modelo("glm", _Error(404, "No endpoints found that support tool use"))
+    relevo = Relevo([("glm", glm), ("qwen", _Modelo("qwen"))], espera_s=0, catalogo=cat)
+    [t async for t in relevo.astream("hola")]
+    assert [m for m, _, _ in cat.descartados] == ["glm"]
+    assert cat.descartados[0][1] == 404
+    # Y el que contestó queda anotado como que sirve, en la transición.
+    assert cat.funcionaron == ["qwen"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _Error(429, "Rate limit reached, please try again in 1m0s"),
+        _Error(503, "The model is overloaded due to high demand"),
+        # ⚠ El 413 es el caso peligroso: lo da el brazo Groq varias veces al día
+        # contra su tope de 8.000 tokens por petición, y es el brazo con más
+        # muestra de la comparación. Anotarlo lo borraría por ser el que trabaja.
+        _Error(413, "Request too large for model gpt-oss-120b"),
+    ],
+)
+async def test_la_cuota_y_el_tamano_nunca_entran_al_catalogo(error):
+    cat = _CatalogoFalso()
+    relevo = Relevo(
+        [("primero", _Modelo("primero", error)), ("segundo", _Modelo("segundo"))],
+        espera_s=0,
+        catalogo=cat,
+    )
+    [t async for t in relevo.astream("hola")]
+    assert cat.descartados == []
+
+
+async def test_un_catalogo_roto_no_se_lleva_la_vuelta():
+    """Es un apunte, no un requisito: el volumen puede estar lleno o bloqueado."""
+    cat = _CatalogoFalso(revienta=True)
+    relevo = Relevo(
+        [("glm", _Modelo("glm", _Error(404, "not found"))), ("qwen", _Modelo("qwen"))],
+        espera_s=0,
+        catalogo=cat,
+    )
+    trozos = [t async for t in relevo.astream("hola")]
+    assert trozos == ["qwen:0", "qwen:1"]
+    assert relevo.actual == "qwen"
+
+
+async def test_sin_catalogo_todo_sigue_igual():
+    """El brazo local y cualquier corrida de prueba van sin catálogo."""
+    relevo = Relevo([("uno", _Modelo("uno"))], espera_s=0)
+    assert [t async for t in relevo.astream("hola")] == ["uno:0", "uno:1"]
