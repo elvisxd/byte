@@ -1,0 +1,54 @@
+# El cazador: un cron, no un servidor. Corre una vuelta, avisa y se apaga.
+#
+# Existe para que el servicio de Railway se construya DESDE ESTE REPO. Antes se
+# subía a mano con `railway up`, y el resultado previsible fue que quedó cuatro
+# merges atrás: seguía mandando ofertas de un board que ahora cobra por postular
+# y no tenía el filtro de híbridos. Un servicio que hay que acordarse de
+# actualizar es un servicio desactualizado.
+#
+# La versión de Python tiene que estar dentro del `requires-python` del
+# pyproject: con 3.14 pydantic no se importa.
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+# El digest y `vistas.json` van al volumen. Va en su propio `ENV` y no pegado al
+# de arriba porque un comentario dentro de una continuación de línea no es algo
+# que todas las versiones de Docker acepten, y acá no hay daemon para probarlo.
+# Sin volumen montado esto igual funciona —escribe en el disco efímero— pero
+# cada vuelta arranca sin memoria de lo que ya avisó.
+ENV BYTE_EMPLEO_DIR=/datos/empleo
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+# `empleo.cazador` importa `api.config` por su `load_dotenv()` y `api.logging`,
+# y desde ahí la cadena llega al resto del proyecto. Se copia el mismo conjunto
+# que `Dockerfile.api` menos `web/`, que es de la interfaz y acá no se sirve.
+COPY api/ api/
+COPY agent/ agent/
+COPY tools/ tools/
+COPY models/ models/
+COPY db/ db/
+COPY rag/ rag/
+COPY empleo/ empleo/
+# Del perfil, sólo el criterio público. `privado.md` y `privado.toml` no entran
+# en ninguna imagen: el overlay privado viaja por `BYTE_PERFIL_PRIVADO`, que es
+# una variable del servicio y no un archivo publicado.
+COPY perfil/busqueda.toml perfil/busqueda.toml
+
+RUN useradd --create-home --uid 10001 byte && chown -R byte:byte /app
+USER byte
+
+# Con un volumen montado hace falta además `RAILWAY_RUN_UID=0` en el servicio:
+# Railway monta los volúmenes como root y un proceso sin root no puede escribir
+# ahí. Está en su documentación de volúmenes, sección Permissions.
+CMD ["python", "-m", "empleo.cazador"]

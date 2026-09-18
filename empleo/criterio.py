@@ -12,6 +12,8 @@ silencio es cómo un criterio equivocado se vuelve invisible: no verías las
 ofertas que te estás perdiendo, verías menos ofertas y nada más.
 """
 
+import logging
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -19,6 +21,11 @@ from datetime import datetime
 from pathlib import Path
 
 from empleo.oferta import Oferta
+
+# `logging` de la biblioteca estándar y no `api.logging`: este módulo lo usa
+# también `ofertas-service`, cuya imagen instala tres paquetes y no trae `api/`.
+# Importar de `api` acá rompería ese servicio al arrancar.
+logger = logging.getLogger(__name__)
 
 # Lo que se busca en el texto de la oferta. Cada patrón se probó contra la forma
 # en que estas frases aparecen de verdad, no contra la forma "correcta": nadie
@@ -170,6 +177,23 @@ TRAMOS_FRESCURA: tuple[tuple[str, float], ...] = (
 )
 
 
+def _privado_del_entorno() -> dict:
+    """El overlay privado servido como variable de entorno, en TOML.
+
+    Un TOML mal escrito acá no puede tumbar la corrida: el cazador es un cron y
+    el síntoma sería "hoy no llegó ningún aviso", que desde el teléfono se ve
+    igual que "hoy no había nada". Se avisa al log y se sigue con el público.
+    """
+    crudo = os.environ.get("BYTE_PERFIL_PRIVADO", "").strip()
+    if not crudo:
+        return {}
+    try:
+        return tomllib.loads(crudo)
+    except tomllib.TOMLDecodeError:
+        logger.warning("perfil_privado_invalido")
+        return {}
+
+
 def cargar_criterio(ruta: Path) -> Criterio:
     """Lee el TOML. Si no está, devuelve el criterio por defecto.
 
@@ -184,6 +208,12 @@ def cargar_criterio(ruta: Path) -> Criterio:
     # `busqueda.toml` sería publicarlas. Las secciones se mezclan clave a clave,
     # así que el privado puede pisar un solo valor sin repetir el archivo.
     privado = _leer_toml(ruta.parent / "privado.toml")
+    # Y el mismo overlay, pero desde el entorno. Hace falta para desplegar: si el
+    # servicio se construye desde este repo, `privado.toml` no viaja —está en el
+    # `.gitignore`, que es donde tiene que estar— y sin él lo presencial en el
+    # país al que te mudás vuelve a restar 45 y se hunde, en silencio. Con esto
+    # el dato viaja como variable del servicio y no como archivo publicado.
+    privado = {**privado, **_privado_del_entorno()}
     for seccion, valores in privado.items():
         if isinstance(valores, dict) and isinstance(crudo.get(seccion), dict):
             crudo[seccion] = {**crudo[seccion], **valores}

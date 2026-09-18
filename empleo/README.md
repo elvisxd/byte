@@ -178,6 +178,32 @@ sin competir por red. Y solo en horario de mercado porque fuera de la ventana de
 los vigías la Mac se duerme (`pmset sleep 1`): un cron de madrugada no falla,
 simplemente no pasa nada.
 
+### O en Railway, que es donde corre de verdad
+
+`docker/Dockerfile.cazador` construye la imagen del cron. El servicio se conecta
+a este repo y a la rama `main`, así que **cada merge lo actualiza solo**. Eso no
+es comodidad: mientras se subía a mano con `railway up` quedó cuatro merges
+atrás, mandando ofertas de un board que había empezado a cobrar por postular.
+
+Tres cosas que el servicio necesita además del código:
+
+| variable | para qué |
+|---|---|
+| `PANEL_URL`, `PANEL_TOKEN` | por dónde sale el aviso a Telegram |
+| `BYTE_PERFIL_PRIVADO` | el contenido de `privado.toml`, en TOML, como texto |
+| `RAILWAY_RUN_UID=0` | sólo si hay volumen: Railway los monta como root y el proceso de la imagen no lo es |
+
+`BYTE_PERFIL_PRIVADO` existe por este repo es público. `privado.toml` está en el
+`.gitignore` —ahí dice dónde vas a estar viviendo— así que no viaja en el build;
+sin él, un puesto presencial en el país al que te mudás vuelve a restar 45 y se
+hunde, sin que nada lo diga. Como variable del servicio el dato llega sin
+publicarse. Un TOML mal escrito ahí no tumba la vuelta: se avisa al log
+(`perfil_privado_invalido`) y se sigue con el criterio público.
+
+El volumen va montado en `/datos`, que es donde la imagen deja el digest y
+`vistas.json` (`BYTE_EMPLEO_DIR=/datos/empleo`). Sin volumen el cazador corre
+igual, pero cada vuelta arranca sin memoria de lo que ya avisó.
+
 **Una vuelta a la vez.** El cazador toma un cerrojo (`.turno`, en la carpeta de
 trabajo) antes de empezar. Si el cron dispara mientras la vuelta anterior sigue
 esperando a un feed lento, la nueva **se saltea en silencio y sale con código

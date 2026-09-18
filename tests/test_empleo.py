@@ -1260,3 +1260,29 @@ def test_we_work_remotely_viene_apagado_a_proposito() -> None:
     """
     ruta = Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
     assert cargar_criterio(ruta).fuentes["weworkremotely"] is False
+
+
+def test_el_overlay_privado_puede_venir_por_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hace falta para desplegar el cazador desde este repo: `privado.toml` está
+    en el `.gitignore` y no viaja en el build, así que sin esto el criterio que
+    corre en Railway sería el público y lo presencial en Venezuela volvería a
+    hundirse en silencio."""
+    ruta = Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
+    assert cargar_criterio(ruta).presencial_aceptable_en == ()
+
+    monkeypatch.setenv(
+        "BYTE_PERFIL_PRIVADO", '[situacion]\npresencial_aceptable_en = ["venezuela"]\n'
+    )
+    assert cargar_criterio(ruta).presencial_aceptable_en == ("venezuela",)
+
+
+def test_un_overlay_privado_roto_no_tumba_la_vuelta(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El cazador es un cron: si un TOML mal escrito lo hiciera explotar, el
+    síntoma sería "hoy no llegó ningún aviso", que desde el teléfono se ve igual
+    que "hoy no había nada". Se sigue con el público."""
+    ruta = Path(__file__).resolve().parent.parent / "perfil" / "busqueda.toml"
+    monkeypatch.setenv("BYTE_PERFIL_PRIVADO", "esto no es TOML [[[")
+    criterio = cargar_criterio(ruta)
+    assert criterio.presencial_aceptable_en == ()
+    # Y el resto del criterio llegó entero, que es lo que importa.
+    assert criterio.fuentes["remoteok"] is True
