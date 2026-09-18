@@ -7,7 +7,7 @@ description = "Agente de IA local (self-hosted) que programa, busca en internet 
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.52.4",
+    "uvicorn[standard]>=0.53.0",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "structlog>=24.4",
@@ -19,11 +19,11 @@ dependencies = [
     # es el HTML entero —menús, scripts, banners— y el contenido se pierde.
     "selectolax>=0.3",
     "langgraph>=1.2",
-    "langchain-core>=1.6",
+    "langchain-core>=1.6.3",
     "langchain-ollama>=1.1",
     "langgraph-checkpoint-postgres>=3.1",
     "psycopg[binary,pool]>=3.3.5",
-    "tavily-python>=0.8",
+    "tavily-python>=0.8.3",
     # Parseo de los PDF que se suben al RAG (Fase 2). Python puro: no agrega
     # binarios al contenedor.
     "pypdf>=5.1",
