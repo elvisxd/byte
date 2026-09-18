@@ -150,3 +150,69 @@ en UTC correría la ventana desplazada respecto a la Mac y los brazos dejarían 
 despertarse por los mismos cierres de 4h, que es lo primero que este criterio
 exige mantener igual. El servicio lleva `TZ` fijada a la de la Mac; si alguien
 la cambia, cambia los eventos.
+
+## 2026-09-18: los brazos no emiten igual, y eso obliga a un SEGUNDO corte
+
+Salió de una sospecha del usuario —«Gemini está sobre-tradeando»— y se midió con
+`railway-vigia-service/perfil.py` del repo del dashboard, que cuenta emisión sin
+leer `ocurrio` ni `brier` ni `precio_al_cerrar`: por eso se pudo correr con Gemini
+en 42 resueltas sin romper la regla de no mirar antes de las 50.
+
+Medido sobre 53 predicciones de `gemini` y 18 de `groq`, mismos días:
+
+| | gemini | groq |
+|---|---|---|
+| predicciones · por día | 53 · 13,2 | 18 · 4,5 |
+| por vuelta (máximo) | 1,3 (2) | 1,0 (1) |
+| operaciones abiertas | **2** | **8** |
+| 15m / 1h / 4h | **53% / 36% / 11%** | 39% / 33% / **28%** |
+| confianza dominante | **0,2–0,4 (36%)** | 0,4–0,6 (44%) |
+| discrepa del régimen medido | **45%** | **6%** |
+
+⚠ **NO ES QUE UNO SEA PEOR: ES QUE NO ESTÁN HACIENDO LA MISMA AFIRMACIÓN, Y EL
+BRIER NO LO SABE.** El patrón dominante de Gemini es «15 minutos + probabilidad
+baja», o sea *no va a tocar ese nivel en un cuarto de hora*, que es casi siempre
+verdad por física del precio. Diecinueve predicciones así resuelven bien y dejan
+un Brier excelente sin haber demostrado nada. Groq emite menos, más repartido
+hacia 4h y con la confianza en el centro: menos afirmaciones, más comprometidas.
+Comparar los dos Briers al llegar cada uno a 50 resueltas compararía a un
+scalper con un analista y llamaría ganador al que eligió las preguntas fáciles.
+
+⚠ **Y LA DIRECCIÓN DEL «SOBRE-TRADEO» SE INVIERTE SEGÚN QUÉ SE CUENTE.** Gemini
+emite 3× más predicciones; Groq abre 4× más operaciones (8 contra 2). Quien
+pronostica de más y quien opera de más son brazos distintos. La palabra sola no
+dice nada; el número sí.
+
+### Lo que esto obliga
+
+La comparación de las 50 se hace igual sobre el total —es lo que este criterio
+congeló y no se cambia a posteriori— pero **se reporta también sobre un
+subconjunto filtrado**, y las dos cifras se ponen una al lado de la otra:
+
+- **fuera las de 15m**, que son otra cosa: quedan 25 de las 53 de Gemini.
+- **solo donde `regimen_medido` y `regimen_dicho` coinciden**: 29 de 53. El
+  esquema los guarda separados justamente «porque la pregunta interesante es si
+  acierta más cuando coinciden».
+
+Si el total y el filtrado dicen lo mismo, la conclusión es robusta. **Si
+discrepan, esa discrepancia ES el resultado**: significa que el brazo que gana lo
+hace por el tipo de pregunta que elige y no por acertar mejor, y eso decide
+distinto que un Brier a secas.
+
+### Dos avisos sobre estos números
+
+⚠ **EL RITMO ABSOLUTO ESTÁ INFLADO Y LA CULPA ES DEL OPERADOR, NO DEL MODELO.**
+El 2026-09-17 y el 18 el servicio se reinició muchas veces (brazos nuevos, sondeos
+de proveedores, cambios de imagen). Cada arranque dispara una «vuelta de lectura»
+que **no cuenta para el tope de 8 diarias**, así que 13,2 por día es imposible sin
+esos extras: 8 vueltas × 1,3 por vuelta ≈ 10. **La proporción entre brazos sí
+aguanta**, porque los reinicios les pegaron a los cuatro por igual. Quien repita
+esta medición en una semana limpia obtendrá el ritmo de verdad.
+
+⚠ **Y EL BRAZO `gemini` NO ESTÁ MIDIENDO A GEMINI-3.8.** Quién firmó sus 53
+predicciones: `3-flash-preview` 40%, `3.5-flash` 38%, `3.5-flash-lite` 13%,
+`3.7-flash` 8%, y **`3.8-flash` UNA (2%)**. Entre `reservar_primero` —que lo
+guarda para los cierres de 4h— y sus 503 constantes, el primero de la lista casi
+no ha escrito. `groq` en cambio es 67% su `120b`. Así que lo que salga a las 50 es
+el Brier de *la lista* de Gemini tal como el relevo la recorre, no el de su mejor
+modelo, y el informe tiene que decirlo con esa letra.
