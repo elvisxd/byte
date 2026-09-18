@@ -40,6 +40,7 @@ const boton = document.getElementById("boton-analizar");
 const error = document.getElementById("error");
 const resumen = document.getElementById("resumen");
 const resultados = document.getElementById("resultados");
+const guia = document.getElementById("guia");
 
 const SITIOS = { upwork: "Upwork", linkedin: "LinkedIn", generico: "sitio no reconocido" };
 
@@ -71,8 +72,42 @@ function datosDe(oferta) {
   return partes.join(" · ");
 }
 
+function lista(clase, titulo, entradas) {
+  // Una <ol> y no un párrafo: son pasos, y se leen en orden.
+  const seccion = crear("section", clase);
+  seccion.appendChild(texto(crear("h3"), titulo));
+  const ol = crear("ol");
+  for (const entrada of entradas) ol.appendChild(texto(crear("li"), entrada));
+  seccion.appendChild(ol);
+  return seccion;
+}
+
+function pintarGuia(datos) {
+  // Lo que se hace en Upwork no es lo que se hace en LinkedIn: en uno postular
+  // cuesta Connects y en el otro es gratis. Por eso la lista sale del sitio que
+  // el servidor detectó, y no hay una lista sola para los dos.
+  guia.replaceChildren();
+  if (!datos) {
+    guia.hidden = true;
+    return;
+  }
+  guia.hidden = false;
+  guia.appendChild(texto(crear("h2"), `Si es ${datos.nombre}`));
+  guia.appendChild(texto(crear("p", "limite"), datos.limite));
+  if (datos.medidas.length) {
+    guia.appendChild(lista("medidas", "Lo que pegaste, en números", datos.medidas));
+  }
+  if (datos.filtros.length) {
+    guia.appendChild(lista("filtros", "Filtros a poner en el sitio", datos.filtros));
+  }
+  if (datos.pasos.length) {
+    guia.appendChild(lista("pasos", "Cómo aplicar acá", datos.pasos));
+  }
+}
+
 function pintar(datos) {
   resultados.replaceChildren();
+  pintarGuia(datos.guia);
   resumen.hidden = false;
   resumen.classList.toggle("parcial", datos.poca_informacion);
 

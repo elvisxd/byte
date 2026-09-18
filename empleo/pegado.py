@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from empleo.criterio import Criterio, patron_de
 from empleo.oferta import Oferta
+from empleo.sitios import guia_de
 from empleo.upwork import (
     CONNECTS_POR_DEFECTO,
     OfertaUpwork,
@@ -357,4 +358,8 @@ def a_json(analisis: Analisis) -> dict:
         "connects_gastados": analisis.connects_gastados,
         "connects_disponibles": analisis.connects_disponibles,
         "ofertas": [fila(v, id(v) in ids) for v in analisis.veredictos],
+        # El manual del sitio va en la respuesta y no en el HTML porque
+        # depende de qué se pegó: la página no sabe de qué sitio es hasta que
+        # el servidor lo detecta.
+        "guia": guia_de(analisis.sitio, analisis.veredictos),
     }
