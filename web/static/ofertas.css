@@ -159,3 +159,77 @@
 .guia .pasos ol {
   color: var(--texto-tenue, #8a8f98);
 }
+
+/* Las alertas guardadas. Van arriba de todo cuando la página se abre: crear una
+   se hace una vez y trabaja todos los días, así que vale más que lo de abajo. */
+.alertas {
+  margin: 1.25rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--borde, #2c313a);
+  border-radius: 8px;
+}
+
+.alertas h2 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.alertas .limite {
+  margin: 0 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.alerta + .alerta {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde, #2c313a);
+}
+
+.alerta h3 {
+  font-size: 0.85rem;
+  margin: 0 0 0.4rem;
+  color: var(--texto-tenue, #8a8f98);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* La consulta y el botón en la misma fila, y la consulta con scroll propio:
+   una booleana de seis términos no entra en la pantalla de un teléfono y
+   partirla en varias líneas hace perder de vista dónde termina. */
+.alerta-consulta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.alerta-consulta code {
+  flex: 1;
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 0.8rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: var(--fondo-hundido, #1b1f27);
+}
+
+.copiar {
+  flex: none;
+  font-size: 0.75rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--borde, #2c313a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.copiar:hover {
+  border-color: var(--texto-tenue, #8a8f98);
+}
+
+.alerta .donde,
+.alerta .nota {
+  margin: 0.45rem 0 0;
+  font-size: 0.85rem;
+  color: var(--texto-tenue, #8a8f98);
+}

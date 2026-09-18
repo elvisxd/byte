@@ -31,6 +31,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from empleo.alertas import a_json as alertas_json
 from empleo.criterio import cargar_criterio
 from empleo.pegado import a_json, analizar
 
@@ -85,6 +86,22 @@ def crear_app(clave: str | None = None) -> FastAPI:
         # el disco. Este servicio tiene un proceso, así que bloquear el bucle
         # deja esperando a cualquier otro pedido.
         return await asyncio.to_thread(_trabajo, cuerpo.texto[:MAX_CARACTERES], cuerpo.connects)
+
+    @router.get("/ofertas/alertas")
+    async def alertas(authorization: str = Header(default="")) -> dict:
+        """Qué pegar en cada plataforma para crear una alerta guardada.
+
+        La misma ruta que sirve la API grande, para que `ofertas.js` siga siendo
+        un solo archivo. Va aparte del pegado porque no depende de lo pegado: se
+        muestra al abrir la página, que es cuando sirve.
+        """
+        prefijo = "Bearer "
+        recibida = authorization[len(prefijo) :] if authorization.startswith(prefijo) else ""
+        if not _autorizado(recibida, clave):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=401, detail="no autorizado")
+        return {"alertas": await asyncio.to_thread(lambda: alertas_json(cargar_criterio(CRITERIO)))}
 
     app.include_router(router, prefix="/api/v1")
 
