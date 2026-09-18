@@ -110,3 +110,52 @@
   font-size: 0.85rem;
   margin-top: 0.3rem;
 }
+
+/* La guía del sitio. Va arriba de los resultados porque es lo que se lee una
+   vez y se aplica a toda la tanda; la lista de ofertas se lee salteada. */
+.guia {
+  margin: 1.25rem 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--borde, #2c313a);
+  border-radius: 8px;
+}
+
+.guia h2 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.guia h3 {
+  font-size: 0.85rem;
+  margin: 0.9rem 0 0.35rem;
+  color: var(--texto-tenue, #8a8f98);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guia .limite {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.guia ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.guia li + li {
+  margin-top: 0.35rem;
+}
+
+/* Las medidas salen de contar lo que pegaste, no de una lista escrita: se
+   distinguen para que no se lean como un consejo genérico más. */
+.guia .medidas ol {
+  color: var(--texto, inherit);
+}
+
+.guia .filtros ol,
+.guia .pasos ol {
+  color: var(--texto-tenue, #8a8f98);
+}
