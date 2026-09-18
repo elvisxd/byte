@@ -130,6 +130,15 @@ class Settings(BaseSettings):
     # llevan el sufijo `:free`, y ese sufijo es lo que decide si la petición cuesta.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_num_predict: int = Field(default=8192, alias="BYTE_OPENROUTER_NUM_PREDICT")
+    # Cuánto se espera a un brazo EXPLORATORIO. Los de la comparación (gemini,
+    # groq) siguen con los 120 s de `TIMEOUT_REMOTO_S` y no se tocan: su muestra
+    # está a medio hacer.
+    # ⚠ 600 s NO ES GENEROSIDAD, ES LO QUE MIDE LA COLA DE NIM. El 2026-09-17/18
+    # el mismo modelo de NVIDIA contestó en ~60 s un día y agotó 120 s al
+    # siguiente: su capa gratuita encola sobre GPU compartida con menos prioridad
+    # que quien paga, así que el tiempo es espera de turno y depende de terceros.
+    # Con 120 s se descarta un modelo sin haberlo probado.
+    timeout_exploratorio_s: float = Field(default=600.0, alias="BYTE_TIMEOUT_EXPLORATORIO_S")
     # ⚠ 60 SEGUNDOS, NO 45 NI 12. Medido el 2026-09-15: la capa gratuita de
     # Groq tiene 8.000 tokens POR MINUTO (gpt-oss) y cada llamada nuestra pesa
     # 4-8K —el mapa y el historial de la vuelta—: cuatro llamadas en 40 s y
