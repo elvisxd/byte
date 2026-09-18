@@ -90,3 +90,35 @@ def test_las_alertas_se_sirven_por_la_misma_ruta(cliente: TestClient) -> None:
 def test_las_alertas_tambien_piden_clave(cliente: TestClient) -> None:
     """Es una URL pública: todo lo que sirva el criterio va detrás de la clave."""
     assert cliente.get("/api/v1/ofertas/alertas").status_code == 401
+
+
+def test_los_estaticos_llevan_version(cliente: TestClient) -> None:
+    """Sin esto el navegador se queda con el `ofertas.js` de ayer y un despliegue
+    nuevo no se ve. Pasó de verdad: la sección de alertas estaba desplegada y en
+    pantalla no aparecía, que es el síntoma más caro de diagnosticar porque es
+    idéntico a "el código está mal"."""
+    html = cliente.get("/").text
+    assert "/static/ofertas.js?v=" in html
+    assert "/static/ofertas.css?v=" in html
+
+
+def test_la_version_cambia_cuando_cambia_el_archivo(tmp_path) -> None:
+    """Sale del mtime del estático y no de la fecha del despliegue: así el caché
+    se rompe cuando el archivo cambió, y no en cada despliegue porque sí."""
+    import os
+
+    from empleo.paginas import pagina_con_version
+
+    estaticos = tmp_path / "static"
+    estaticos.mkdir()
+    (estaticos / "x.js").write_text("hola", encoding="utf-8")
+    plantillas = tmp_path / "templates"
+    plantillas.mkdir()
+    pagina = plantillas / "p.html"
+    pagina.write_text('<script src="/static/x.js"></script>', encoding="utf-8")
+
+    os.utime(estaticos / "x.js", (1000, 1000))
+    antes = pagina_con_version(pagina)
+    os.utime(estaticos / "x.js", (2000, 2000))
+    assert pagina_con_version(pagina) != antes
+    assert "?v=1000" in antes and "?v=2000" in pagina_con_version(pagina)

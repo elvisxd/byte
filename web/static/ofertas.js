@@ -127,8 +127,24 @@ async function cargarAlertas() {
   } catch {
     return; // Sin red no se muestra la sección; no es un error que valga interrumpir.
   }
-  // Un 401 acá no pide la clave: la página recién se abrió y preguntar antes de
-  // que hagas nada es molesto. La pide el primer análisis, y ahí se reintenta.
+  // Un 401 acá no interrumpe con un prompt: la página recién se abrió y
+  // preguntar la clave antes de que hagas nada es molesto. Pero tampoco puede
+  // desaparecer en silencio — así es como esta sección quedó invisible en el
+  // primer despliegue: sin clave en sessionStorage, el fetch daba 401 y la
+  // sección no se dibujaba nunca, que es justo cuando hace falta. Se ofrece un
+  // botón: un clic en vez de una pregunta.
+  if (respuesta.status === 401) {
+    alertas.replaceChildren();
+    alertas.hidden = false;
+    alertas.appendChild(texto(crear("h2"), "Alertas guardadas"));
+    const boton = crear("button", "copiar", "Ver qué pegar en cada plataforma");
+    boton.type = "button";
+    boton.addEventListener("click", () => {
+      if (pedirClave()) cargarAlertas();
+    });
+    alertas.appendChild(boton);
+    return;
+  }
   if (!respuesta.ok) return;
   const datos = await respuesta.json();
   if (!datos.alertas || !datos.alertas.length) return;
@@ -279,6 +295,9 @@ form.addEventListener("submit", async (evento) => {
       return;
     }
     pintar(await respuesta.json());
+    // Ya hay clave: si la sección de alertas se había quedado con el botón, ahora
+    // se llena sola. No hace falta que la pidas dos veces.
+    if (alertas.querySelector("button")) cargarAlertas();
   } catch {
     error.textContent = "No se pudo hablar con Byte. ¿Está corriendo?";
   } finally {
