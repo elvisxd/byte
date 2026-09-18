@@ -207,6 +207,24 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # hasta que lo pararon. Dos minutos sobra para una respuesta (las reales tardan
 # segundos); pasado eso el relevo lo trata como caída y pasa al siguiente.
 TIMEOUT_REMOTO_S = 120.0
+# ⚠ LOS BRAZOS EXPLORATORIOS ESPERAN MUCHO MÁS, Y EL TOPE ESTÁ PARTIDO A PROPÓSITO.
+# Los 120 s de arriba los comparten gemini y groq, que son los brazos DE LA
+# COMPARACIÓN: su muestra está a medio hacer y su conducta no se toca.
+#
+# Los exploratorios tienen el problema contrario. Medido el 2026-09-17/18 contra
+# NVIDIA NIM: el mismo modelo contestó 200 en ~60 s un día y agotó 120 s al
+# siguiente. No es que piense lento —`/v1/models` contesta en menos de un
+# segundo—: la capa gratuita de NIM ENCOLA las peticiones sobre GPU compartida y
+# da menos prioridad que a quien paga, así que el tiempo es espera de turno y
+# varía con la carga de terceros. Con 120 s ese modelo se declara muerto sin
+# haberlo probado de verdad.
+#
+# Y esperar diez minutos no rompe nada: cada brazo es su PROPIO proceso con un
+# bucle secuencial, así que una vuelta lenta solo retrasa la siguiente de ese
+# brazo. No se solapa consigo mismo ni con los demás. Lo que cuesta es que el
+# brazo hace menos vueltas al día y puede perderse el cierre de 4h — un precio
+# que un brazo exploratorio sí puede pagar y uno de la comparación no.
+TIMEOUT_EXPLORATORIO_S = 600.0
 
 
 def _con_razonamiento_de_groq(base: Any) -> Any:
@@ -294,7 +312,7 @@ def _cerebras(settings: Settings, nombre: str) -> Any:
         temperature=0.2,
         max_tokens=settings.cerebras_num_predict,
         max_retries=1,
-        timeout=TIMEOUT_REMOTO_S,
+        timeout=settings.timeout_exploratorio_s,
     )
 
 
@@ -332,7 +350,7 @@ def _nvidia(settings: Settings, nombre: str) -> Any:
         temperature=0.2,
         max_tokens=settings.nvidia_num_predict,
         max_retries=1,
-        timeout=TIMEOUT_REMOTO_S,
+        timeout=settings.timeout_exploratorio_s,
     )
 
 
@@ -355,7 +373,7 @@ def _mistral(settings: Settings, nombre: str) -> Any:
         temperature=0.2,
         max_tokens=settings.mistral_num_predict,
         max_retries=1,
-        timeout=TIMEOUT_REMOTO_S,
+        timeout=settings.timeout_exploratorio_s,
     )
 
 
@@ -383,7 +401,7 @@ def _openrouter(settings: Settings, nombre: str) -> Any:
         temperature=0.2,
         max_tokens=settings.openrouter_num_predict,
         max_retries=1,
-        timeout=TIMEOUT_REMOTO_S,
+        timeout=settings.timeout_exploratorio_s,
     )
 
 

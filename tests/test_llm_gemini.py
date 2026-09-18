@@ -185,7 +185,9 @@ def test_un_cerebras_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) 
     assert ultimo["max_tokens"] == 8192
     # Un solo intento: ante un 429 el relevo turna los modelos del brazo.
     assert ultimo["max_retries"] == 1
-    assert ultimo["timeout"] == 120.0
+    # Exploratorio: espera lo que diga `timeout_exploratorio_s`, no los 120 s de
+    # los brazos de la comparación. Ver TIMEOUT_EXPLORATORIO_S en agent/llm.py.
+    assert ultimo["timeout"] == 600.0
     assert OllamaEspia.ultimo == {}
 
 
@@ -235,7 +237,7 @@ def test_un_nvidia_va_por_el_protocolo_de_openai_y_conserva_la_barra_interna(
     assert ultimo["model"] == "deepseek-ai/deepseek-v4-flash-0731"
     assert ultimo["max_tokens"] == 8192
     assert ultimo["max_retries"] == 1
-    assert ultimo["timeout"] == 120.0
+    assert ultimo["timeout"] == 600.0
     assert OllamaEspia.ultimo == {}
 
 
@@ -278,6 +280,36 @@ def test_un_nvidia_cuenta_como_brazo_remoto() -> None:
 
     assert es_remoto("nvidia/deepseek-ai/deepseek-v4-flash-0731") is True
     assert es_remoto("qwen3:14b") is False
+
+
+def test_los_brazos_de_la_comparacion_NO_heredan_la_paciencia_de_los_exploratorios(
+    espias: None,
+) -> None:
+    """⚠ EL TEST QUE PROTEGE LA MUESTRA A MEDIO HACER.
+
+    `timeout_exploratorio_s` existe porque la capa gratuita de NIM encola sobre
+    GPU compartida y un modelo puede tardar minutos por causas de terceros. Pero
+    gemini y groq son los brazos DE LA COMPARACIÓN: su muestra lleva semanas y su
+    conducta no se toca. Si el tope se hubiera subido en la constante compartida
+    —`TIMEOUT_REMOTO_S`, que usaban los SEIS proveedores— se habría cambiado en
+    silencio cuánto aguanta el brazo que sí cuenta para las 50.
+    """
+    ajustes = Settings(
+        GEMINI_API_KEY="k",
+        GROQ_API_KEY="k",
+        NVIDIA_NIM_API_KEY="k",
+        BYTE_TIMEOUT_EXPLORATORIO_S=900.0,
+    )
+
+    build_llm(ajustes, "gemini-3.8-flash")
+    assert GeminiEspia.ultimo["timeout"] == 120.0
+
+    build_llm(ajustes, "groq/openai/gpt-oss-120b")
+    assert OpenAIEspia.ultimo["timeout"] == 120.0
+
+    # Y el exploratorio sí obedece a la variable, para poder medir la cola.
+    build_llm(ajustes, "nvidia/deepseek-ai/deepseek-v4-flash-0731")
+    assert OpenAIEspia.ultimo["timeout"] == 900.0
 
 
 def test_un_mistral_va_por_el_protocolo_de_openai_sin_el_prefijo(espias: None) -> None:
