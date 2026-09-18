@@ -56,7 +56,7 @@ contestar— es lo que está automatizado acá.
 |---|---|---|
 | RemoteOK | API JSON pública | volumen, etiquetas de stack |
 | Remotive | API JSON pública | `candidate_required_location`: dice "Worldwide" o "USA Only" como campo, no como frase perdida en el texto |
-| We Work Remotely | RSS oficial por categoría | puestos senior, menos ruido |
+| ~~We Work Remotely~~ | RSS oficial por categoría | **apagada**: postular ahí es una función paga, ver abajo |
 | Hacker News | API de Algolia sobre "Ask HN: Who is hiring?" | donde de verdad aparecen "visa sponsorship" y "anywhere in the world" |
 | Upwork | API GraphQL oficial, **solo con key aprobada** | freelance |
 | Empresas | el JSON público de su propia página de Careers (Greenhouse, Lever, Ashby) | las grandes, que muchas veces nunca publican en un agregador |
@@ -65,6 +65,26 @@ contestar— es lo que está automatizado acá.
 Ninguna se raspa: las cuatro primeras publican API o RSS. Indeed y LinkedIn no
 están porque no tienen feed público y prohíben el raspado — entrar ahí sería
 cambiar una cuenta por unos links.
+
+### We Work Remotely, apagada desde septiembre de 2026
+
+Postular en WWR pasó a ser una función paga. No es un muro sobre algunas
+ofertas: en su propia pantalla de suscripción, *"Apply to unlimited remote jobs
+on WWR"* figura como beneficio **incluido** en el plan. Abrir una oferta del
+feed lleva a `/job-seekers/onboarding/step_3?context=paywall`, paso 3 de 3.
+
+Un link al que no podés aplicar sin suscribirte no es una oferta: es publicidad.
+El cazador manda cinco avisos por día y la atención que gastan es real, así que
+la fuente se apaga entera en vez de mandarlos igual.
+
+Queda un rodeo que sí sirve: el feed te da **empresa y puesto**. Con eso buscás
+la oferta en la página de Careers de la empresa y aplicás ahí — que además suele
+ser la fila más corta, porque se la saltan los que aplican en masa desde el
+board.
+
+Si revierten el cobro se prende con una línea en `perfil/busqueda.toml`; hay un
+test que la fija apagada y que hay que borrar en ese mismo commit, para que la
+razón quede escrita y no se pierda.
 
 Upwork está apagada por defecto y sin `UPWORK_TOKEN` **no se manda ni un
 pedido** (hay un test que lo verifica). La key se pide en el Developer Space de
