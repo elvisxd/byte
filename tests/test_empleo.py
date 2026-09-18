@@ -1349,3 +1349,59 @@ def test_el_silencio_se_mide_contra_lo_anotado(tmp_path: Path) -> None:
     cazador._anotar_aviso(tmp_path)
     horas = cazador._horas_de_silencio(tmp_path)
     assert horas is not None and horas < 0.1
+
+
+# --- Reubicación: las formas reales de decirlo, y de negarlo ---
+
+
+def _con_texto(texto: str) -> Oferta:
+    return Oferta(
+        fuente="prueba",
+        id_externo="1",
+        titulo="Senior Engineer",
+        empresa="Acme",
+        url="https://ejemplo/1",
+        descripcion=texto,
+    )
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "We offer relocation to our Berlin office",
+        "Relocation package included",
+        "Relocation assistance available",
+        "Visa sponsorship and relocation provided",
+        "Relocation support for international candidates",
+        "This role includes relocation",
+        "We sponsor visas and pay for relocation",
+        "Full relocation to Spain, we handle the paperwork",
+    ],
+)
+def test_las_formas_reales_de_ofrecer_reubicacion(texto: str) -> None:
+    """El patrón viejo pedía casi la frase exacta: de doce frases sacadas de
+    ofertas, seis no se detectaban. "We offer relocation" era una de ellas."""
+    assert "reubicacion" in detectar_senales(_con_texto(texto))
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "No relocation assistance is provided",
+        "Relocation is not offered for this role",
+        "We do not cover relocation",
+        "This is a remote role. Relocation not available.",
+    ],
+)
+def test_nombrar_la_reubicacion_para_negarla_no_suma(texto: str) -> None:
+    """Peor que no detectarla: "no relocation assistance is provided" tiene todas
+    las palabras de una buena noticia y dice exactamente lo contrario. Sin esto,
+    una oferta que te avisa que te mudás por tu cuenta sumaba 20 puntos."""
+    assert "reubicacion" not in detectar_senales(_con_texto(texto))
+
+
+def test_venezuela_ya_cuenta_como_latam() -> None:
+    """Un puesto en Venezuela suma por `latam` sin que haya que configurar nada.
+    Lo que sí hace falta configurar es que uno PRESENCIAL allá deje de hundirse,
+    y eso vive en el overlay privado porque dice dónde vas a estar viviendo."""
+    assert "latam" in detectar_senales(_con_texto("Remote role, team across Venezuela"))

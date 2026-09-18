@@ -47,8 +47,13 @@ leve = [
 latam = 30
 # Remoto en cualquier parte del mundo.
 remoto_global = 20
-# Reubicación: la pagan o al menos la mencionan.
-reubicacion = 15
+# Reubicación: la pagan, o al menos se comprometen. Pesa igual que el remoto
+# global porque son dos caminos igual de válidos para el mismo objetivo —
+# trabajar desde donde estés—, no uno bueno y uno de consuelo.
+#
+# Nombrarla para negarla NO suma: "no relocation assistance is provided"
+# tiene todas las palabras de una buena noticia y dice lo contrario.
+reubicacion = 20
 # Contratación como contractor / EOR (Deel, Remote.com): el camino por el que
 # una empresa de afuera contrata sin abrir entidad legal.
 contractor = 12
