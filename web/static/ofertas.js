@@ -41,6 +41,7 @@ const error = document.getElementById("error");
 const resumen = document.getElementById("resumen");
 const resultados = document.getElementById("resultados");
 const guia = document.getElementById("guia");
+const alertas = document.getElementById("alertas");
 
 const SITIOS = { upwork: "Upwork", linkedin: "LinkedIn", generico: "sitio no reconocido" };
 
@@ -70,6 +71,79 @@ function datosDe(oferta) {
   if (oferta.verificado === false) partes.push("pago SIN verificar");
   if (oferta.senales.length) partes.push(oferta.senales.join(", "));
   return partes.join(" · ");
+}
+
+// --- Alertas guardadas ---
+//
+// Pegar resultados es para hoy; una alerta guardada trabaja sola todos los días.
+// Para LinkedIn y Upwork, que no se pueden leer por API, es la única forma de
+// enterarse temprano — y temprano es casi todo: en Upwork las primeras
+// propuestas se leen y las que llegan con veinte encima, no.
+//
+// Cada plataforma entiende una sintaxis distinta, así que el servidor manda una
+// cadena por plataforma y acá no se arma ninguna.
+function bloqueDeAlerta(alerta) {
+  const caja = crear("article", "alerta");
+  caja.appendChild(texto(crear("h3"), alerta.plataforma));
+
+  const fila = crear("div", "alerta-consulta");
+  const consulta = texto(crear("code"), alerta.consulta);
+  const boton = crear("button", "copiar", "Copiar");
+  boton.type = "button";
+  boton.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(alerta.consulta);
+      boton.textContent = "Copiado";
+    } catch {
+      // Sin permiso de portapapeles —pasa en http:// y en algunos navegadores—
+      // se selecciona el texto para que copiarlo sea un Ctrl-C.
+      const rango = document.createRange();
+      rango.selectNodeContents(consulta);
+      const seleccion = window.getSelection();
+      seleccion.removeAllRanges();
+      seleccion.addRange(rango);
+      boton.textContent = "Copiá con Ctrl-C";
+    }
+    setTimeout(() => (boton.textContent = "Copiar"), 2500);
+  });
+  fila.appendChild(consulta);
+  fila.appendChild(boton);
+  caja.appendChild(fila);
+
+  caja.appendChild(texto(crear("p", "donde"), alerta.donde));
+  caja.appendChild(texto(crear("p", "nota"), alerta.nota));
+  return caja;
+}
+
+async function cargarAlertas() {
+  const cabeceras = {};
+  if (clave()) cabeceras.Authorization = `Bearer ${clave()}`;
+  let respuesta;
+  try {
+    respuesta = await fetch(`${API}/ofertas/alertas`, {
+      credentials: "same-origin",
+      headers: cabeceras,
+    });
+  } catch {
+    return; // Sin red no se muestra la sección; no es un error que valga interrumpir.
+  }
+  // Un 401 acá no pide la clave: la página recién se abrió y preguntar antes de
+  // que hagas nada es molesto. La pide el primer análisis, y ahí se reintenta.
+  if (!respuesta.ok) return;
+  const datos = await respuesta.json();
+  if (!datos.alertas || !datos.alertas.length) return;
+  alertas.replaceChildren();
+  alertas.hidden = false;
+  alertas.appendChild(texto(crear("h2"), "Alertas guardadas: que te avisen ellos"));
+  alertas.appendChild(
+    texto(
+      crear("p", "limite"),
+      "Esto se hace una vez por plataforma. Los términos salen del mismo " +
+      "criterio que puntúa las ofertas, así que las alertas no te van a traer " +
+      "cosas que después el puntaje hunda."
+    )
+  );
+  for (const alerta of datos.alertas) alertas.appendChild(bloqueDeAlerta(alerta));
 }
 
 function lista(clase, titulo, entradas) {
@@ -212,3 +286,5 @@ form.addEventListener("submit", async (evento) => {
     boton.textContent = "Analizar";
   }
 });
+
+cargarAlertas();

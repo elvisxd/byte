@@ -16,6 +16,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from api.deps import Context, CredentialId
+from empleo.alertas import a_json as alertas_json
 from empleo.criterio import cargar_criterio
 from empleo.pegado import a_json, analizar
 
@@ -37,13 +38,17 @@ class PegadoIn(BaseModel):
     )
 
 
-def _trabajo(texto: str, criterio_configurado: str, connects: int) -> dict:
-    """Leer el TOML y parsear. Va en un hilo: ver el endpoint."""
-    ruta = (
+def _ruta_criterio(criterio_configurado: str) -> Path:
+    return (
         Path(criterio_configurado).expanduser()
         if criterio_configurado
         else Path(__file__).resolve().parent.parent.parent / "perfil" / "busqueda.toml"
     )
+
+
+def _trabajo(texto: str, criterio_configurado: str, connects: int) -> dict:
+    """Leer el TOML y parsear. Va en un hilo: ver el endpoint."""
+    ruta = _ruta_criterio(criterio_configurado)
     return a_json(analizar(texto, cargar_criterio(ruta), connects))
 
 
@@ -62,3 +67,15 @@ async def pegado(cuerpo: PegadoIn, ctx: Context, _credential: CredentialId) -> d
         ctx.settings.empleo_criterio,
         cuerpo.connects,
     )
+
+
+@router.get("/ofertas/alertas")
+async def alertas(ctx: Context, _credential: CredentialId) -> dict:
+    """Las cadenas para crear alertas guardadas en cada plataforma.
+
+    Es un GET aparte y no parte de la respuesta de `/pegado` porque no depende de
+    lo pegado: la página las muestra al abrirse, que es cuando sirven. Crear la
+    alerta se hace una vez; pegar resultados, todos los días.
+    """
+    ruta = _ruta_criterio(ctx.settings.empleo_criterio)
+    return {"alertas": await asyncio.to_thread(lambda: alertas_json(cargar_criterio(ruta)))}
