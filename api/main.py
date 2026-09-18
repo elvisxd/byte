@@ -44,6 +44,7 @@ from api.routes import (
 )
 from api.security import Credentials, TokenService, resolve_secret_key, security_headers
 from db.repository import Repository, build_repository
+from empleo.paginas import pagina_con_version
 from models.schemas import ErrorEnvelope
 from tools.base import ToolRegistry
 from tools.registry import build_registry
@@ -572,7 +573,7 @@ def create_app(
         page = WEB_DIR / "templates" / "ofertas.html"
         if not page.is_file():
             return HTMLResponse("<h1>Byte</h1><p>Falta web/templates/ofertas.html</p>")
-        return HTMLResponse(page.read_text(encoding="utf-8"))
+        return HTMLResponse(pagina_con_version(page))
 
     @app.get("/", include_in_schema=False)
     async def index() -> HTMLResponse:

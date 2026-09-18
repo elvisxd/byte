@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from empleo.alertas import a_json as alertas_json
 from empleo.criterio import cargar_criterio
+from empleo.paginas import pagina_con_version
 from empleo.pegado import a_json, analizar
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -119,6 +120,6 @@ def crear_app(clave: str | None = None) -> FastAPI:
         archivo = WEB / "templates" / "ofertas.html"
         if not archivo.is_file():
             return HTMLResponse("<h1>Byte</h1><p>Falta web/templates/ofertas.html</p>")
-        return HTMLResponse(archivo.read_text(encoding="utf-8"))
+        return HTMLResponse(pagina_con_version(archivo))
 
     return app
