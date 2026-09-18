@@ -38,6 +38,16 @@ NIEGA_OFICINA = re.compile(
     r"|fully remote|100% remote|remote[ -]first|totalmente remoto|remoto total)\b"
 )
 
+# Frases que dicen que NO hay reubicación. Mismo problema que la oficina, y peor
+# consecuencia: "no relocation assistance is provided" contiene todas las
+# palabras de una buena noticia y significa exactamente lo contrario. Sin esto,
+# una oferta que te avisa que te mudás por tu cuenta sumaba como si te pagaran
+# el pasaje.
+NIEGA_REUBICACION = re.compile(
+    r"\b(no|not|without|sin|nunca)\b[^.!?]{0,30}\brelocat\w*"
+    r"|\brelocat\w*[^.!?]{0,30}\b(not|no longer|unavailable|isn't|is not)\b"
+)
+
 SENALES: dict[str, re.Pattern[str]] = {
     "latam": re.compile(
         r"\b(lat(?:in)?[ -]?am(?:erica)?n?|south america|central america|the americas"
@@ -48,9 +58,16 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"\b(anywhere in the world|work from anywhere|worldwide|globally distributed"
         r"|fully distributed|any time ?zone|100% remote, anywhere)\b"
     ),
+    # Reubicación. El patrón viejo pedía casi la frase exacta y se perdía la
+    # mitad de las formas reales de decirlo: "we offer relocation", "includes
+    # relocation", "we sponsor visas and pay for relocation". Medido sobre doce
+    # frases sacadas de ofertas, seis no se detectaban.
     "reubicacion": re.compile(
-        r"\b(relocation (package|assistance|support|bonus|provided|offered)"
-        r"|we (will )?(help|cover|pay).{0,24}relocat\w*|relocation and visa|visa and relocation)"
+        r"\b(relocat\w*[ ,:-]{0,3}(package|assistance|support|bonus|allowance|stipend"
+        r"|provided|offered|included|available|paid|covered|yes)"
+        r"|(offer|provide|includ|cover|pay|fund|sponsor|assist|help|handl)\w*"
+        r"[^.!?]{0,30}\brelocat\w*"
+        r"|full relocation|relocation and visa|visa[^.!?]{0,30}relocat\w*)"
     ),
     "contractor": re.compile(
         r"\b(contractor|c2c|corp[ -]to[ -]corp|employer of record|eor|1099|deel"
@@ -143,7 +160,7 @@ PESOS = {"fuerte": 12, "medio": 6, "leve": 2}
 DEFECTOS_PREFERENCIAS = {
     "latam": 30,
     "remoto_global": 20,
-    "reubicacion": 15,
+    "reubicacion": 20,
     "contractor": 12,
     "freelance": 5,
 }
@@ -340,6 +357,9 @@ def detectar_senales(oferta: Oferta, aceptable_en: tuple[str, ...] = ()) -> tupl
         encontradas.remove("patrocinio")
     # Una oferta que declara que no hay oficina no es híbrida ni presencial por
     # nombrar esas palabras para negarlas.
+    # Lo mismo con la reubicación: nombrarla para negarla no es ofrecerla.
+    if "reubicacion" in encontradas and NIEGA_REUBICACION.search(texto):
+        encontradas.remove("reubicacion")
     if NIEGA_OFICINA.search(texto):
         encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
     # Ir a una oficina sólo es un problema si la oficina está donde no vas a
