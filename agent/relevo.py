@@ -154,9 +154,28 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
         return "dia" if ("perday" in bajo or "per day" in bajo or "daily" in bajo) else "minuto"
     if codigo in (500, 502, 503, 504) or "UNAVAILABLE" in texto or "high demand" in texto.lower():
         return "caido"
-    # 413 «Request too large»: el prompt supera el tope POR PETICIÓN del modelo
-    # (Groq gratuito: 8.000 tokens). Ninguna espera lo arregla; se prueba con
-    # el siguiente de la lista, que puede tener otro tope, y se anota.
+    # ⚠ EL 413 DE GROQ ES SU PRESUPUESTO POR MINUTO, NO EL TAMAÑO DE LA PETICIÓN,
+    # Y ESTE COMENTARIO DECÍA LO CONTRARIO. Decía «el prompt supera el tope POR
+    # PETICIÓN» y de ahí «ninguna espera lo arregla». Medido el 2026-09-18 entre
+    # las 15:12 y las 15:17 EDT, brazo groq:
+    #
+    #     15:17:35  20b   contesta   7283 de entrada
+    #     15:17:42  20b   413                          ← 7 s después, mismo modelo
+    #     15:17:45  120b  contesta   7604 de entrada    ← MÁS grande, y pasa
+    #
+    # Una petición de 7604 pasa y una de 7283 del mismo modelo falla siete
+    # segundos antes. El tamaño no es lo que discrimina: lo que discrimina es
+    # cuántos tokens lleva gastados ese minuto —y la SALIDA cuenta—. En la misma
+    # vuelta, una sola llamada gastó 6097 tokens de salida, o sea el 76% de los
+    # 8.000 del minuto, y las demás gastaron entre 505 y 1373.
+    #
+    # Así que sigue siendo `caido` y ahora por el motivo correcto: es un tope que
+    # el tiempo SÍ cura, como un 429 de minuto. La espera corta del relevo
+    # —`_esperar_si_es_corto`, que el comentario viejo hacía parecer inútil— es
+    # justo lo que salvó esa vuelta: tras esperar 60 s el 20b volvió a contestar.
+    #
+    # Lo que un 413 NO es, en ningún caso, es un veredicto sobre el modelo: no
+    # entra en `agent/catalogo.py`. Ver el test.
     if codigo == 413 or "too large" in texto.lower():
         return "caido"
     # ⚠ UN CORTE DE TRANSPORTE TAMBIÉN ES UNA CAÍDA. Medido el 2026-09-15 a las
@@ -196,6 +215,26 @@ def espera_sugerida(exc: BaseException) -> float | None:
     if m:
         return float(m.group(1))
     return None
+
+
+# «on tokens per minute (TPM): Limit 8000, Requested 8500» (Groq). Es el dato que
+# dice contra qué se choca el brazo, y hasta el 2026-09-18 el log lo tiraba: la
+# línea del relevo recortaba el error a 80 caracteres y el recorte caía justo
+# antes de los números. Sin ellos, «413» parecía un tope de tamaño y era un tope
+# por minuto — dos arreglos distintos, y el equivocado toca el prompt.
+_PRESUPUESTO = re.compile(r"Limit\s+(\d+),\s*Requested\s+(\d+)", re.I)
+
+
+def presupuesto_del_413(texto: str) -> tuple[int, int] | None:
+    """`(tope, pedido)` si el error los dice. None si no."""
+    m = _PRESUPUESTO.search(texto)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def por_minuto(texto: str) -> bool:
+    """Si el error se queja del presupuesto POR MINUTO y no del tamaño de la petición."""
+    bajo = texto.lower()
+    return "per minute" in bajo or "tpm" in bajo
 
 
 def segundos_hasta_medianoche_pacifico(ahora: datetime | None = None) -> float:
@@ -377,8 +416,21 @@ class Relevo:
             if cuarentena == float("inf")
             else f"vuelve en {cuarentena / 60:.0f} min"
         )
+        # ⚠ EL RECORTE A 80 CARACTERES ESCONDIÓ LA CAUSA DE UN FALLO DURANTE DÍAS.
+        # El 413 de Groq trae «Limit 8000, Requested N» y «tokens per minute» PASADO
+        # el carácter 80, así que el log solo enseñaba «Request too large for model
+        # `openai/gpt…» y de ahí se concluyó —en el código y en el criterio— que era
+        # un tope de tamaño. Era por minuto. Los 80 siguen bien para el ruido de
+        # todos los días (un 503 repetido no aporta nada), pero cuando el error trae
+        # cifras de presupuesto se enseñan: son las que deciden qué se arregla.
+        detalle = str(exc)[:80]
+        cifras = presupuesto_del_413(str(exc))
+        if cifras:
+            tope, pedido = cifras
+            ambito = "por minuto" if por_minuto(str(exc)) else "por petición"
+            detalle = f"tope {tope} {ambito}, pedido {pedido} · {str(exc)[:160]}"
         print(
-            f"[relevo] {_hora()} {nombre} agotado ({tipo}): {cuando} · {str(exc)[:80]}",
+            f"[relevo] {_hora()} {nombre} agotado ({tipo}): {cuando} · {detalle}",
             flush=True,
         )
         # ⚠ SOLO LO PERMANENTE ENTRA EN EL CATÁLOGO, Y ES LA LÍNEA QUE IMPORTA DE
