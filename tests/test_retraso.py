@@ -8,6 +8,8 @@ ese número se decide si la frescura vale 25 puntos o vale cinco.
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from empleo.postulaciones import Respuesta
 from empleo.retraso import Aviso, emparejar, informe, leer_avisos, medir, resumen
 
@@ -255,3 +257,190 @@ def test_el_resumen_dice_que_no_hubo_buzon_en_vez_de_una_mediana_vacia() -> None
 
     assert "sin buzón" in texto
     assert "mediana" not in texto
+
+
+# --- La revisión del 19/09: ocho cosas que salieron de correr el código ---
+
+
+def test_un_token_de_dos_letras_no_ata_nada() -> None:
+    """EL bug grave. `daniel@aiscaling.ai` daba token "ai" —el TLD, no un
+    nombre— y el emparejado era por SUBCADENA, así que "ai" estaba adentro de
+    "bairesdev". El acuse de Scale Army se ataba a una oferta de BairesDev e
+    inventaba un retraso de 27 horas, que entraba a la mediana como si fuera
+    bueno. Con datos reales del buzón, no inventados."""
+    baires = _aviso("BairesDev", 30)
+    scale = _respuesta("daniel@aiscaling.ai", datetime.now(tz=UTC) - timedelta(hours=3))
+
+    atados, _, sueltos = emparejar([baires], [scale])
+
+    assert not atados
+    assert len(sueltos) == 1
+
+
+def test_el_token_sale_del_nombre_y_no_del_tld() -> None:
+    """La raíz del anterior: se descartaba una lista de cinco TLDs a mano, así
+    que cualquier dominio fuera de esa lista devolvía el TLD como si fuera el
+    nombre de la empresa."""
+    from empleo.postulaciones import Respuesta as R
+
+    def empresa(remitente: str) -> str:
+        return R("x", remitente, "s", "f", "acuse").empresa
+
+    assert empresa("daniel@aiscaling.ai") == "aiscaling"
+    assert empresa("noreply@notify.nodi.global") == "nodi"
+    assert empresa("jobs@ada.cx") == "ada"
+    assert empresa("x@example.co.uk") == "example"
+    # Y los que ya andaban siguen andando.
+    assert empresa("no-reply@cohere.com") == "cohere"
+    assert empresa("no-reply-acnt@es.relay.walmart.com") == "walmart"
+
+
+def test_los_nombres_de_varias_palabras_siguen_atando() -> None:
+    """El arreglo no puede volverse tan estricto que deje de atar lo legítimo:
+    "grafana" nombra a "Grafana Labs" y "generalmotors" a "General Motors"."""
+    ahora = datetime.now(tz=UTC)
+    atados, _, _ = emparejar(
+        [_aviso("Grafana Labs", 30)],
+        [_respuesta("no-reply@grafana.com", ahora - timedelta(hours=3))],
+    )
+    assert len(atados) == 1
+
+
+def test_workday_pone_la_empresa_en_el_buzon_y_de_ahi_se_saca() -> None:
+    """`generalmotors@myworkday.com`: el dominio es del ATS y el nombre está en
+    la parte local. Tres de cada veinte acuses reales vienen así, y mirando
+    sólo el dominio quedaban todos anónimos."""
+    atados, por_ats, _ = emparejar(
+        [_aviso("General Motors", 30)],
+        [_respuesta("generalmotors@myworkday.com", datetime.now(tz=UTC) - timedelta(hours=3))],
+    )
+
+    assert len(atados) == 1
+    assert not por_ats
+
+
+def test_las_variantes_de_un_ats_se_reconocen_igual() -> None:
+    """`workablemail`, `greenhouse-mail`, `ashbyhq`: con igualdad exacta contra
+    la lista, dos de cada veinte acuses reales se contaban como empresas y
+    nunca emparejaban, inflando el cubo de "el emparejado falla"."""
+    ahora = datetime.now(tz=UTC) - timedelta(hours=3)
+    for remitente in (
+        "noreply@workablemail.com",
+        "no-reply@us.greenhouse-mail.io",
+        "noreply@monstergovt.com",
+    ):
+        _, por_ats, sueltos = emparejar([_aviso("Cohere", 30)], [_respuesta(remitente, ahora)])
+        assert len(por_ats) == 1, remitente
+        assert not sueltos, remitente
+
+
+def test_hay_digests_pero_ninguna_pasa_el_minimo() -> None:
+    """No es lo mismo que no haya digests. El informe decía "no hay con qué
+    medir" cuando sí había: el mismo fallo silencioso que este comando existe
+    para destapar, otra vez."""
+    medicion = medir([_aviso("Acme", 5, puntaje=10)], [], puntaje_minimo=25, horas_a_tiempo=96)
+
+    texto = informe(medicion)
+
+    assert "No hay digests" not in texto
+    assert "De 1 avisadas" in texto
+
+
+def test_la_linea_de_a_tiempo_dice_respecto_de_que() -> None:
+    """Sin el umbral, "a tiempo: 121" no significa nada."""
+    texto = informe(medir([_aviso("Cohere", 5, puntaje=52)], [], 25, 168))
+
+    assert "todavía a tiempo (7.0 d o menos)" in texto
+
+
+def test_de_dos_avisos_de_la_misma_oferta_vale_el_primero(tmp_path: Path) -> None:
+    """Si se pierde la memoria y una oferta se avisa dos veces, el retraso se
+    mide contra el PRIMER aviso. Al revés salía más corto de lo real: el sesgo
+    justo en la dirección que te hace parecer más rápido."""
+    for nombre in ("2026-09-15-0907.md", "2026-09-16-0907.md"):
+        (tmp_path / nombre).write_text(_UN_DIGEST, encoding="utf-8")
+
+    avisos = leer_avisos(tmp_path)
+
+    assert len(avisos) == 2  # dos ofertas distintas, no cuatro
+    assert all(a.cuando.day == 15 for a in avisos)
+
+
+def test_una_empresa_que_contiene_el_nombre_de_un_ats_no_es_un_ats() -> None:
+    """Salió de la SEGUNDA revisión: el arreglo del emparejado reintrodujo el
+    mismo error una línea más abajo. `_es_intermediario` buscaba la palabra
+    adentro del dominio, y "Leverage Labs" —`leverage-labs.com`— se clasificaba
+    como ATS porque "lever" está adentro de "leverage".
+
+    Un falso positivo acá se traga la empresa en silencio; una variante de ATS
+    que falte, en cambio, cae en "sueltos" y se ve. Por eso la comparación es
+    por etiqueta completa del dominio y la lista incluye las formas pegadas.
+    """
+    from empleo.retraso import _es_intermediario
+
+    assert not _es_intermediario("leverage-labs")
+    assert not _es_intermediario("cohere")
+    assert _es_intermediario("lever")
+    assert _es_intermediario("ashbyhq")
+    assert _es_intermediario("greenhouse-mail")
+    assert _es_intermediario("workablemail")
+
+
+def test_leverage_labs_empareja_como_la_empresa_que_es() -> None:
+    """El otro lado del mismo caso, de punta a punta."""
+    atados, por_ats, _ = emparejar(
+        [_aviso("Leverage Labs", 30)],
+        [_respuesta("jobs@leverage-labs.com", datetime.now(tz=UTC) - timedelta(hours=4))],
+    )
+
+    assert len(atados) == 1
+    assert not por_ats
+
+
+# Los remitentes reales del buzón del 19/09, con qué empresa los generó. Es la
+# tabla que destapó los cuatro defectos del emparejado: el TLD por nombre, la
+# subcadena, los ATS con variante y el guion del dominio.
+_BUZON_REAL = [
+    ("no-reply@grafana.com", "Grafana Labs"),
+    ("shoffman@mintmcp.com", "MintMCP"),
+    ("generalmotors@myworkday.com", "General Motors"),
+    ("associates@amazon.com", "Amazon"),
+    ("noreply@notify.nodi.global", "Nodi"),
+    ("daniel@connect-clera.com", "Connect Clera"),
+    ("notification@captechcareers.com", "CapTech Careers"),
+    ("daniel@aiscaling.ai", "AI Scaling"),
+]
+_ATS_REALES = [
+    "noreply@workablemail.com",
+    "no-reply@us.greenhouse-mail.io",
+    "noreply@applytojob.com",
+    "no-reply@ashbyhq.com",
+    "no-reply@ats.rippling.com",
+    "noreply@monstergovt.com",
+    "notifications@smartrecruiters.com",
+]
+
+
+@pytest.mark.parametrize(("remitente", "empresa"), _BUZON_REAL)
+def test_cada_remitente_real_ata_a_su_empresa(remitente: str, empresa: str) -> None:
+    """Contra el buzón de verdad y no contra remitentes imaginados, que es de
+    donde salieron los cuatro defectos. Ocho de ocho, sin un solo cruce."""
+    avisos = [_aviso(e, 30) for _, e in _BUZON_REAL]
+    respuesta = _respuesta(remitente, datetime.now(tz=UTC) - timedelta(hours=3))
+
+    atados, _, _ = emparejar(avisos, [respuesta])
+
+    assert len(atados) == 1
+    assert atados[0][0].empresa == empresa
+
+
+@pytest.mark.parametrize("remitente", _ATS_REALES)
+def test_cada_ats_real_se_cuenta_aparte(remitente: str) -> None:
+    """Ninguno puede colarse como empresa ni como fallo del emparejado."""
+    _, por_ats, sueltos = emparejar(
+        [_aviso(e, 30) for _, e in _BUZON_REAL],
+        [_respuesta(remitente, datetime.now(tz=UTC) - timedelta(hours=3))],
+    )
+
+    assert len(por_ats) == 1
+    assert not sueltos

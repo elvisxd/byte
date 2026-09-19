@@ -99,15 +99,39 @@ class Respuesta:
     estado: str
 
     @property
+    def buzon(self) -> str:
+        """La parte local del remitente, en minúsculas.
+
+        Workday manda desde `generalmotors@myworkday.com`: el nombre de la
+        empresa está ACÁ y no en el dominio. Medido sobre el buzón, tres de
+        cada veinte acuses vienen así, y tirar esta parte los volvía anónimos.
+        """
+        return self.remitente.rsplit("@", 1)[0].rsplit("<", 1)[-1].strip().lower()
+
+    @property
     def empresa(self) -> str:
         """De qué empresa parece venir, para la línea del aviso.
 
         Sale del dominio del remitente y no del asunto: los ATS mandan desde
         `no-reply@ashbyhq.com` con el nombre de la empresa sólo en el cuerpo, y
         adivinarlo del asunto acierta a veces y miente el resto.
+
+        Se queda con la etiqueta registrable: se tira la última —que es el
+        TLD, sea cual sea— y también `co`/`com` si quedaron al final, que es la
+        forma de `example.co.uk`.
+
+        La versión anterior descartaba una lista de cinco TLDs escrita a mano
+        (`com, co, io, net, org`) y devolvía el resto. Con eso,
+        `daniel@aiscaling.ai` daba **"ai"** y `noreply@notify.nodi.global` daba
+        **"global"**: no el nombre de nadie, sino el dominio de primer nivel.
+        Los dos casos salieron del buzón de verdad, no de imaginarlos.
         """
         dominio = self.remitente.rsplit("@", 1)[-1].strip(">").lower()
-        partes = [p for p in dominio.split(".") if p not in ("com", "co", "io", "net", "org")]
+        partes = [p for p in dominio.split(".") if p]
+        if len(partes) > 1:
+            partes.pop()  # el TLD, cualquiera sea
+        if len(partes) > 1 and partes[-1] in ("co", "com"):
+            partes.pop()  # `example.co.uk`, ya sin el `uk`
         return partes[-1] if partes else dominio
 
 

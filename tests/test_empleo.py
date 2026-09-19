@@ -1770,3 +1770,36 @@ def test_exigir_residencia_es_lo_contrario_de_patrocinar(texto: str) -> None:
     senales = detectar_senales(_con_texto(texto))
     assert "patrocinio" not in senales
     assert "sin_patrocinio" in senales
+
+
+def test_muchas_empresas_mudas_no_se_comen_el_aviso() -> None:
+    """Con las catorce caídas a la vez, el pie medía 498 caracteres y el aviso
+    entero 1.318 contra un tope de 950: se recortaba justo el conteo de las
+    fuentes que SÍ trajeron algo. Se nombran las primeras y se cuenta el resto.
+    """
+    from empleo.aviso import MAX_CARACTERES
+
+    async def muda(
+        _cliente: httpx.AsyncClient,
+        listado: tuple[tuple[str, str, str], ...],
+        mudas: list[str] | None = None,
+    ) -> list[Oferta]:
+        if mudas is not None:
+            mudas.extend(nombre for nombre, _, _ in listado)
+        return []
+
+    empresas = tuple((f"Empresa{n}", "greenhouse", f"e{n}") for n in range(14))
+    criterio = Criterio(
+        fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"empresas": True},
+        empresas=empresas,
+    )
+    original = fuentes.empresas
+    fuentes.empresas = muda
+    try:
+        _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+    finally:
+        fuentes.empresas = original
+
+    pie = cazador._pie_fuentes(conteo)
+    assert len(pie) < MAX_CARACTERES // 3
+    assert "+11 empresas mudas" in pie

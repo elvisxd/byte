@@ -128,8 +128,16 @@ async def recolectar(
     # mismo "error" que ya usa el pie del aviso para una fuente caída. Así el
     # token roto se lee en el teléfono —"empresa Shopify: error"— en vez de
     # esconderse dentro de un total de `empresas` que igual parece sano.
-    for empresa in mudas:
-        conteo[f"empresa {empresa}"] = -1
+    if mudas:
+        # Con las catorce caídas a la vez —un corte de red, o el ATS
+        # frenándote— esta línea medía 498 caracteres, y el aviso entero 1.318
+        # contra un tope de 950: el pie se recortaba y se perdía el conteo de
+        # las fuentes que SÍ trajeron algo. Se nombran las primeras y se cuenta
+        # el resto; la lista completa queda en el log y en el digest.
+        for empresa in mudas[:TOPE_MUDAS_EN_EL_PIE]:
+            conteo[f"empresa {empresa}"] = -1
+        if len(mudas) > TOPE_MUDAS_EN_EL_PIE:
+            conteo[f"+{len(mudas) - TOPE_MUDAS_EN_EL_PIE} empresas mudas"] = -1
     return ofertas, conteo
 
 
@@ -210,6 +218,10 @@ def armar_aviso(
     extra = f"\n\n(+{resto} más en el digest)" if resto > 0 else ""
     return f"{cabecera} — {len(dignas)} nuevas\n\n{cuerpo}{extra}\n\n{_pie_fuentes(conteo)}"
 
+
+# Cuántas empresas mudas se nombran en el pie del aviso antes de resumirlas.
+# Tres entran sin comerse una oferta; catorce no.
+TOPE_MUDAS_EN_EL_PIE = 3
 
 ULTIMO_AVISO = "ultimo_aviso.txt"
 
@@ -643,6 +655,11 @@ def main() -> None:
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
         return
+    if args.al_telefono and not args.retraso:
+        # Sin esto el flag se ignoraba en silencio y arrancaba una vuelta
+        # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
+        # tipea esperando el informe recibía otra cosa, y encima con efectos.
+        parser.error("--al-telefono necesita --retraso")
     if args.retraso:
         # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
         # mientras una vuelta está corriendo.
