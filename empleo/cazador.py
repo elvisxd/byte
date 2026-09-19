@@ -27,7 +27,7 @@ import httpx
 import api.config  # noqa: F401
 from api.logging import get_logger
 from empleo import fuentes
-from empleo.aviso import MAX_CARACTERES, avisar
+from empleo.aviso import avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
@@ -216,21 +216,20 @@ def armar_aviso(
     encabezado = f"{cabecera} — {len(dignas)} nuevas"
     pie = _pie_fuentes(conteo)
 
-    # El pie se arma primero y se le reserva el lugar. Iba al final y el panel
-    # recorta por el final, así que un aviso largo —cuatro ofertas con títulos
-    # de portal y URLs de Ashby— se comía justo el conteo de fuentes: la línea
-    # que dice si LinkedIn o Job Bank trajeron algo. Perder una oferta, que
-    # sigue en el digest, es más barato que perder la señal de que una fuente
-    # se cayó.
+    # Acá se iban tirando ofertas del final hasta que el mensaje entrara en un
+    # solo POST, porque el panel rechazaba de más de 1.000 caracteres y el pie
+    # —el conteo de fuentes, la línea que dice si LinkedIn o Job Bank se
+    # cayeron— es lo último del texto.
+    #
+    # Ya no hace falta: `avisar()` parte el aviso en varios mensajes cuando no
+    # entra en uno, cortando entre ofertas. Lo que decide cuántas ofertas van
+    # al teléfono vuelve a ser sólo el criterio —`tope_por_aviso` y
+    # `tope_por_empresa`, que están en el TOML y se revisan en un diff— y no el
+    # ancho del canal.
     lineas = [_linea(o, p) for o, p in muestra]
-    while lineas:
-        faltan = len(dignas) - len(lineas)
-        extra = f"\n\n(+{faltan} más en el digest)" if faltan > 0 else ""
-        mensaje = f"{encabezado}\n\n" + "\n\n".join(lineas) + extra + f"\n\n{pie}"
-        if len(mensaje) <= MAX_CARACTERES:
-            return mensaje
-        lineas.pop()
-    return f"{encabezado}\n\nNinguna entra en el mensaje; están en el digest.\n\n{pie}"
+    faltan = len(dignas) - len(lineas)
+    extra = f"\n\n(+{faltan} más en el digest)" if faltan > 0 else ""
+    return f"{encabezado}\n\n" + "\n\n".join(lineas) + extra + f"\n\n{pie}"
 
 
 # Cuántas empresas mudas se nombran en el pie del aviso antes de resumirlas.
@@ -398,9 +397,10 @@ def escribir_digest(
             f"- fuente: {oferta.fuente}" + (f" · {oferta.ubicacion}" if oferta.ubicacion else ""),
             f"- por qué: {'; '.join(puntaje.motivos) or 'nada que sume'}",
         ]
-        # Qué alerta la trajo, cuando la fuente lo dice. Va acá y no al aviso de
-        # Telegram porque el aviso corta en 1000 caracteres y cuatro ofertas ya
-        # ocupan 820: una línea más por oferta se come una oferta entera.
+        # Qué alerta la trajo, cuando la fuente lo dice. Va acá y no al aviso
+        # de Telegram: el aviso se lee de un vistazo, y una línea más por
+        # oferta es una pantalla más de scroll para un dato que sólo sirve
+        # cuando te sentás a revisar qué alerta conviene borrar.
         #
         # Es lo que hace revisable una lista de diez alertas: si una llena el
         # digest de puestos que no tienen nada que ver, se ve acá y se borra en

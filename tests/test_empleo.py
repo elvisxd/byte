@@ -669,23 +669,129 @@ def test_las_ofertas_sin_empresa_no_se_agrupan_entre_si() -> None:
     assert [o.id_externo for o, _ in repartidas] == ["0", "1", "2", "3"]
 
 
-def test_el_aviso_no_supera_lo_que_el_panel_acepta() -> None:
-    """El panel valida `texto.length > 1000` y devuelve 422 con el aviso
-    entero: pasarse por un carácter no manda un mensaje cortado, no manda
-    **nada**. Y el cazador solo anota en la memoria lo que avisó, así que un
-    422 silencioso dejaría las mismas ofertas repitiéndose cada vuelta.
+# El tope de `sendMessage` de Telegram, que es también el de la validación del
+# panel. Pasarse por un carácter no manda un mensaje cortado: devuelve 422 y no
+# manda **nada**. Y el cazador solo anota en la memoria lo que avisó, así que
+# un 422 silencioso deja las mismas ofertas repitiéndose cada vuelta.
+LIMITE_DEL_PANEL = 4096
 
-    El tope de `aviso.py` se eligió mirando el límite de Telegram (4096), que
-    es el del otro extremo de la cadena; el panel está en el medio y es más
-    estricto porque nació para los avisos de una línea del vigía de `paper/`.
+
+def test_ninguna_parte_del_aviso_supera_lo_que_el_panel_acepta() -> None:
+    """Un aviso de veinte ofertas contra un tope de 4.096: el corte tiene que
+    dar partes que entren, incluida la marca «(3/4)» que se agrega después de
+    medir.
     """
-    from empleo.aviso import MAX_CARACTERES
+    from empleo.aviso import MAX_CARACTERES, partir
 
-    LIMITE_DEL_PANEL = 1000
-    assert MAX_CARACTERES < LIMITE_DEL_PANEL, (
-        "MAX_CARACTERES tiene que dejar lugar a la nota de recorte "
-        f"por debajo de los {LIMITE_DEL_PANEL} del panel"
+    assert MAX_CARACTERES < LIMITE_DEL_PANEL
+    texto = "\n\n".join(
+        f"{i:>4} · 3h  Senior Engineer — Acme\n  https://ejemplo/{i}" for i in range(400)
     )
+
+    partes = partir(texto)
+
+    assert len(partes) > 1
+    assert all(len(parte) <= LIMITE_DEL_PANEL for parte in partes)
+
+
+def test_el_aviso_largo_no_pierde_ninguna_oferta_por_el_camino() -> None:
+    """Antes esto recortaba: lo que pasaba del tope se tiraba con una nota. Lo
+    primero en perderse era el pie —el conteo de fuentes— porque va al final,
+    justo la línea que avisa que LinkedIn o Job Bank se cayeron.
+    """
+    from empleo.aviso import partir
+
+    ofertas = [f"{i:>4} · 3h  Senior Engineer — Acme\n  https://ejemplo/{i}" for i in range(200)]
+    texto = "Ofertas — 19/09 09:00\n\n" + "\n\n".join(ofertas) + "\n\nfuentes → remoteok: 12"
+
+    partes = partir(texto)
+
+    assert len(partes) > 1
+    for oferta in ofertas:
+        assert any(oferta in parte for parte in partes), f"se perdió {oferta!r}"
+    assert "fuentes → remoteok: 12" in partes[-1]
+
+
+def test_una_oferta_nunca_queda_partida_entre_dos_mensajes() -> None:
+    """El corte va entre párrafos y no cada N caracteres: cada párrafo del
+    aviso es una oferta entera —puntaje, título, lugar y link—, y partirla al
+    medio deja media oferta en un mensaje y un link suelto en el siguiente.
+    """
+    from empleo.aviso import partir
+
+    ofertas = [f"{i:>4} · 3h  Senior Engineer — Acme\n  https://ejemplo/{i}" for i in range(200)]
+
+    partes = partir("\n\n".join(ofertas))
+
+    assert len(partes) > 1
+    for parte in partes:
+        sin_marca = re.sub(r"\n\n\(\d+/\d+\)$", "", parte)
+        assert all(p in ofertas for p in sin_marca.split("\n\n"))
+
+
+def test_el_aviso_de_todos_los_dias_va_en_un_solo_mensaje_y_sin_marca() -> None:
+    """El caso normal —cuatro ofertas, ~1.300 caracteres— tiene que leerse
+    igual que siempre. La marca «(1/1)» al pie de un mensaje que nunca se
+    partió sería ruido diario a cambio de nada.
+    """
+    from empleo.aviso import partir
+
+    texto = cazador.armar_aviso([_par(40)] * 4, CRITERIO, {"remoteok": 99})
+
+    assert partir(texto) == [texto]
+
+
+def test_si_una_parte_no_llega_el_aviso_no_cuenta_como_entregado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El cazador anota en la memoria lo que avisó. Dar por entregado un aviso
+    al que le faltó una parte deja esas ofertas marcadas como vistas y no
+    vuelven nunca; devolver `False` repite algunas mañana, que es barato.
+    """
+    from empleo import aviso as modulo_aviso
+
+    monkeypatch.setenv("PANEL_URL", "https://panel")
+    intentos: list[str] = []
+
+    def _mandar(_destino: str, texto: str) -> bool:
+        intentos.append(texto)
+        return len(intentos) != 2
+
+    monkeypatch.setattr(modulo_aviso, "_mandar", _mandar)
+    texto = "\n\n".join("x" * 1000 for _ in range(12))
+
+    entregado = modulo_aviso.avisar(texto)
+
+    assert entregado is False
+    # Y las otras partes se mandan igual: que el panel se caiga entre la
+    # primera y la segunda no tiene por qué costar la tercera.
+    assert len(intentos) > 2
+
+
+def test_el_aviso_ya_no_tira_ofertas_para_entrar_en_un_mensaje() -> None:
+    """Cuántas ofertas llegan al teléfono lo decide el criterio del TOML, que
+    se revisa en un diff, y no el ancho del canal. Con el tope viejo un título
+    largo de más hacía desaparecer la última oferta sin que nada lo dijera.
+    """
+    crit = replace(CRITERIO, tope_por_aviso=8, tope_por_empresa=8)
+    largas = [
+        (
+            _oferta(
+                id_externo=str(i),
+                url=f"https://ejemplo/{i}",
+                titulo="Senior Full Stack AI Engineer " * 8,
+                empresa="Acme",
+            ),
+            Puntaje(total=40, motivos=(), senales=(), terminos=(), antiguedad_horas=1.0),
+        )
+        for i in range(8)
+    ]
+
+    texto = cazador.armar_aviso(largas, crit, {"remoteok": 99})
+
+    assert len(texto) > 1000
+    for i in range(8):
+        assert f"https://ejemplo/{i}" in texto
 
 
 def test_una_oferta_vieja_no_llega_al_telefono_por_buena_que_sea() -> None:
@@ -907,8 +1013,8 @@ def test_el_pie_del_correo_no_se_cuenta_como_oferta() -> None:
 def test_el_link_va_sin_el_token_de_seguimiento() -> None:
     """El enlace del correo lleva `midToken`, `trkEmail` y un `otpToken` de
     varios cientos de caracteres, atados a la sesión de quien lo recibió. Uno
-    solo se come el aviso entero —el panel corta en 1000— y además es un dato
-    personal que no tiene por qué viajar a Telegram.
+    solo empuja el aviso a un segundo mensaje sin agregar nada, y además es un
+    dato personal que no tiene por qué viajar a Telegram.
     """
     oferta = fuentes.ofertas_de_alerta_linkedin(_ALERTA_LINKEDIN)[0]
 

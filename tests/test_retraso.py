@@ -230,12 +230,12 @@ def test_con_buzon_vacio_lo_dice_distinto_que_con_buzon_ilegible() -> None:
     assert "sin rastro de postulación: 1" in texto
 
 
-def test_el_resumen_entra_en_el_tope_del_panel() -> None:
-    """El panel rechaza los textos de más de 1000 caracteres y devuelve 422 con
-    el aviso entero: pasarse por uno **no manda nada**. El informe largo se
-    pasa apenas hay unas pocas ofertas sin postular, así que al teléfono va el
-    resumen, que son números y no la lista."""
-    from empleo.aviso import MAX_CARACTERES
+def test_al_telefono_va_el_resumen_en_un_solo_mensaje() -> None:
+    """Al teléfono va el resumen —números— y no la lista. `avisar()` sabe
+    partir un texto largo en varios mensajes, así que el informe entraría; lo
+    que no entra es en la pantalla de quien lo lee parado en la cocina. El
+    informe largo se lee en la terminal, que es donde se imprime."""
+    from empleo.aviso import partir
 
     avisos = [_aviso(f"Empresa{n}", 10, puntaje=52) for n in range(40)]
     respuestas = [
@@ -244,8 +244,8 @@ def test_el_resumen_entra_en_el_tope_del_panel() -> None:
     ]
     medicion = medir(avisos, respuestas, 25, 96)
 
-    assert len(informe(medicion)) > MAX_CARACTERES
-    assert len(resumen(medicion)) <= MAX_CARACTERES
+    assert len(partir(resumen(medicion))) == 1
+    assert len(informe(medicion)) > len(resumen(medicion)) * 3
 
 
 def test_el_resumen_dice_que_no_hubo_buzon_en_vez_de_una_mediana_vacia() -> None:
