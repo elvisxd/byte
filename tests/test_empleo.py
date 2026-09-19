@@ -1803,3 +1803,46 @@ def test_muchas_empresas_mudas_no_se_comen_el_aviso() -> None:
     pie = cazador._pie_fuentes(conteo)
     assert len(pie) < MAX_CARACTERES // 3
     assert "+11 empresas mudas" in pie
+
+
+def test_el_pie_de_fuentes_no_se_recorta_aunque_las_ofertas_sean_largas() -> None:
+    """El panel recorta por el final y el pie va al final, así que un aviso con
+    cuatro ofertas de títulos largos y URLs de Ashby se comía justo la línea
+    que dice si LinkedIn o Job Bank trajeron algo —lo que pasó el 19/09—.
+
+    Ahora el pie se reserva y lo que se cae es una oferta, que sigue en el
+    digest. Perder una oferta es más barato que perder la señal de que una
+    fuente se cayó.
+    """
+    from empleo.aviso import MAX_CARACTERES
+
+    ahora = datetime.now(tz=UTC)
+    largas = []
+    for n in range(8):
+        oferta = _oferta(
+            fuente="empresas",
+            id_externo=str(n),
+            titulo=f"Senior Front-End Developer, Web Experimentation {n}",
+            empresa="Jobber",
+            url=f"https://jobs.ashbyhq.com/jobber/90826cae-5acc-4321-a0c7-206d9f7ea0b{n}",
+            ubicacion="London, UK; Ontario, CAN; Remote-Friendly, United States; San Francisco",
+            descripcion="llm rag langgraph remoto latam",
+            publicada=(ahora - timedelta(hours=3)).isoformat(),
+        )
+        largas.append((oferta, puntuar(oferta, CRITERIO)))
+    conteo = {
+        "empresas": 3603,
+        "getonbrd": 75,
+        "hackernews": 259,
+        "jobbank": 1,
+        "linkedin": 4,
+        "remoteok": 99,
+        "remotive": 16,
+        "weworkremotely": 121,
+    }
+
+    aviso = cazador.armar_aviso(largas, CRITERIO, conteo)
+
+    assert len(aviso) <= MAX_CARACTERES
+    assert "linkedin: 4" in aviso
+    assert "weworkremotely: 121" in aviso

@@ -27,7 +27,7 @@ import httpx
 import api.config  # noqa: F401
 from api.logging import get_logger
 from empleo import fuentes
-from empleo.aviso import avisar
+from empleo.aviso import MAX_CARACTERES, avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
@@ -213,10 +213,24 @@ def armar_aviso(
         )
 
     muestra = _repartir(dignas, criterio.tope_por_empresa)[: criterio.tope_por_aviso]
-    cuerpo = "\n\n".join(_linea(o, p) for o, p in muestra)
-    resto = len(dignas) - len(muestra)
-    extra = f"\n\n(+{resto} más en el digest)" if resto > 0 else ""
-    return f"{cabecera} — {len(dignas)} nuevas\n\n{cuerpo}{extra}\n\n{_pie_fuentes(conteo)}"
+    encabezado = f"{cabecera} — {len(dignas)} nuevas"
+    pie = _pie_fuentes(conteo)
+
+    # El pie se arma primero y se le reserva el lugar. Iba al final y el panel
+    # recorta por el final, así que un aviso largo —cuatro ofertas con títulos
+    # de portal y URLs de Ashby— se comía justo el conteo de fuentes: la línea
+    # que dice si LinkedIn o Job Bank trajeron algo. Perder una oferta, que
+    # sigue en el digest, es más barato que perder la señal de que una fuente
+    # se cayó.
+    lineas = [_linea(o, p) for o, p in muestra]
+    while lineas:
+        faltan = len(dignas) - len(lineas)
+        extra = f"\n\n(+{faltan} más en el digest)" if faltan > 0 else ""
+        mensaje = f"{encabezado}\n\n" + "\n\n".join(lineas) + extra + f"\n\n{pie}"
+        if len(mensaje) <= MAX_CARACTERES:
+            return mensaje
+        lineas.pop()
+    return f"{encabezado}\n\nNinguna entra en el mensaje; están en el digest.\n\n{pie}"
 
 
 # Cuántas empresas mudas se nombran en el pie del aviso antes de resumirlas.
