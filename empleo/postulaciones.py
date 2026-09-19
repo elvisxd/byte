@@ -56,7 +56,11 @@ ACCION = re.compile(
     r"\b(action required|accion requerida|acci[oó]n requerida"
     r"|requires additional information|additional information (is )?(needed|required)"
     r"|(a )?video is required|record (a|your) video"
-    r"|complete (your|the) (application|profile|assessment)"
+    # `profile` NO entra: completar el perfil de un portal es alta de usuario,
+    # no algo que pida una postulación. Lo destapó un correo de marketing de We
+    # Work Remotely —"Complete your profile"— que llegó al teléfono como
+    # "acción requerida", que es la alerta que interrumpe siempre.
+    r"|complete (your|the) (application|assessment)"
     r"|(take|complete) (the|a|an) (assessment|test|challenge)"
     r"|please (submit|provide|upload|confirm)"
     r"|we need (you to|some)"
@@ -135,6 +139,21 @@ class Respuesta:
         return partes[-1] if partes else dominio
 
 
+# Que el correo hable de UNA POSTULACIÓN TUYA. `accion` y `acuse` se detectan
+# con frases genéricas —"please submit", "we need you to", "thank you"— que
+# cualquier boletín usa, y sin este segundo requisito el marketing de un portal
+# de empleo entra como si fuera una respuesta a algo que mandaste.
+#
+# Es deliberadamente estrecho: "apply" suelto no alcanza, porque el correo que
+# destapó esto decía "Save jobs to apply to later" y "not ready to apply".
+HABLA_DE_POSTULACION = re.compile(
+    r"\b(your application|application (received|submitted|status|for|to)"
+    r"|thank(s| you)?( you)? for applying|for applying"
+    r"|your candidacy|tu postulaci[oó]n|tu aplicaci[oó]n)",
+    re.I,
+)
+
+
 def clasificar(asunto: str, cuerpo: str) -> str:
     """El estado de un correo. `""` si no parece una respuesta de postulación."""
     texto = f"{asunto}\n{cuerpo}"
@@ -144,6 +163,11 @@ def clasificar(asunto: str, cuerpo: str) -> str:
         return "rechazo"
     if ENTREVISTA.search(texto):
         return "entrevista"
+    # `rechazo` y `entrevista` se dicen de una sola forma y no necesitan esto.
+    # Las otras dos salen de frases que cualquiera escribe, así que además
+    # tienen que hablar de una postulación tuya.
+    if not HABLA_DE_POSTULACION.search(texto):
+        return ""
     if ACCION.search(texto):
         return "accion"
     if ACUSE.search(texto):

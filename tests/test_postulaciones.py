@@ -131,3 +131,43 @@ def test_las_entrevistas_van_primero() -> None:
     texto = bloque([accion, entrevista])
     assert texto.index("mintmcp") < texto.index("kwanii")
     assert "[entrevista]" in texto and "[pide algo]" in texto
+
+
+_MARKETING_DE_WWR = """Set up your profile, save searches, and get job alerts - takes 5 min.
+Four steps between you and your next role.
+Complete My Profile
+Hi Elvis, You signed up a few days ago, but your profile is still in setup mode.
+1. Complete your profile
+2. Set your job filters
+3. Follow companies you want to work for.
+4. Save jobs to apply to later. See something good but not ready to apply?
+"""
+
+
+def test_completar_el_perfil_de_un_portal_no_es_una_postulacion() -> None:
+    """Llegó al teléfono de verdad, como "acción requerida" —la alerta que
+    interrumpe SIEMPRE— por un correo de alta de usuario de We Work Remotely.
+
+    Dos cosas lo dejaban pasar: `complete your profile` estaba en `ACCION`, y
+    ACCION le ganaba al guardia de "esto no es una respuesta". Completar el
+    perfil de un portal es alta de usuario, no algo que pida una postulación.
+    """
+    assert clasificar("Four steps left on your WWR profile", _MARKETING_DE_WWR) == ""
+
+
+def test_apply_suelto_no_alcanza_para_ser_una_postulacion() -> None:
+    """El mismo correo dice "Save jobs to apply to later" y "not ready to
+    apply". Un patrón que aceptara "apply" a secas lo volvería a dejar pasar."""
+    assert clasificar("Jobs for you", "Save jobs to apply to later. Not ready to apply?") == ""
+
+
+def test_lo_que_sí_pide_algo_sigue_llegando() -> None:
+    """El arreglo no puede llevarse puesto el caso que originó la alerta."""
+    assert (
+        clasificar(
+            "Application received for Senior Software Engineer",
+            "Thanks for applying to the Senior Software Engineer role at Scale Army. "
+            "A video is required for this role.",
+        )
+        == "accion"
+    )
