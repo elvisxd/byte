@@ -6,6 +6,7 @@ defender leyendo el TOML— y que nada de esto postule por su cuenta.
 
 import asyncio
 import contextlib
+import email.message
 import json
 import subprocess
 import sys
@@ -35,6 +36,7 @@ _TODAS_LAS_FUENTES = (
     "empresas",
     "workday",
     "linkedin",
+    "jobbank",
     "upwork",
 )
 
@@ -1462,6 +1464,138 @@ def test_el_digest_real_de_linkedin_se_parsea_entero() -> None:
     assert ofertas[0].url == "https://www.linkedin.com/jobs/view/4369100511"
 
 
+# --- Job Bank: las alertas del correo ---
+
+# El HTML de un correo real del buzón (17/09/2026), recortado: se le sacaron los
+# estilos en línea —son cien caracteres por celda y no cambian nada— y el
+# `token` y el `subid`, que identifican la suscripción de quien lo recibió. La
+# estructura es la del correo tal cual llegó: la clase del enlace, una fila
+# `<td>` por dato, y el pie con "View all similar jobs" pegado a la ficha.
+_ALERTA_JOBBANK = (Path(__file__).resolve().parent / "datos" / "alerta_jobbank.html").read_text()
+
+
+def test_la_alerta_real_de_jobbank_se_parsea_entera() -> None:
+    """Los cuatro datos de la ficha, en su lugar. `Montr&eacute;al` es el que
+    delata un parser que no deshace las entidades: media provincia de Quebec
+    llegaría al teléfono como "Montr&eacute;al, QC".
+    """
+    ofertas = fuentes.ofertas_de_alerta_jobbank(_ALERTA_JOBBANK, "Thu, 17 Sep 2026 20:40:28 +0000")
+
+    assert len(ofertas) == 1
+    oferta = ofertas[0]
+    assert oferta.fuente == "jobbank"
+    assert oferta.titulo == "Developer, Software"
+    assert oferta.empresa == "Solution Meriatek Inc"
+    assert oferta.ubicacion == "Montréal, QC"
+    assert oferta.salario == "$37.52 hourly"
+    assert oferta.publicada == "Thu, 17 Sep 2026 20:40:28 +0000"
+
+
+def test_el_pie_del_correo_no_se_lee_como_la_ficha_de_la_oferta() -> None:
+    """La última oferta del correo no tiene otra detrás que la corte: lo que
+    sigue es "View all similar jobs", el consejo de carrera y "Manage my
+    alerts", todos en `<td>` igual que la empresa y la ubicación. Sin el corte,
+    el aviso de Telegram diría que contrata "View all similar jobs".
+    """
+    oferta = fuentes.ofertas_de_alerta_jobbank(_ALERTA_JOBBANK)[0]
+
+    assert "similar jobs" not in oferta.descripcion
+    assert "Manage my alerts" not in oferta.descripcion
+    assert "career" not in oferta.descripcion.lower()
+
+
+def test_el_link_de_jobbank_va_sin_el_token_de_la_suscripcion() -> None:
+    """El enlace del correo lleva un `token` y un `subid` que identifican **tu**
+    suscripción a esa alerta, no la oferta. Es un dato personal que no tiene por
+    qué viajar a Telegram, y además hace que la misma oferta en dos correos
+    parezca dos ofertas distintas.
+    """
+    oferta = fuentes.ofertas_de_alerta_jobbank(_ALERTA_JOBBANK)[0]
+
+    assert oferta.url == "https://www.jobbank.gc.ca/jobsearch/jobposting/50306111"
+    assert "token" not in oferta.url
+    assert "subid" not in oferta.url
+
+
+def test_la_alerta_de_jobbank_viene_solo_en_html() -> None:
+    """El correo de Job Bank no es multiparte: trae **un solo cuerpo
+    `text/html`**, sin alternativa en texto plano. El lector de LinkedIn busca
+    `text/plain`, no lo encuentra y devuelve cero ofertas sin error — el modo de
+    romperse que no se nota hasta que alguien pregunta por qué no llega nada.
+    """
+    mensaje = email.message.EmailMessage()
+    mensaje["From"] = fuentes.REMITENTE_JOBBANK
+    mensaje["Date"] = "Thu, 17 Sep 2026 20:40:28 +0000"
+    mensaje.set_content(_ALERTA_JOBBANK, subtype="html")
+    crudo = mensaje.as_bytes()
+
+    assert fuentes._ofertas_del_correo(crudo) == []
+    ofertas = fuentes._ofertas_jobbank_del_correo(crudo)
+    assert [o.empresa for o in ofertas] == ["Solution Meriatek Inc"]
+
+
+def test_sin_salario_la_jornada_no_ocupa_su_lugar() -> None:
+    """Job Bank obliga a declarar el salario, pero no en todas las ofertas sale
+    —las de agencia a veces lo omiten—. Tomando el tercer renglón a secas, esas
+    ofertas llegarían con "Full time Hybrid" en el campo del sueldo, que es peor
+    que no decir nada: el criterio puntúa el salario.
+    """
+    sin_sueldo = _ALERTA_JOBBANK.replace('<td colspan="2">$37.52 hourly</td>', "")
+
+    oferta = fuentes.ofertas_de_alerta_jobbank(sin_sueldo)[0]
+
+    assert oferta.salario == ""
+    assert oferta.empresa == "Solution Meriatek Inc"
+    assert oferta.ubicacion == "Montréal, QC"
+
+
+def test_la_alerta_arrastra_a_quien_apunta_a_cada_oferta() -> None:
+    """El pie del correo dice a quién apunta la alerta que lo generó. Cuando
+    dice esto, la alerta lleva el filtro `fglo=1` del portal y todas las ofertas
+    del correo son de empleadores que declararon considerar gente de afuera.
+    """
+    ofertas = fuentes.ofertas_de_alerta_jobbank(_ALERTA_JOBBANK)
+
+    assert ofertas[0].etiquetas == ("canadians and international candidates",)
+
+
+def test_sin_el_pie_una_oferta_de_jobbank_no_junta_para_llegar_al_telefono() -> None:
+    """Medido, no supuesto. El correo de Job Bank no trae la descripción del
+    puesto: son cuatro renglones de ficha, sin una palabra del stack. Así, la
+    mejor oferta canadiense que vimos —remota, en Vancouver, $152.200 a
+    $253.650 al año— junta 15 puntos y muere debajo del umbral de 25.
+
+    El pie es la única señal de patrocinio que trae el correo, y el patrocinio
+    es la única razón por la que Canadá está en la lista. Sin arrastrarlo, esta
+    fuente entrega ofertas que no llegan nunca al teléfono: funcionaría en los
+    tests y no serviría para nada.
+    """
+    ayer = (datetime.now(tz=UTC) - timedelta(hours=26)).isoformat()
+    vancouver = _oferta(
+        fuente="jobbank",
+        titulo="computer software engineer",
+        empresa="Omnissa",
+        descripcion="computer software engineer\nOmnissa\nVancouver, BC\nFull time Remote",
+        ubicacion="Vancouver, BC",
+        salario="$152,200 to $253,650 annually",
+        publicada=ayer,
+    )
+    con_pie = replace(vancouver, etiquetas=("canadians and international candidates",))
+
+    sin_el_pie = puntuar(vancouver, CRITERIO)
+    assert "patrocinio" not in sin_el_pie.senales
+    assert sin_el_pie.total < CRITERIO.puntaje_minimo
+    assert puntuar(con_pie, CRITERIO).total >= CRITERIO.puntaje_minimo
+
+
+def test_sin_credenciales_no_se_abre_el_buzon_para_jobbank() -> None:
+    """Igual que LinkedIn y que Upwork sin su key: apagada quiere decir que no
+    se abre una conexión para que el servidor conteste que faltó la contraseña.
+    """
+    assert fuentes.jobbank_por_imap("", "") == []
+    assert fuentes.jobbank_por_imap("alguien@gmail.com", "") == []
+
+
 # --- Patrocinio: el vocabulario de Canadá ---
 
 
@@ -1472,6 +1606,8 @@ def test_el_digest_real_de_linkedin_se_parsea_entero() -> None:
         "We will support your LMIA application",
         "Hiring through the Global Talent Stream",
         "Open to international candidates",
+        # Como lo escribe Job Bank en el pie de cada alerta con `fglo=1`.
+        "Canadians and international candidates",
         "We provide immigration support and relocation to Toronto",
         "Path to permanent residency",
     ],

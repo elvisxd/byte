@@ -151,6 +151,21 @@ getonbrd = true
 # llegar cosas fuera de lugar, la alerta que las trae se arregla en LinkedIn, no
 # en este archivo.
 linkedin = true
+# Las alertas de Job Bank, el portal de empleo del gobierno de Canadá. Mismo
+# camino que `linkedin`: son correos tuyos, leídos en solo lectura.
+#
+# ENCENDIDA desde 2026-09-19. Se verificó contra un correo real del buzón: el
+# remitente es `no-reply-jobalert@hrsdc-rhdcc.gc.ca` —el ministerio, no
+# `jobbank.gc.ca`— y el correo viene **solo en HTML**, sin parte de texto
+# plano; las dos cosas juntas son la razón de que el lector de LinkedIn no
+# sirviera tal cual.
+#
+# Es un canal fino a propósito: las empresas que contratan por Global Talent
+# Stream están exentas de publicar en Job Bank, así que las buenas no aparecen
+# acá. Lo que llega depende de las alertas guardadas allá —una por código NOC,
+# con el filtro de candidatos internacionales—, y el criterio de qué se busca
+# se define allá, no en este archivo.
+jobbank = true
 # Respuestas a tus postulaciones, leídas de tu propio buzón por IMAP —el mismo
 # camino y la misma contraseña de aplicación que `linkedin`, y también en solo
 # lectura: no marca, no mueve, no borra—.
