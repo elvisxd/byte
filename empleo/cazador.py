@@ -32,6 +32,7 @@ from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 from empleo.postulaciones import AVISABLES, Respuesta, bloque
+from empleo.retraso import informe, leer_avisos
 
 logger = get_logger("empleo.cazador")
 
@@ -557,6 +558,26 @@ async def agregar_empresa(nombre: str, url: str) -> str:
     )
 
 
+async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
+    """Cuánto tardás en postular después del aviso. No cambia nada, mide.
+
+    Lee los digests del disco y el buzón, y los resta. Ver `empleo/retraso.py`
+    para por qué esto no vive dentro del criterio: primero se mide y después se
+    decide si `hasta_24h` vale 25 o vale menos.
+    """
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave, 45)
+    return informe(
+        leer_avisos(carpeta),
+        respuestas,
+        criterio.puntaje_minimo,
+        # "A tiempo" es el mismo corte con el que el cazador decide no avisar
+        # una oferta por vieja. Si acá fuera otro, dirían cosas distintas.
+        (criterio.descartar_despues_de_dias or 4) * 24,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
@@ -572,6 +593,11 @@ def main() -> None:
         "--probar-empresas",
         action="store_true",
         help="Dice cuáles tokens de [[empresas]] responden y cuántos puestos traen",
+    )
+    parser.add_argument(
+        "--retraso",
+        action="store_true",
+        help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -596,6 +622,11 @@ def main() -> None:
         return
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
+        return
+    if args.retraso:
+        # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
+        # mientras una vuelta está corriendo.
+        print(asyncio.run(medir_retraso(criterio, carpeta_de_trabajo())))
         return
     if args.probar:
         # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta
