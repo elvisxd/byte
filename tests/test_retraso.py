@@ -159,3 +159,68 @@ def test_sin_digests_lo_dice_en_vez_de_inventar_una_mediana(tmp_path: Path) -> N
     texto = informe(leer_avisos(tmp_path), [], puntaje_minimo=25, horas_a_tiempo=96)
 
     assert "no hay con qué medir" in texto
+
+
+_SIN_EMPRESA = """# Ofertas — 2026-09-15T09:07
+
+## 84 · Bilingual (Spanish/English) Full-Stack Developer
+- https://www.getonbrd.com/jobs/bilingual-full-stack
+- fuente: getonbrd · Remote
+- por qué: +30 latam; +25 hasta_24h (6 h)
+"""
+
+
+def test_una_oferta_sin_empresa_no_se_queda_con_el_titulo_de_empresa(tmp_path: Path) -> None:
+    """`escribir_digest` omite el " — " cuando el feed no manda la empresa, y
+    Get on Board no la manda nunca. Cortando con `rpartition`, el título
+    terminaba TAMBIÉN en la empresa y el informe mostraba "X — X".
+
+    No es sólo feo: el emparejado busca el dominio del remitente adentro del
+    nombre de la empresa, y con el título entero ahí adentro ataría acuses a
+    ofertas que no son. Salió corriéndolo de verdad, no razonándolo.
+    """
+    (tmp_path / "2026-09-15-0907.md").write_text(_SIN_EMPRESA, encoding="utf-8")
+
+    aviso = leer_avisos(tmp_path)[0]
+
+    assert aviso.titulo == "Bilingual (Spanish/English) Full-Stack Developer"
+    assert aviso.empresa == ""
+
+
+def test_una_empresa_vacia_no_ata_ningun_acuse() -> None:
+    """El otro lado del mismo caso: sin empresa no hay con qué emparejar, y
+    atar por vacío ataría cualquier cosa con cualquier cosa."""
+    avisos = [
+        Aviso(datetime.now(tz=UTC) - timedelta(hours=30), 84, "Full-Stack", "", "https://x/1")
+    ]
+    respuesta = _respuesta("no-reply@tabiya.com", datetime.now(tz=UTC) - timedelta(hours=8))
+
+    atados, _, sueltos = emparejar(avisos, [respuesta])
+
+    assert not atados
+    assert len(sueltos) == 1
+
+
+def test_sin_credenciales_el_informe_no_dice_que_no_postulaste() -> None:
+    """Sin buzón, TODAS las ofertas figuran sin postular. Ese número se lee
+    como "ignoraste 121 ofertas" cuando en realidad es "no miramos", y un
+    informe que no distingue las dos cosas es el mismo fallo silencioso que
+    este comando existe para destapar."""
+    avisos = [_aviso("Cohere", 10, puntaje=52)]
+
+    texto = informe(avisos, [], 25, 96, sin_buzon="faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD")
+
+    assert "NO SE LEYÓ EL BUZÓN" in texto
+    assert "sin comprobar contra el buzón: 1" in texto
+    assert "sin rastro de postulación" not in texto
+
+
+def test_con_buzon_vacio_lo_dice_distinto_que_con_buzon_ilegible() -> None:
+    """Un buzón que se leyó y no trajo nada no es un buzón que no se pudo leer:
+    el primero es un dato, el segundo es una tuerca floja."""
+    avisos = [_aviso("Cohere", 10, puntaje=52)]
+
+    texto = informe(avisos, [], 25, 96)
+
+    assert "no trajo ninguna respuesta" in texto
+    assert "sin rastro de postulación: 1" in texto
