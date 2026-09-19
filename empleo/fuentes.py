@@ -821,19 +821,30 @@ ATS_URL = {
 
 
 async def empresas(
-    cliente: httpx.AsyncClient, listado: tuple[tuple[str, str, str], ...]
+    cliente: httpx.AsyncClient,
+    listado: tuple[tuple[str, str, str], ...],
+    mudas: list[str] | None = None,
 ) -> list[Oferta]:
     """Los puestos abiertos de cada empresa de la lista. `(nombre, ats, token)`.
 
     Una empresa que falla no arrastra a las demás: un token equivocado o una
     empresa que se cambió de plataforma es lo más común acá, y tiene que costar
     esa empresa y no el aviso entero.
+
+    Pero costar esa empresa **en silencio** es peor que el error: un token que
+    no existe se ve igual que una empresa que hoy no publicó nada, y la lista
+    queda con nombres que hace meses no devuelven una sola oferta. Los nombres
+    de las que no contestaron se dejan en `mudas`, y el cazador los pone en el
+    aviso. Responder con cero puestos no es estar muda: eso es un día sin
+    vacantes, no una lista rota.
     """
     salida: list[Oferta] = []
     for nombre, ats, token in listado:
         plantilla = ATS_URL.get(ats.lower())
         if not plantilla or not token:
             logger.warning("empresa_mal_configurada", empresa=nombre[:80], ats=ats[:40])
+            if mudas is not None:
+                mudas.append(nombre)
             continue
         crudo = _json_de(
             await _traer(
@@ -843,6 +854,9 @@ async def empresas(
             )
         )
         if crudo is None:
+            logger.warning("empresa_sin_respuesta", empresa=nombre[:80], ats=ats[:40])
+            if mudas is not None:
+                mudas.append(nombre)
             continue
         try:
             salida.extend(_LECTORES_ATS[ats.lower()](nombre, crudo))
@@ -851,6 +865,8 @@ async def empresas(
             logger.warning(
                 "empresa_forma_inesperada", empresa=nombre[:80], error_type=type(exc).__name__
             )
+            if mudas is not None:
+                mudas.append(nombre)
     return salida
 
 

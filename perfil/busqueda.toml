@@ -292,6 +292,74 @@ ats = "workday"
 # fuentes.py`: es el único adaptador que no habla con una API documentada.
 token = "https://chevron.wd5.myworkdayjobs.com/jobs"
 
+# --- Canadá: las que contratan de afuera ---
+#
+# Job Bank resultó ser un canal fino y ya sabemos por qué: las empresas que
+# contratan por Global Talent Stream están EXENTAS del requisito de publicar
+# ahí, así que las buenas no aparecen. Donde sí publican es en su propio board,
+# y para eso está esta lista.
+#
+# Estas son empresas canadienses de tecnología conocidas por contratar gente de
+# afuera. **Los tokens de abajo NO están verificados**: el entorno donde se
+# escribió esto tiene bloqueadas las APIs de Greenhouse, Lever y Ashby, así que
+# adivinar el token o creerle a una búsqueda web habría sido exactamente lo que
+# el comentario de más arriba dice que no se hace.
+#
+# No hace falta adivinar: desde 2026-09-19 el cazador AVISA cuál no contestó.
+# Una empresa muda entra al pie del aviso como "empresa Shopify: error", así que
+# en la próxima corrida se sabe cuáles de estas sirven y cuáles hay que
+# corregir. El token correcto sale de abrir su página de empleos y mirar la URL,
+# o de:
+#
+#   uv run python -m empleo.cazador --probar-empresas
+#
+# La lista está para crecer. Cuando encuentres una empresa que pase el criterio
+# —la traiga el cazador, Job Bank o LinkedIn— se agrega acá con:
+#
+#   uv run python -m empleo.cazador --agregar-empresa "Nombre" <url de su board>
+#
+# y a partir de ahí se le pregunta sola todos los días.
+
+[[empresas]]
+nombre = "Shopify"
+ats = "greenhouse"
+token = "shopify"
+
+[[empresas]]
+nombre = "Cohere"
+ats = "ashby"
+token = "cohere"
+
+[[empresas]]
+nombre = "Wealthsimple"
+ats = "greenhouse"
+token = "wealthsimple"
+
+[[empresas]]
+nombre = "Clio"
+ats = "greenhouse"
+token = "clio"
+
+[[empresas]]
+nombre = "Jobber"
+ats = "greenhouse"
+token = "jobber"
+
+[[empresas]]
+nombre = "1Password"
+ats = "greenhouse"
+token = "1password"
+
+[[empresas]]
+nombre = "Coveo"
+ats = "lever"
+token = "coveo"
+
+[[empresas]]
+nombre = "Ada"
+ats = "lever"
+token = "ada"
+
 [aviso]
 # Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
 # además no entra: el panel que reenvía a Telegram rechaza los textos de más de

@@ -1047,6 +1047,74 @@ def test_una_empresa_que_falla_no_arrastra_a_las_demas() -> None:
     assert [o.empresa for o in ofertas] == ["Sana"]
 
 
+def test_la_empresa_que_no_contesta_queda_anotada_con_su_nombre() -> None:
+    """Fallar en silencio es peor que fallar. Un token que no existe se ve igual
+    que una empresa que hoy no publicó nada, y así la lista se llena de nombres
+    que hace meses no devuelven una sola oferta sin que nadie se entere.
+
+    Cero puestos NO es estar muda: eso es un día sin vacantes.
+    """
+
+    def manejador(pedido: httpx.Request) -> httpx.Response:
+        if "rota" in str(pedido.url):
+            return httpx.Response(404)
+        if "vacia" in str(pedido.url):
+            return httpx.Response(200, json={"jobs": []})
+        return httpx.Response(
+            200,
+            json={"jobs": [{"id": 7, "title": "Senior Engineer", "absolute_url": "https://ok"}]},
+        )
+
+    mudas: list[str] = []
+
+    async def correr() -> list[Oferta]:
+        async with _cliente(manejador) as cliente:
+            return await fuentes.empresas(
+                cliente,
+                (
+                    ("Rota", "greenhouse", "rota"),
+                    ("Vacia", "greenhouse", "vacia"),
+                    ("Sana", "greenhouse", "sana"),
+                ),
+                mudas,
+            )
+
+    ofertas = asyncio.run(correr())
+
+    assert [o.empresa for o in ofertas] == ["Sana"]
+    assert mudas == ["Rota"]
+
+
+def test_la_empresa_muda_llega_al_pie_del_aviso_con_su_nombre(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De nada sirve anotarla si se queda en el log de Railway. Entra al conteo
+    igual que una fuente caída —en -1, que el pie escribe como "error"— para que
+    el token roto se lea en el teléfono y no adentro de un total de `empresas`
+    que igual parece sano.
+    """
+
+    async def muda(
+        _cliente: httpx.AsyncClient,
+        listado: tuple[tuple[str, str, str], ...],
+        mudas: list[str] | None = None,
+    ) -> list[Oferta]:
+        if mudas is not None:
+            mudas.append(listado[0][0])
+        return []
+
+    monkeypatch.setattr(fuentes, "empresas", muda)
+    criterio = Criterio(
+        fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"empresas": True},
+        empresas=(("Shopify", "greenhouse", "shopify"),),
+    )
+
+    _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+
+    assert conteo["empresa Shopify"] == -1
+    assert "empresa Shopify: error" in cazador._pie_fuentes(conteo)
+
+
 def test_una_empresa_sin_token_no_se_consulta() -> None:
     """Una fila incompleta del TOML no puede producir un error por corrida que no
     dice nada nuevo: se descarta al leer la configuración."""

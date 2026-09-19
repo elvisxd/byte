@@ -79,13 +79,16 @@ async def recolectar(
     if criterio.fuentes.get("workday", True) and en_workday:
         terminos = criterio.stack.get("fuerte", ()) + criterio.stack.get("medio", ())
         activas["workday"] = lambda c: fuentes.workday(c, en_workday, terminos)
+    # Las empresas que no contestaron. Se llena adentro del adaptador y se lee
+    # después de la corrida: un token equivocado no puede quedarse callado.
+    mudas: list[str] = []
     if criterio.fuentes.get("empresas", True) and criterio.empresas:
         # Las empresas grandes rara vez publican en los agregadores: se les
         # pregunta a su propia página de Careers, que es de donde salen los
         # puestos el día que abren.
         listado = tuple(e for e in criterio.empresas if e[1] != "workday")
         if listado:
-            activas["empresas"] = lambda c: fuentes.empresas(c, listado)
+            activas["empresas"] = lambda c: fuentes.empresas(c, listado, mudas)
     # Las dos fuentes de correo comparten buzón y contraseña: se leen una vez,
     # acá afuera, porque encender Job Bank con LinkedIn apagado es una
     # combinación legítima —y con las credenciales adentro del `if` de LinkedIn
@@ -120,6 +123,12 @@ async def recolectar(
             continue
         conteo[nombre] = len(resultado)
         ofertas.extend(resultado)
+    # Cada empresa muda entra al conteo con su propio nombre y en -1, que es el
+    # mismo "error" que ya usa el pie del aviso para una fuente caída. Así el
+    # token roto se lee en el teléfono —"empresa Shopify: error"— en vez de
+    # esconderse dentro de un total de `empresas` que igual parece sano.
+    for empresa in mudas:
+        conteo[f"empresa {empresa}"] = -1
     return ofertas, conteo
 
 
