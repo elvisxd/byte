@@ -101,11 +101,28 @@ SENALES: dict[str, re.Pattern[str]] = {
     "sin_patrocinio": re.compile(
         r"\b((can ?not|cannot|can't|do not|don't|unable to|not able to|won't|will not)"
         r"\s+(currently\s+)?(provide|offer|support)?\s*(visa\s+)?sponsor\w*"
-        r"|no (visa )?sponsorship|without sponsorship|sponsorship is not)"
+        r"|no (visa )?sponsorship|without sponsorship|sponsorship is not"
+        # "Tenés que ser residente permanente" es un NO a sponsorizar, dicho como
+        # requisito. Sin esto, "permanent resident" en una oferta canadiense se
+        # confundía con la buena noticia de abajo.
+        r"|must (be|have|hold) (a |an )?(canadian |u\.?s\.? |american )?"
+        r"(citizen|permanent resident)"
+        r"|only (canadian |u\.?s\.? )?(citizens|permanent residents)"
+        r"|permanent residen\w* (is )?(required|mandatory))"
     ),
+    # Patrocinio. Las frases de Canadá son otras y ninguna estaba: medido sobre
+    # nueve formas reales, siete no se detectaban. LMIA es el instrumento con el
+    # que un empleador canadiense contrata a alguien de afuera, y Global Talent
+    # Stream es la vía rápida para puestos de tecnología.
     "patrocinio": re.compile(
         r"\b(visa sponsorship|we sponsor|sponsorship (is )?(available|provided|offered)"
-        r"|h-?1b|green card|work permit)\b"
+        r"|h-?1b|green card|work permit"
+        r"|lmia|global talent stream"
+        r"|open to (international|foreign) (candidates|applicants)"
+        r"|immigration (support|assistance|sponsorship)"
+        r"|(path|pathway) to (permanent residency|pr)"
+        r"|we (will )?(support|sponsor|handle|cover)[^.!?]{0,25}"
+        r"(work permit|visa|immigration|relocation to))\b"
     ),
     "solo_us": re.compile(
         r"\b(u\.?s\.?a?[ -]only|united states only|us[ -]based (only|candidates)"
@@ -161,6 +178,7 @@ DEFECTOS_PREFERENCIAS = {
     "latam": 30,
     "remoto_global": 20,
     "reubicacion": 20,
+    "patrocinio": 15,
     "contractor": 12,
     "freelance": 5,
 }

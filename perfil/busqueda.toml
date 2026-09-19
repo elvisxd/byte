@@ -54,6 +54,14 @@ remoto_global = 20
 # Nombrarla para negarla NO suma: "no relocation assistance is provided"
 # tiene todas las palabras de una buena noticia y dice lo contrario.
 reubicacion = 20
+# Patrocinio: la empresa se ocupa del permiso de trabajo. Antes se detectaba y
+# se mostraba, pero no sumaba, porque estando autorizado en EEUU te daba igual.
+# Con Canadá y Europa en la lista deja de dar igual: allá una oferta que NO
+# patrocina es una oferta que no podés tomar, por bien que encaje.
+#
+# Vale menos que `remoto_global` a propósito: un remoto lo tomás ya, y un
+# patrocinio son meses de trámite. Poner 0 vuelve al comportamiento anterior.
+patrocinio = 15
 # Contratación como contractor / EOR (Deel, Remote.com): el camino por el que
 # una empresa de afuera contrata sin abrir entidad legal.
 contractor = 12
