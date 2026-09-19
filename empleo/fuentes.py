@@ -503,6 +503,17 @@ _RUIDO_LINKEDIN = re.compile(
 )
 
 
+# La primera línea del correo dice de qué búsqueda guardada salió:
+#
+#   Your job alert for software developer venezuela in Venezuela
+#
+# Se guarda entera —nombre y lugar— en vez de partirla en dos: el nombre de la
+# alerta puede llevar su propio " in " adentro ("...engineer in spain that
+# offers visa sponsorship..."), y partir bien esa línea no vale lo que cuesta
+# cuando la línea entera ya identifica la alerta.
+_CABECERA_LINKEDIN = re.compile(r"^Your job alert for (.+?)\s*$", re.M | re.I)
+
+
 def ofertas_de_alerta_linkedin(cuerpo: str, fecha: str = "") -> list[Oferta]:
     """Las ofertas de UN correo de alerta, ya en texto plano.
 
@@ -510,6 +521,9 @@ def ofertas_de_alerta_linkedin(cuerpo: str, fecha: str = "") -> list[Oferta]:
     es lo que se rompe cuando ellos cambian la plantilla, y así se prueba con
     un correo pegado en un test en vez de con una cuenta de verdad.
     """
+    cabecera = _CABECERA_LINKEDIN.search(cuerpo)
+    origen = cabecera.group(1)[:200] if cabecera else ""
+
     ofertas: list[Oferta] = []
     for bloque in _SEPARADOR_LINKEDIN.split(cuerpo):
         enlace = _VER_OFERTA.search(bloque)
@@ -548,6 +562,9 @@ def ofertas_de_alerta_linkedin(cuerpo: str, fecha: str = "") -> list[Oferta]:
                 descripcion=f"{titulo}\n{empresa}\n{ubicacion}",
                 ubicacion=ubicacion[:200],
                 publicada=fecha[:60],
+                # Qué alerta la trajo. No se puntúa —ver `Oferta.origen`—: es
+                # tu frase de búsqueda, no un hecho de la oferta.
+                origen=origen,
             )
         )
     return ofertas

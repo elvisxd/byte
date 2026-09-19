@@ -915,6 +915,46 @@ def test_el_link_va_sin_el_token_de_seguimiento() -> None:
     assert "trackingId" not in oferta.url
 
 
+def test_se_guarda_de_que_alerta_salio_cada_oferta() -> None:
+    """La primera línea del correo dice qué búsqueda guardada lo generó. Con
+    diez alertas encima, es lo único que permite saber cuál está trayendo
+    basura y borrarla."""
+    ofertas = fuentes.ofertas_de_alerta_linkedin(_ALERTA_LINKEDIN)
+
+    assert all(o.origen == "Ingeniero de software in United States" for o in ofertas)
+
+
+def test_el_nombre_de_la_alerta_no_suma_un_solo_punto() -> None:
+    """El caso que decidió el diseño, medido y no razonado.
+
+    La cabecera es **tu frase de búsqueda**, no un hecho de la oferta, y es la
+    misma para todas las ofertas del correo. Si entrara en `buscable()`, una
+    alerta llamada "AI engineer ... with RAG, vector databases and agent
+    frameworks" le daría el stack completo a cualquier puesto que arrastre, y
+    una que diga "visa sponsorship and relocation" les daría +35 a todas por
+    igual. Medido: un "Programador full stack" sin relación pasa de 25 a 60.
+
+    Un puntaje que sube lo mismo para todas las ofertas de un correo no ordena
+    nada; sólo inunda el teléfono. Por eso `origen` queda fuera de `buscable()`,
+    y este test es lo que impide que alguien lo agregue sin darse cuenta.
+    """
+    alerta = (
+        "senior ai engineer building production llm applications with rag, "
+        "vector databases and agent frameworks that offers visa sponsorship "
+        "and relocation package in Canada"
+    )
+    ajena = _oferta(
+        fuente="linkedin",
+        titulo="Programador full stack",
+        empresa="Proper Business Solutions",
+        descripcion="Programador full stack\nProper Business Solutions\nCanada",
+        ubicacion="Canada",
+    )
+
+    assert puntuar(replace(ajena, origen=alerta), CRITERIO).total == puntuar(ajena, CRITERIO).total
+    assert alerta not in replace(ajena, origen=alerta).buscable()
+
+
 def test_sin_credenciales_no_se_intenta_conectar_al_buzon() -> None:
     """Sin `GMAIL_APP_PASSWORD` la fuente está apagada, y apagada significa que
     no se abre una conexión IMAP para que el servidor conteste que faltó la
