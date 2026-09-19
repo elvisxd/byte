@@ -485,17 +485,31 @@ async def probar_empresas(criterio: Criterio) -> str:
     if not criterio.empresas:
         return "No hay empresas en `[[empresas]]` del TOML."
 
+    # Workday no se pregunta por el mismo camino que las otras tres: necesita
+    # los términos que buscás para decidir de qué puestos pedir la descripción.
+    # Pasarlo por `empresas()` —que sólo conoce greenhouse, lever y ashby— lo
+    # reportaba como "token equivocado" cuando el token estaba bien. Una
+    # herramienta que existe para distinguir un fallo real de uno aparente no
+    # puede inventar el suyo.
+    terminos = criterio.stack.get("fuerte", ()) + criterio.stack.get("medio", ())
+
     lineas = []
     async with fuentes.cliente_http() as cliente:
         for entrada in criterio.empresas:
             nombre, ats, token = entrada
-            encontradas = await fuentes.empresas(cliente, (entrada,))
+            if ats.lower() == "workday":
+                encontradas = await fuentes.workday(cliente, (entrada,), terminos)
+            else:
+                encontradas = await fuentes.empresas(cliente, (entrada,))
             if encontradas:
                 estado = f"{len(encontradas):>3} puestos"
                 muestra = f"  ej: {encontradas[0].titulo[:60]}"
             else:
                 estado = "  sin respuesta o token equivocado"
-                muestra = f"  revisá la URL de su página de empleos ({ats})"
+                # El código HTTP sale en el log de arriba (`fuente_fallo`), y es
+                # lo que decide qué hacer: 404 es el token, 403 o 429 es que te
+                # están frenando y la empresa puede estar bien.
+                muestra = f"  mirá el `status` del aviso de arriba ({ats}/{token})"
             lineas.append(f"[{ats:>10}] {nombre:<16} {estado}\n{muestra}")
     return "\n".join(lineas)
 

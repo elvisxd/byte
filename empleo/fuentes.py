@@ -82,6 +82,20 @@ def _texto(valor: object, tope: int = 20_000) -> str:
     return str(valor)[:tope]
 
 
+def _por_que_fallo(exc: Exception) -> dict[str, object]:
+    """El tipo del error y, si el servidor contestó, su código.
+
+    Sin el código, un token equivocado y un bloqueo se leen igual —los dos
+    dicen `HTTPStatusError`— y son problemas opuestos: uno se arregla mirando
+    la URL del board, el otro esperando o cambiando de red. Distinguirlos es la
+    diferencia entre corregir la lista y borrar una empresa que sí servía.
+    """
+    detalle: dict[str, object] = {"error_type": type(exc).__name__}
+    if isinstance(exc, httpx.HTTPStatusError):
+        detalle["status"] = exc.response.status_code
+    return detalle
+
+
 async def _traer(
     cliente: httpx.AsyncClient, url: str, max_bytes: int = MAX_BYTES
 ) -> httpx.Response | None:
@@ -95,7 +109,7 @@ async def _traer(
         respuesta = await cliente.get(url)
         respuesta.raise_for_status()
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
-        logger.warning("fuente_fallo", url=url[:120], error_type=type(exc).__name__)
+        logger.warning("fuente_fallo", url=url[:120], **_por_que_fallo(exc))
         return None
     if len(respuesta.content) > max_bytes:
         logger.warning("fuente_demasiado_grande", url=url[:120], bytes=len(respuesta.content))
@@ -1136,7 +1150,7 @@ async def _traer_post(cliente: httpx.AsyncClient, url: str, cuerpo: dict) -> htt
         respuesta = await cliente.post(url, json=cuerpo)
         respuesta.raise_for_status()
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
-        logger.warning("fuente_fallo", url=url[:120], error_type=type(exc).__name__)
+        logger.warning("fuente_fallo", url=url[:120], **_por_que_fallo(exc))
         return None
     return respuesta
 
