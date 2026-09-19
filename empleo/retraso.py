@@ -216,41 +216,98 @@ def _percentil(valores: list[float], fraccion: float) -> float:
     return ordenados[indice]
 
 
-def informe(
+@dataclass(frozen=True, slots=True)
+class Medicion:
+    """Lo que salió de restar los digests contra el buzón, ya contado."""
+
+    atados: list[tuple[Aviso, Respuesta, float]]
+    por_ats: list[Respuesta]
+    sueltos: list[Respuesta]
+    huerfanas: list[Aviso]
+    a_tiempo: list[Aviso]
+    respuestas: int
+    sin_buzon: str
+
+
+def medir(
     avisos: list[Aviso],
     respuestas: list[Respuesta],
     puntaje_minimo: int,
     horas_a_tiempo: float,
     sin_buzon: str = "",
-) -> str:
-    """El parte: cuánto tardás, y qué te avisaron que nunca postulaste.
+) -> Medicion:
+    """Las cuentas, una sola vez. El informe largo y el resumen las comparten."""
+    atados, por_ats, sueltos = emparejar(avisos, respuestas)
+    postuladas = {aviso.url for aviso, _, _ in atados}
+    ahora = datetime.now(tz=UTC)
+    huerfanas = [a for a in avisos if a.puntaje >= puntaje_minimo and a.url not in postuladas]
+    return Medicion(
+        atados=atados,
+        por_ats=por_ats,
+        sueltos=sueltos,
+        huerfanas=huerfanas,
+        a_tiempo=[
+            a for a in huerfanas if (ahora - a.cuando).total_seconds() / 3600 <= horas_a_tiempo
+        ],
+        respuestas=len(respuestas),
+        sin_buzon=sin_buzon,
+    )
 
-    `sin_buzon` dice por qué no se pudo leer el correo, si no se pudo. Importa
-    que sea explícito: sin buzón **todas** las ofertas figuran "sin rastro de
-    postulación", y ese número se lee como "ignoraste 121 ofertas" cuando en
+
+def resumen(medicion: Medicion) -> str:
+    """El informe en cuatro renglones, para el teléfono.
+
+    El panel rechaza los textos de más de 1000 caracteres, y el informe largo
+    los pasa apenas hay unas pocas ofertas sin postular. Acá van los números y
+    no la lista: los links se miran en el digest, sentado.
+    """
+    if medicion.sin_buzon:
+        cabeza = f"sin buzón ({medicion.sin_buzon}): no hay retraso que medir"
+    elif medicion.atados:
+        horas = [h for _, _, h in medicion.atados]
+        cabeza = (
+            f"mediana {_duracion(statistics.median(horas))}"
+            f" · {len(medicion.atados)} de {medicion.respuestas} acuses atados"
+        )
+    else:
+        cabeza = f"ningún acuse atado, de {medicion.respuestas}"
+
+    return (
+        f"Retraso — {datetime.now().strftime('%d/%m')}\n"
+        f"{cabeza}\n"
+        f"avisadas sin postular: {len(medicion.huerfanas)}"
+        f" · a tiempo: {len(medicion.a_tiempo)}"
+    )
+
+
+def informe(medicion: Medicion) -> str:
+    """El parte largo: cuánto tardás, y qué te avisaron que nunca postulaste.
+
+    `Medicion.sin_buzon` dice por qué no se pudo leer el correo, si no se pudo.
+    Importa que sea explícito: sin buzón **todas** las ofertas figuran sin
+    postular, y ese número se lee como "ignoraste 121 ofertas" cuando en
     realidad es "no miramos". Un informe que no distingue las dos cosas es el
     mismo fallo silencioso que este comando existe para destapar.
     """
-    if not avisos:
-        return (
-            "No hay digests en la carpeta de trabajo, así que no hay con qué medir.\n"
-            "Los escribe el cazador en cada vuelta; en Railway viven en el volumen."
-        )
+    if not medicion.huerfanas and not medicion.atados and not medicion.respuestas:
+        if not medicion.sin_buzon:
+            return (
+                "No hay digests en la carpeta de trabajo, así que no hay con qué medir.\n"
+                "Los escribe el cazador en cada vuelta; en Railway viven en el volumen."
+            )
 
-    atados, por_ats, sueltos = emparejar(avisos, respuestas)
     lineas = ["Retraso entre «te avisé» y «postulaste»", ""]
 
-    if sin_buzon:
+    if medicion.sin_buzon:
         lineas += [
-            f"  NO SE LEYÓ EL BUZÓN: {sin_buzon}",
+            f"  NO SE LEYÓ EL BUZÓN: {medicion.sin_buzon}",
             "  Sin él no hay retraso que medir, y lo de abajo no está comprobado.",
         ]
-    elif not respuestas:
+    elif not medicion.respuestas:
         lineas.append("  el buzón no trajo ninguna respuesta de postulación en el período.")
-    elif atados:
-        horas = [h for _, _, h in atados]
-        total = len(atados) + len(por_ats) + len(sueltos)
-        lineas.append(f"  emparejadas: {len(atados)} de {total} acuses")
+    elif medicion.atados:
+        horas = [h for _, _, h in medicion.atados]
+        lineas.append(f"  emparejadas: {len(medicion.atados)} de {medicion.respuestas} acuses")
         # Los percentiles sobre dos o tres datos son ruido con cara de
         # estadística: con tan poco, la mediana sola ya dice lo que hay.
         if len(horas) >= MINIMO_PARA_PERCENTILES:
@@ -266,35 +323,32 @@ def informe(
             )
     else:
         lineas.append(
-            f"  de {len(respuestas)} respuestas del buzón, ningún acuse se pudo "
+            f"  de {medicion.respuestas} respuestas del buzón, ningún acuse se pudo "
             "atar a una oferta avisada."
         )
-    if por_ats:
-        llegaron = "llegó" if len(por_ats) == 1 else "llegaron"
+    if medicion.por_ats:
+        llego = "llegó" if len(medicion.por_ats) == 1 else "llegaron"
         lineas.append(
-            f"  {len(por_ats)} {llegaron} desde un ATS (ashbyhq, greenhouse…): "
+            f"  {len(medicion.por_ats)} {llego} desde un ATS (ashbyhq, greenhouse…): "
             "el correo no nombra a la empresa y no se puede atar."
         )
-    if sueltos:
-        lineas.append(f"  {len(sueltos)} sin oferta previa que les corresponda.")
+    if medicion.sueltos:
+        lineas.append(f"  {len(medicion.sueltos)} sin oferta previa que les corresponda.")
 
-    postuladas = {aviso.url for aviso, _, _ in atados}
+    rastro = "sin comprobar contra el buzón" if medicion.sin_buzon else "sin rastro de postulación"
+    lineas += ["", f"Avisadas, {rastro}: {len(medicion.huerfanas)}"]
+
     ahora = datetime.now(tz=UTC)
-    huerfanas = [a for a in avisos if a.puntaje >= puntaje_minimo and a.url not in postuladas]
-    a_tiempo = [a for a in huerfanas if (ahora - a.cuando).total_seconds() / 3600 <= horas_a_tiempo]
-
-    rastro = "sin comprobar contra el buzón" if sin_buzon else "sin rastro de postulación"
-    lineas += ["", f"Avisadas sobre {puntaje_minimo} puntos, {rastro}: {len(huerfanas)}"]
-    if a_tiempo:
-        lineas.append(f"  todavía a tiempo ({_duracion(horas_a_tiempo)} o menos): {len(a_tiempo)}")
-        for aviso in sorted(a_tiempo, key=lambda a: a.puntaje, reverse=True)[:8]:
+    if medicion.a_tiempo:
+        lineas.append(f"  todavía a tiempo: {len(medicion.a_tiempo)}")
+        for aviso in sorted(medicion.a_tiempo, key=lambda a: a.puntaje, reverse=True)[:8]:
             hace = (ahora - aviso.cuando).total_seconds() / 3600
             empresa = f" — {aviso.empresa}" if aviso.empresa else ""
             lineas.append(
                 f"    {aviso.puntaje:>4} · hace {_duracion(hace):>6}  {aviso.titulo[:52]}{empresa}"
             )
             lineas.append(f"           {aviso.url}")
-    elif huerfanas:
+    elif medicion.huerfanas:
         lineas.append("  ninguna sigue a tiempo.")
 
     lineas += [
@@ -302,7 +356,7 @@ def informe(
         "Un acuse que no llega no prueba que no postulaste: hay empresas que no",
         "mandan ninguno. Esto mide lo que se puede ver desde el buzón.",
     ]
-    if sin_buzon:
+    if medicion.sin_buzon:
         lineas.append("Y esta vez ni eso: falta la credencial, así que la lista de arriba")
         lineas.append("es todo lo avisado, no lo que quedó sin postular.")
     return "\n".join(lineas)
