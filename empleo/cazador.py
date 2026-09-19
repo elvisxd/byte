@@ -370,8 +370,17 @@ def escribir_digest(
             f"- {oferta.url}",
             f"- fuente: {oferta.fuente}" + (f" · {oferta.ubicacion}" if oferta.ubicacion else ""),
             f"- por qué: {'; '.join(puntaje.motivos) or 'nada que sume'}",
-            "",
         ]
+        # Qué alerta la trajo, cuando la fuente lo dice. Va acá y no al aviso de
+        # Telegram porque el aviso corta en 1000 caracteres y cuatro ofertas ya
+        # ocupan 820: una línea más por oferta se come una oferta entera.
+        #
+        # Es lo que hace revisable una lista de diez alertas: si una llena el
+        # digest de puestos que no tienen nada que ver, se ve acá y se borra en
+        # LinkedIn.
+        if oferta.origen:
+            lineas.append(f"- alerta: {oferta.origen}")
+        lineas.append("")
     destino.write_text("\n".join(lineas), encoding="utf-8")
     return destino
 

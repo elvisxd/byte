@@ -42,6 +42,21 @@ class Oferta:
     publicada: str = ""
     salario: str = ""
     etiquetas: tuple[str, ...] = field(default_factory=tuple)
+    # De qué búsqueda guardada salió, cuando la fuente lo dice. Hoy sólo lo dice
+    # LinkedIn, en la cabecera del correo: "Your job alert for X in Y".
+    #
+    # **No entra en `buscable()`, y eso es el punto.** Es lo que vos pediste, no
+    # lo que la oferta es: una alerta llamada "AI Engineer ... With RAG, Vector
+    # Databases And Agent Frameworks" le daría +24 de stack a CUALQUIER puesto
+    # que traiga, y una que nombre "Visa Sponsorship And Relocation" le daría
+    # +35 a todos por igual —medido: una oferta de "Programador full stack" sin
+    # nada que ver pasa de 25 a 60—. Puntuar la cabecera es puntuar tu propia
+    # frase de búsqueda, y un puntaje que sube igual para todas las ofertas de
+    # un correo no ordena nada: sólo inunda el teléfono.
+    #
+    # Sirve para otra cosa: saber qué alerta trajo cada oferta, y así borrar la
+    # que produce basura.
+    origen: str = ""
 
     @property
     def clave(self) -> str:
