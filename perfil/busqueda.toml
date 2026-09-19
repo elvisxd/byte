@@ -134,7 +134,15 @@ getonbrd = true
 # `.env`; sin eso no trae nada y lo dice. Las ofertas salen de las búsquedas
 # guardadas que tengas en LinkedIn, así que el criterio de qué llega se define
 # allá y acá solo se puntúa.
-linkedin = false
+# ENCENDIDA desde 2026-09-19. Se verificó contra un correo real del buzón: el
+# parser sacó 4 de 4 ofertas del digest, incluida una con "This company is
+# actively hiring" entre la ubicación y el link, y limpió el tracking de la URL.
+#
+# Lo que llega depende de las alertas que tengas guardadas en LinkedIn: el
+# criterio de qué se busca se define allá, y acá sólo se puntúa. Si empiezan a
+# llegar cosas fuera de lugar, la alerta que las trae se arregla en LinkedIn, no
+# en este archivo.
+linkedin = true
 # Respuestas a tus postulaciones, leídas de tu propio buzón por IMAP —el mismo
 # camino y la misma contraseña de aplicación que `linkedin`, y también en solo
 # lectura: no marca, no mueve, no borra—.

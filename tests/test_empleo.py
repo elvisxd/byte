@@ -1435,3 +1435,28 @@ def test_el_pendiente_va_arriba_de_las_ofertas() -> None:
         "Tus postulaciones piden algo:\n  [pide algo] x",
     )
     assert texto.index("piden algo") < texto.index("Ofertas —")
+
+
+def test_el_digest_real_de_linkedin_se_parsea_entero() -> None:
+    """Formato copiado de un correo real del buzón, no inventado. La cuarta
+    oferta es la que importa: trae "This company is actively hiring" entre la
+    ubicación y el link, y ese renglón de más rompía los parseos por posición."""
+    cuerpo = (
+        "Your job alert for visa support software developer in European Union\n"
+        "New jobs match your preferences.\n\n"
+        "Staff Software Engineer, AI Reliability Engineering\nAnthropic\nDublin\n"
+        "View job: https://www.linkedin.com/comm/jobs/view/4369100511/?trackingId=abc%3D%3D\n\n"
+        "---------------------------------------------------------\n\n"
+        "Software Engineer\nSiemens eMobility\nEindhoven\n"
+        "View job: https://www.linkedin.com/comm/jobs/view/4453912464/?trackingId=def\n\n"
+        "---------------------------------------------------------\n\n"
+        "Fullstack Software Developer\nHDI Group\nHannover\n\n"
+        "This company is actively hiring\n"
+        "View job: https://www.linkedin.com/comm/jobs/view/4387290897/?trackingId=ghi\n"
+    )
+    ofertas = fuentes.ofertas_de_alerta_linkedin(cuerpo, "Mon, 8 Sep 2026 01:33:44 +0000")
+    assert [o.empresa for o in ofertas] == ["Anthropic", "Siemens eMobility", "HDI Group"]
+    assert ofertas[0].titulo == "Staff Software Engineer, AI Reliability Engineering"
+    # El tracking se va: la misma oferta en dos correos tiene URLs distintas y
+    # sin limpiarla se avisaría dos veces.
+    assert ofertas[0].url == "https://www.linkedin.com/jobs/view/4369100511"
