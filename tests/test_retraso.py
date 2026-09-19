@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from empleo.postulaciones import Respuesta
-from empleo.retraso import Aviso, emparejar, informe, leer_avisos
+from empleo.retraso import Aviso, emparejar, informe, leer_avisos, medir, resumen
 
 
 def _digest(carpeta: Path, nombre: str, cuerpo: str) -> None:
@@ -146,7 +146,7 @@ def test_el_informe_lista_las_que_siguen_a_tiempo() -> None:
     avisamos, pasa el corte, y nadie postuló todavía."""
     avisos = [_aviso("Cohere", 10, puntaje=52), _aviso("Vieja", 500, puntaje=48)]
 
-    texto = informe(avisos, [], puntaje_minimo=25, horas_a_tiempo=96)
+    texto = informe(medir(avisos, [], puntaje_minimo=25, horas_a_tiempo=96))
 
     assert "sin rastro de postulación: 2" in texto
     assert "todavía a tiempo" in texto
@@ -156,7 +156,7 @@ def test_el_informe_lista_las_que_siguen_a_tiempo() -> None:
 
 def test_sin_digests_lo_dice_en_vez_de_inventar_una_mediana(tmp_path: Path) -> None:
     """Una mediana sobre cero datos es un número que se lee igual que uno real."""
-    texto = informe(leer_avisos(tmp_path), [], puntaje_minimo=25, horas_a_tiempo=96)
+    texto = informe(medir(leer_avisos(tmp_path), [], puntaje_minimo=25, horas_a_tiempo=96))
 
     assert "no hay con qué medir" in texto
 
@@ -208,7 +208,9 @@ def test_sin_credenciales_el_informe_no_dice_que_no_postulaste() -> None:
     este comando existe para destapar."""
     avisos = [_aviso("Cohere", 10, puntaje=52)]
 
-    texto = informe(avisos, [], 25, 96, sin_buzon="faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD")
+    texto = informe(
+        medir(avisos, [], 25, 96, sin_buzon="faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD")
+    )
 
     assert "NO SE LEYÓ EL BUZÓN" in texto
     assert "sin comprobar contra el buzón: 1" in texto
@@ -220,7 +222,36 @@ def test_con_buzon_vacio_lo_dice_distinto_que_con_buzon_ilegible() -> None:
     el primero es un dato, el segundo es una tuerca floja."""
     avisos = [_aviso("Cohere", 10, puntaje=52)]
 
-    texto = informe(avisos, [], 25, 96)
+    texto = informe(medir(avisos, [], 25, 96))
 
     assert "no trajo ninguna respuesta" in texto
     assert "sin rastro de postulación: 1" in texto
+
+
+def test_el_resumen_entra_en_el_tope_del_panel() -> None:
+    """El panel rechaza los textos de más de 1000 caracteres y devuelve 422 con
+    el aviso entero: pasarse por uno **no manda nada**. El informe largo se
+    pasa apenas hay unas pocas ofertas sin postular, así que al teléfono va el
+    resumen, que son números y no la lista."""
+    from empleo.aviso import MAX_CARACTERES
+
+    avisos = [_aviso(f"Empresa{n}", 10, puntaje=52) for n in range(40)]
+    respuestas = [
+        _respuesta(f"jobs@empresa{n}.com", datetime.now(tz=UTC) - timedelta(hours=2))
+        for n in range(20)
+    ]
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    assert len(informe(medicion)) > MAX_CARACTERES
+    assert len(resumen(medicion)) <= MAX_CARACTERES
+
+
+def test_el_resumen_dice_que_no_hubo_buzon_en_vez_de_una_mediana_vacia() -> None:
+    """Es el caso que se vio de verdad: sin credenciales, el resumen no puede
+    salir diciendo que tardás cero."""
+    medicion = medir([_aviso("Cohere", 10, puntaje=52)], [], 25, 96, sin_buzon="faltan claves")
+
+    texto = resumen(medicion)
+
+    assert "sin buzón" in texto
+    assert "mediana" not in texto

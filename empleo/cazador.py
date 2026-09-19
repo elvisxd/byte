@@ -32,7 +32,7 @@ from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 from empleo.postulaciones import AVISABLES, Respuesta, bloque
-from empleo.retraso import informe, leer_avisos
+from empleo.retraso import informe, leer_avisos, medir, resumen
 
 logger = get_logger("empleo.cazador")
 
@@ -558,7 +558,7 @@ async def agregar_empresa(nombre: str, url: str) -> str:
     )
 
 
-async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
+async def medir_retraso(criterio: Criterio, carpeta: Path, al_telefono: bool = False) -> str:
     """Cuánto tardás en postular después del aviso. No cambia nada, mide.
 
     Lee los digests del disco y el buzón, y los resta. Ver `empleo/retraso.py`
@@ -576,7 +576,7 @@ async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
         if sin_buzon
         else await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave, 45)
     )
-    return informe(
+    medicion = medir(
         leer_avisos(carpeta),
         respuestas,
         criterio.puntaje_minimo,
@@ -585,6 +585,12 @@ async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
         (criterio.descartar_despues_de_dias or 4) * 24,
         sin_buzon,
     )
+    if al_telefono:
+        # Los digests y el buzón viven los dos en Railway, y la salida de una
+        # corrida allá no siempre se puede leer. El panel sí llega, y es el
+        # camino que este servicio ya usa todos los días.
+        avisar(resumen(medicion))
+    return informe(medicion)
 
 
 def main() -> None:
@@ -607,6 +613,11 @@ def main() -> None:
         "--retraso",
         action="store_true",
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
+    )
+    parser.add_argument(
+        "--al-telefono",
+        action="store_true",
+        help="Con --retraso: manda el resumen al panel además de imprimirlo",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -635,7 +646,7 @@ def main() -> None:
     if args.retraso:
         # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
         # mientras una vuelta está corriendo.
-        print(asyncio.run(medir_retraso(criterio, carpeta_de_trabajo())))
+        print(asyncio.run(medir_retraso(criterio, carpeta_de_trabajo(), args.al_telefono)))
         return
     if args.probar:
         # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta
