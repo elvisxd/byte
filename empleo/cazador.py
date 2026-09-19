@@ -567,7 +567,15 @@ async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
     """
     usuario = os.environ.get("GMAIL_USUARIO", "")
     clave = os.environ.get("GMAIL_APP_PASSWORD", "")
-    respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave, 45)
+    # Sin credenciales no hay buzón, y sin buzón TODAS las ofertas figuran sin
+    # postular. Ese número se lee como "ignoraste 121 ofertas" cuando es "no
+    # miramos", así que el informe tiene que saber la diferencia.
+    sin_buzon = "" if usuario and clave else "faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD"
+    respuestas = (
+        []
+        if sin_buzon
+        else await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave, 45)
+    )
     return informe(
         leer_avisos(carpeta),
         respuestas,
@@ -575,6 +583,7 @@ async def medir_retraso(criterio: Criterio, carpeta: Path) -> str:
         # "A tiempo" es el mismo corte con el que el cazador decide no avisar
         # una oferta por vieja. Si acá fuera otro, dirían cosas distintas.
         (criterio.descartar_despues_de_dias or 4) * 24,
+        sin_buzon,
     )
 
 

@@ -37,6 +37,9 @@ _NOMBRE_DIGEST = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})\.md$")
 # La cabecera de cada oferta adentro: "## 40 · Senior AI Engineer — Cohere".
 _ENCABEZADO = re.compile(r"^## (-?\d+) · (.+)$")
 _ENLACE = re.compile(r"^- (https?://\S+)$")
+# Lo que `escribir_digest` pone entre el título y la empresa. Sólo cuando hay
+# empresa: hay feeds que no la mandan.
+SEPARADOR_EMPRESA = " — "
 _NO_ALFANUM = re.compile(r"[^a-z0-9]+")
 
 # Dominios de ATS: mandan en nombre de la empresa pero no la nombran. Un acuse
@@ -119,8 +122,20 @@ def leer_avisos(carpeta: Path) -> list[Aviso]:
                 puntaje, resto = encabezado.groups()
                 # El título puede llevar guiones; la empresa va al final y sin
                 # ellos, así que se corta por el ÚLTIMO separador.
-                titulo, _, empresa = resto.rpartition(" — ")
-                pendiente = (int(puntaje), titulo or resto, empresa)
+                #
+                # Y hay ofertas SIN empresa: `escribir_digest` omite el " — "
+                # cuando el feed no la manda, y Get on Board no la manda nunca
+                # —ver `test_la_empresa_de_getonbrd_queda_vacia_en_vez_de_adivinada`—.
+                # Con `rpartition` ahí el título terminaba también en la empresa,
+                # y el informe mostraba "X — X". Peor que feo: el emparejado
+                # busca el dominio del remitente adentro del nombre de la
+                # empresa, y con el título entero ahí adentro ataría acuses a
+                # ofertas que no son.
+                if SEPARADOR_EMPRESA in resto:
+                    titulo, empresa = resto.rsplit(SEPARADOR_EMPRESA, 1)
+                else:
+                    titulo, empresa = resto, ""
+                pendiente = (int(puntaje), titulo, empresa)
                 continue
             enlace = _ENLACE.match(linea)
             if enlace and pendiente is not None:
@@ -175,7 +190,10 @@ def emparejar(
         candidatos = [
             a
             for a in avisos
-            if a.cuando <= cuando and clave and clave in _normalizar(a.empresa).replace(" ", "")
+            if a.cuando <= cuando
+            and clave
+            and a.empresa
+            and clave in _normalizar(a.empresa).replace(" ", "")
         ]
         if not candidatos:
             sueltos.append(respuesta)
@@ -203,8 +221,16 @@ def informe(
     respuestas: list[Respuesta],
     puntaje_minimo: int,
     horas_a_tiempo: float,
+    sin_buzon: str = "",
 ) -> str:
-    """El parte: cuánto tardás, y qué te avisaron que nunca postulaste."""
+    """El parte: cuánto tardás, y qué te avisaron que nunca postulaste.
+
+    `sin_buzon` dice por qué no se pudo leer el correo, si no se pudo. Importa
+    que sea explícito: sin buzón **todas** las ofertas figuran "sin rastro de
+    postulación", y ese número se lee como "ignoraste 121 ofertas" cuando en
+    realidad es "no miramos". Un informe que no distingue las dos cosas es el
+    mismo fallo silencioso que este comando existe para destapar.
+    """
     if not avisos:
         return (
             "No hay digests en la carpeta de trabajo, así que no hay con qué medir.\n"
@@ -214,7 +240,14 @@ def informe(
     atados, por_ats, sueltos = emparejar(avisos, respuestas)
     lineas = ["Retraso entre «te avisé» y «postulaste»", ""]
 
-    if atados:
+    if sin_buzon:
+        lineas += [
+            f"  NO SE LEYÓ EL BUZÓN: {sin_buzon}",
+            "  Sin él no hay retraso que medir, y lo de abajo no está comprobado.",
+        ]
+    elif not respuestas:
+        lineas.append("  el buzón no trajo ninguna respuesta de postulación en el período.")
+    elif atados:
         horas = [h for _, _, h in atados]
         total = len(atados) + len(por_ats) + len(sueltos)
         lineas.append(f"  emparejadas: {len(atados)} de {total} acuses")
@@ -232,7 +265,10 @@ def informe(
                 f"   (pocos datos todavía: {len(horas)})"
             )
     else:
-        lineas.append("  ningún acuse se pudo atar a una oferta avisada.")
+        lineas.append(
+            f"  de {len(respuestas)} respuestas del buzón, ningún acuse se pudo "
+            "atar a una oferta avisada."
+        )
     if por_ats:
         llegaron = "llegó" if len(por_ats) == 1 else "llegaron"
         lineas.append(
@@ -247,10 +283,8 @@ def informe(
     huerfanas = [a for a in avisos if a.puntaje >= puntaje_minimo and a.url not in postuladas]
     a_tiempo = [a for a in huerfanas if (ahora - a.cuando).total_seconds() / 3600 <= horas_a_tiempo]
 
-    lineas += [
-        "",
-        f"Avisadas sobre {puntaje_minimo} puntos sin rastro de postulación: {len(huerfanas)}",
-    ]
+    rastro = "sin comprobar contra el buzón" if sin_buzon else "sin rastro de postulación"
+    lineas += ["", f"Avisadas sobre {puntaje_minimo} puntos, {rastro}: {len(huerfanas)}"]
     if a_tiempo:
         lineas.append(f"  todavía a tiempo ({_duracion(horas_a_tiempo)} o menos): {len(a_tiempo)}")
         for aviso in sorted(a_tiempo, key=lambda a: a.puntaje, reverse=True)[:8]:
@@ -268,4 +302,7 @@ def informe(
         "Un acuse que no llega no prueba que no postulaste: hay empresas que no",
         "mandan ninguno. Esto mide lo que se puede ver desde el buzón.",
     ]
+    if sin_buzon:
+        lineas.append("Y esta vez ni eso: falta la credencial, así que la lista de arriba")
+        lineas.append("es todo lo avisado, no lo que quedó sin postular.")
     return "\n".join(lineas)
