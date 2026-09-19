@@ -1460,3 +1460,41 @@ def test_el_digest_real_de_linkedin_se_parsea_entero() -> None:
     # El tracking se va: la misma oferta en dos correos tiene URLs distintas y
     # sin limpiarla se avisaría dos veces.
     assert ofertas[0].url == "https://www.linkedin.com/jobs/view/4369100511"
+
+
+# --- Patrocinio: el vocabulario de Canadá ---
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "LMIA approved position",
+        "We will support your LMIA application",
+        "Hiring through the Global Talent Stream",
+        "Open to international candidates",
+        "We provide immigration support and relocation to Toronto",
+        "Path to permanent residency",
+    ],
+)
+def test_las_formas_canadienses_de_patrocinar(texto: str) -> None:
+    """LMIA es el instrumento con el que un empleador canadiense contrata a
+    alguien de afuera, y Global Talent Stream la vía rápida para tecnología.
+    Ninguna de las dos estaba: de nueve frases reales, siete no se detectaban."""
+    assert "patrocinio" in detectar_senales(_con_texto(texto))
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "Must be a Canadian citizen or permanent resident",
+        "Only permanent residents will be considered",
+        "Permanent residency is required for this role",
+    ],
+)
+def test_exigir_residencia_es_lo_contrario_de_patrocinar(texto: str) -> None:
+    """ "Permanent resident" aparece en las dos frases y significa lo opuesto: en
+    una te la ofrecen, en la otra te la exigen. Sin esto, una oferta canadiense
+    cerrada a extranjeros sumaba como si te abriera la puerta."""
+    senales = detectar_senales(_con_texto(texto))
+    assert "patrocinio" not in senales
+    assert "sin_patrocinio" in senales
