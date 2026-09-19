@@ -299,66 +299,59 @@ token = "https://chevron.wd5.myworkdayjobs.com/jobs"
 # ahí, así que las buenas no aparecen. Donde sí publican es en su propio board,
 # y para eso está esta lista.
 #
-# Estas son empresas canadienses de tecnología conocidas por contratar gente de
-# afuera. **Los tokens de abajo NO están verificados**: el entorno donde se
-# escribió esto tiene bloqueadas las APIs de Greenhouse, Lever y Ashby, así que
-# adivinar el token o creerle a una búsqueda web habría sido exactamente lo que
-# el comentario de más arriba dice que no se hace.
+# **Las cuatro de abajo RESPONDEN, medido el 2026-09-19** contra las APIs
+# reales, con los puestos que devolvió cada una. Las cuatro están en Ashby, que
+# es donde fue a parar la ola de empresas canadienses de software.
 #
-# No hace falta adivinar: desde 2026-09-19 el cazador AVISA cuál no contestó.
-# Una empresa muda entra al pie del aviso como "empresa Shopify: error", así que
-# en la próxima corrida se sabe cuáles de estas sirven y cuáles hay que
-# corregir. El token correcto sale de abrir su página de empleos y mirar la URL,
-# o de:
+# Las ocho que se escribieron primero salieron de suponer el token a partir del
+# nombre, y siete de ocho dieron 404. Lo que las encontró fue probar: los slugs
+# contra las tres plataformas, y después el CONTEO de cada board.
+#
+# El conteo importa tanto como el código. Wealthsimple contesta 200 en Lever Y
+# en Ashby: se mudaron y el board viejo quedó vivo. Lever devuelve **0 puestos**
+# y Ashby 48. Un 200 con cero puestos no es una empresa muda —el cazador lo lee
+# como "hoy no publicó nada"— así que ese board habría entrado a la lista y
+# aportado cero para siempre, sin que nada lo delatara.
+#
+# Se probaron y NO EXISTEN en greenhouse, lever ni ashby —17 slugs, 404 en los
+# 51 intentos—: Shopify, Clio (probado también como cliolegal, themis,
+# themissolutions), Coveo y Ada (adasupport, ada-support). Tienen careers propio
+# o un ATS que este repo no habla. No se dejan como entradas muertas: si
+# aparecen sus boards, se agregan.
+#
+# Para lo que agregues:
 #
 #   uv run python -m empleo.cazador --probar-empresas
 #
-# La lista está para crecer. Cuando encuentres una empresa que pase el criterio
-# —la traiga el cazador, Job Bank o LinkedIn— se agrega acá con:
-#
-#   uv run python -m empleo.cazador --agregar-empresa "Nombre" <url de su board>
-#
-# y a partir de ahí se le pregunta sola todos los días.
-
-[[empresas]]
-nombre = "Shopify"
-ats = "greenhouse"
-token = "shopify"
+# dice cuáles responden y cuántos puestos trae cada una. Y ojo con el otro
+# comando: `--agregar-empresa` mira el HOST de la URL, así que necesita la del
+# board (jobs.ashbyhq.com/TOKEN), no la página de marketing de la empresa.
 
 [[empresas]]
 nombre = "Cohere"
 ats = "ashby"
+# 142 puestos el 2026-09-19. Ej: "Senior Full-Stack Engineer, Internal Applications".
 token = "cohere"
 
 [[empresas]]
 nombre = "Wealthsimple"
-ats = "greenhouse"
+ats = "ashby"
+# 48 puestos. En Lever hay un board viejo con el mismo nombre y CERO puestos:
+# si se elige ese, la empresa entra a la lista y no aporta nunca.
 token = "wealthsimple"
 
 [[empresas]]
-nombre = "Clio"
-ats = "greenhouse"
-token = "clio"
-
-[[empresas]]
 nombre = "Jobber"
-ats = "greenhouse"
+ats = "ashby"
+# 39 puestos. Una búsqueda web decía `boards.greenhouse.io/jobber`; la API
+# pública de Greenhouse devuelve 404 ahí. Por eso se prueba y no se busca.
 token = "jobber"
 
 [[empresas]]
 nombre = "1Password"
-ats = "greenhouse"
+ats = "ashby"
+# 62 puestos.
 token = "1password"
-
-[[empresas]]
-nombre = "Coveo"
-ats = "lever"
-token = "coveo"
-
-[[empresas]]
-nombre = "Ada"
-ats = "lever"
-token = "ada"
 
 [aviso]
 # Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
