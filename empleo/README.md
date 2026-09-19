@@ -185,6 +185,29 @@ a este repo y a la rama `main`, así que **cada merge lo actualiza solo**. Eso n
 es comodidad: mientras se subía a mano con `railway up` quedó cuatro merges
 atrás, mandando ofertas de un board que había empezado a cobrar por postular.
 
+**En Railway corre los siete días**, `7 13,15,17,19,21 * * *`, que en Orlando
+son las 9, 11, 13, 15 y 17. El cron de la Mac de más arriba se queda en días
+hábiles porque esa máquina se duerme; el servicio no.
+
+La razón no es que aparezcan ofertas el domingo —aparecen pocas—, sino la
+frescura. El cazador no pierde nada saltándose el fin de semana: lee el buzón
+de los últimos tres días, así que el lunes ve lo del sábado. Lo que pierde es
+puntaje: `+25` antes de las 24 horas contra `+8` pasadas las 48. Medido con el
+criterio real, la mejor oferta canadiense que apareció —remota en Vancouver,
+$152.200 a $253.650— saca 40 el mismo día y **23 dos días después**, debajo del
+mínimo de 25. Nunca llegaría al teléfono.
+
+Las de la región lo aguantan porque `latam` vale 30 y las sostiene sola; las de
+Canadá no tienen con qué, y son justo las que dependen de este canal.
+
+Y lo que de verdad no puede esperar son las respuestas a postulaciones: un "hace
+falta un video" que llega viernes a la noche se vería el lunes. El caso que
+originó esa alerta quedó once días sin contestar.
+
+Prenderlo no cuesta ruido: sin nada que decir el cazador se calla, y
+`horas_sin_aviso` limita a un aviso de vida por día. Un domingo tranquilo son
+cinco vueltas y cero mensajes.
+
 Tres cosas que el servicio necesita además del código:
 
 | variable | para qué |
