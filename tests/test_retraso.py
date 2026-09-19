@@ -343,7 +343,7 @@ def test_hay_digests_pero_ninguna_pasa_el_minimo() -> None:
     texto = informe(medicion)
 
     assert "No hay digests" not in texto
-    assert "De 1 avisadas" in texto
+    assert "sobre 1 avisadas" in texto
 
 
 def test_la_linea_de_a_tiempo_dice_respecto_de_que() -> None:
@@ -444,3 +444,63 @@ def test_cada_ats_real_se_cuenta_aparte(remitente: str) -> None:
 
     assert len(por_ats) == 1
     assert not sueltos
+
+
+# --- Segunda revisión: lo que la primera tanda de arreglos dejó pasar ---
+
+
+@pytest.mark.parametrize(("token", "empresa"), [("ada", "Ada"), ("ibm", "IBM"), ("sap", "SAP")])
+def test_una_empresa_de_tres_letras_empareja_igual(token: str, empresa: str) -> None:
+    """El largo mínimo existía para frenar `ai` delante de "airbnb", pero de
+    paso dejaba afuera a Ada —una de las canadienses que miramos—, IBM y SAP.
+
+    La igualdad exacta no necesita largo: sólo el emparejado POR PREFIJO, que
+    es el que empareja con demasiados.
+    """
+    from empleo.retraso import _coincide
+
+    assert _coincide(token, empresa)
+
+
+@pytest.mark.parametrize("empresa", ["BairesDev", "Airbnb", "AI Scaling Partners"])
+def test_y_el_token_corto_sigue_sin_ser_prefijo_de_nadie(empresa: str) -> None:
+    """El arreglo de arriba no puede devolver el bug grave del #143."""
+    from empleo.retraso import _coincide
+
+    assert not _coincide("ai", empresa)
+
+
+@pytest.mark.parametrize("buzon", ["careers", "talent", "noreply", "jobs", "hr"])
+def test_un_buzon_generico_de_workday_no_nombra_a_nadie(buzon: str) -> None:
+    """Workday pone la empresa en la parte local, pero no siempre:
+    `careers@myworkday.com` ataba a una empresa llamada "Careers Inc". El
+    nombre propio sirve, el genérico es ruido con largo suficiente."""
+    avisos = [_aviso("Careers Inc", 30), _aviso("Talent Partners", 30), _aviso("HR Solutions", 30)]
+    respuesta = _respuesta(f"{buzon}@myworkday.com", datetime.now(tz=UTC) - timedelta(hours=2))
+
+    atados, por_ats, _ = emparejar(avisos, [respuesta])
+
+    assert not atados
+    assert len(por_ats) == 1
+
+
+def test_el_nombre_propio_del_buzon_sigue_atando() -> None:
+    """El filtro de genéricos no puede llevarse puesto el caso que lo motivó."""
+    atados, _, _ = emparejar(
+        [_aviso("General Motors", 30)],
+        [_respuesta("generalmotors@myworkday.com", datetime.now(tz=UTC) - timedelta(hours=2))],
+    )
+
+    assert len(atados) == 1
+
+
+def test_el_sin_rastro_se_cuenta_sobre_las_que_pasaban_el_corte() -> None:
+    """ "De 121 avisadas, 14 sin rastro" mezcla dos universos: esas 14 salen
+    sólo de las que pasaban el mínimo. El denominador tiene que ser el mismo."""
+    medicion = medir(
+        [_aviso("Cohere", 30, puntaje=52), _aviso("Acme", 30, puntaje=10)], [], 25, 168
+    )
+
+    texto = informe(medicion)
+
+    assert "De 1 que pasaban el corte (sobre 2 avisadas)" in texto

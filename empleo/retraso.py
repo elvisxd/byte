@@ -89,10 +89,45 @@ _SEPARADORES_DE_DOMINIO = re.compile(r"[^a-z0-9]+")
 # `generalmotors@myworkday.com`. Ahí el dominio no sirve y el buzón sí.
 LA_EMPRESA_VA_EN_EL_BUZON = frozenset({"myworkday", "workday"})
 
-# Un token más corto que esto no identifica a nadie: `ai`, `hr`, `co`. Aunque
-# ahora salgan nombres y no TLDs, un dominio raro puede devolver algo así, y
-# con la comparación por prefijo emparejaría a cualquiera.
-LARGO_MINIMO_TOKEN = 4
+# Largo mínimo para emparejar POR PREFIJO. La igualdad exacta no lo necesita:
+# "ada" es Ada e "ibm" es IBM, y exigirles cuatro letras las dejaba afuera —Ada
+# es una de las canadienses que miramos—. Lo que hay que impedir es que un
+# token corto sea PREFIJO de cualquier cosa: `ai` delante de "airbnb".
+LARGO_MINIMO_PARA_PREFIJO = 4
+# Y un piso más bajo para la igualdad exacta. Tres deja pasar a Ada, IBM y SAP
+# —empresas de verdad— y frena a `ai` y `hr`, que son palabra entera en nombres
+# como "AI Scaling Partners" y emparejarían con todos ellos a la vez.
+LARGO_MINIMO_EXACTO = 3
+
+# Buzones que no nombran a nadie. Workday pone la empresa en la parte local,
+# pero no siempre: `careers@myworkday.com` ataba a una empresa llamada
+# "Careers Inc". El nombre propio sirve; el genérico es ruido con largo.
+BUZONES_GENERICOS = frozenset(
+    {
+        "noreply",
+        "no-reply",
+        "donotreply",
+        "careers",
+        "career",
+        "jobs",
+        "job",
+        "talent",
+        "recruiting",
+        "recruitment",
+        "hiring",
+        "apply",
+        "hr",
+        "people",
+        "hello",
+        "info",
+        "contact",
+        "support",
+        "notifications",
+        "notification",
+        "mail",
+        "team",
+    }
+)
 
 # Qué estados cuentan como "postuló". El acuse es el que sirve: llega solo y
 # enseguida. Un rechazo o una entrevista también prueban que postulaste, pero
@@ -189,10 +224,17 @@ def _es_intermediario(dominio: str) -> bool:
 
 
 def _tokens_de(respuesta: Respuesta) -> tuple[str, ...]:
-    """Con qué nombres intentar emparejar este correo, en orden de confianza."""
+    """Con qué nombres intentar emparejar este correo.
+
+    Para los ATS que ponen la empresa en la parte local —Workday—, esa parte,
+    salvo que sea un buzón genérico: `generalmotors@` nombra a alguien,
+    `careers@` no, y tomarlo igual ataba acuses a cualquier empresa cuyo
+    nombre empiece con esa palabra.
+    """
     etiquetas = [e for e in _SEPARADORES_DE_DOMINIO.split(respuesta.empresa) if e]
     if any(e in LA_EMPRESA_VA_EN_EL_BUZON for e in etiquetas):
-        return (respuesta.buzon,)
+        buzon = respuesta.buzon
+        return () if buzon in BUZONES_GENERICOS else (buzon,)
     return (respuesta.empresa,)
 
 
@@ -216,12 +258,16 @@ def _coincide(token: str, empresa: str) -> bool:
     """
     if not empresa:
         return False
-    palabras = _normalizar(token).split()
-    buscado = "".join(palabras)
-    if len(buscado) < LARGO_MINIMO_TOKEN:
+    buscado = "".join(_normalizar(token).split())
+    if not buscado:
+        return False
+    if len(buscado) < LARGO_MINIMO_EXACTO:
         return False
     del_nombre = _normalizar(empresa).split()
-    return buscado in del_nombre or "".join(del_nombre).startswith(buscado)
+    if buscado in del_nombre or buscado == "".join(del_nombre):
+        return True
+    # Sólo acá hace falta el largo: un prefijo corto empareja con demasiados.
+    return len(buscado) >= LARGO_MINIMO_PARA_PREFIJO and "".join(del_nombre).startswith(buscado)
 
 
 def emparejar(
@@ -248,16 +294,7 @@ def emparejar(
             sueltos.append(respuesta)
             continue
 
-        tokens = [
-            t
-            for t in _tokens_de(respuesta)
-            if len(_SEPARADORES_DE_DOMINIO.sub("", t)) >= LARGO_MINIMO_TOKEN
-        ]
-        if not tokens:
-            por_ats.append(respuesta) if _es_intermediario(respuesta.empresa) else sueltos.append(
-                respuesta
-            )
-            continue
+        tokens = _tokens_de(respuesta)
 
         # El aviso más reciente ANTERIOR al correo: postulaste a lo que te
         # avisaron, no a lo que te avisarían después.
@@ -303,6 +340,10 @@ class Medicion:
     # "no hay digests" y "hay digests pero ninguna llega al corte" se veían
     # iguales, y el informe decía que no había con qué medir cuando sí había.
     avisos: int
+    # Cuántas pasaban el mínimo. Es el denominador honesto de "sin rastro":
+    # decir "de 121 avisadas, 14 sin rastro" mezcla dos universos, porque esas
+    # 14 salen sólo de las que pasaban el corte, no de las 121.
+    sobre_el_minimo: int
     horas_a_tiempo: float
 
 
@@ -317,7 +358,8 @@ def medir(
     atados, por_ats, sueltos = emparejar(avisos, respuestas)
     postuladas = {aviso.url for aviso, _, _ in atados}
     ahora = datetime.now(tz=UTC)
-    huerfanas = [a for a in avisos if a.puntaje >= puntaje_minimo and a.url not in postuladas]
+    sobre_el_minimo = [a for a in avisos if a.puntaje >= puntaje_minimo]
+    huerfanas = [a for a in sobre_el_minimo if a.url not in postuladas]
     return Medicion(
         atados=atados,
         por_ats=por_ats,
@@ -329,6 +371,7 @@ def medir(
         respuestas=len(respuestas),
         sin_buzon=sin_buzon,
         avisos=len(avisos),
+        sobre_el_minimo=len(sobre_el_minimo),
         horas_a_tiempo=horas_a_tiempo,
     )
 
@@ -416,7 +459,8 @@ def informe(medicion: Medicion) -> str:
     rastro = "sin comprobar contra el buzón" if medicion.sin_buzon else "sin rastro de postulación"
     lineas += [
         "",
-        f"De {medicion.avisos} avisadas, {rastro}: {len(medicion.huerfanas)}",
+        f"De {medicion.sobre_el_minimo} que pasaban el corte "
+        f"(sobre {medicion.avisos} avisadas), {rastro}: {len(medicion.huerfanas)}",
     ]
 
     ahora = datetime.now(tz=UTC)
