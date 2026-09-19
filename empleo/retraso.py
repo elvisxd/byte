@@ -379,9 +379,10 @@ def medir(
 def resumen(medicion: Medicion) -> str:
     """El informe en cuatro renglones, para el teléfono.
 
-    El panel rechaza los textos de más de 1000 caracteres, y el informe largo
-    los pasa apenas hay unas pocas ofertas sin postular. Acá van los números y
-    no la lista: los links se miran en el digest, sentado.
+    `avisar()` parte un texto largo en varios mensajes, así que el informe
+    entraría igual; lo que no entra es en la pantalla de quien lo lee parado.
+    Acá van los números y no la lista: los links se miran en el digest,
+    sentado.
     """
     if medicion.sin_buzon:
         cabeza = f"sin buzón ({medicion.sin_buzon}): no hay retraso que medir"
