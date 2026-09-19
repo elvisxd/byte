@@ -48,26 +48,51 @@ _NO_ALFANUM = re.compile(r"[^a-z0-9]+")
 # de lo que falla.
 INTERMEDIARIOS = frozenset(
     {
+        "ashby",
         "ashbyhq",
         "greenhouse",
-        "greenhouse-mail",
+        "greenhousemail",
         "lever",
-        "myworkday",
         "workday",
+        "myworkday",
+        "myworkdayjobs",
         "jobvite",
         "rippling",
         "wellfound",
         "applytojob",
         "smartrecruiters",
         "workable",
+        "workablemail",
         "icims",
         "taleo",
         "successfactors",
         "bamboohr",
-        "hire",
-        "notifications",
+        "teamtailor",
+        "recruitee",
+        "breezyhr",
+        "jazzhr",
+        "monstergovt",
     }
 )
+# La comparación es por ETIQUETA COMPLETA del dominio, partiendo por `.` y `-`,
+# y por eso la lista incluye las formas pegadas (`ashbyhq`, `workablemail`,
+# `myworkday`). La versión anterior buscaba la palabra adentro del dominio, y
+# con eso una empresa llamada "Leverage Labs" —`leverage-labs.com`— se
+# clasificaba como ATS porque "lever" está adentro de "leverage": el mismo
+# error de subcadena que este archivo acababa de arreglar, una línea más abajo.
+#
+# Una variante nueva que falte cae en "sueltos", que se ve en el informe. Un
+# falso positivo acá, en cambio, se traga la empresa en silencio.
+_SEPARADORES_DE_DOMINIO = re.compile(r"[^a-z0-9]+")
+
+# Los que ponen el nombre de la empresa en la PARTE LOCAL del remitente:
+# `generalmotors@myworkday.com`. Ahí el dominio no sirve y el buzón sí.
+LA_EMPRESA_VA_EN_EL_BUZON = frozenset({"myworkday", "workday"})
+
+# Un token más corto que esto no identifica a nadie: `ai`, `hr`, `co`. Aunque
+# ahora salgan nombres y no TLDs, un dominio raro puede devolver algo así, y
+# con la comparación por prefijo emparejaría a cualquiera.
+LARGO_MINIMO_TOKEN = 4
 
 # Qué estados cuentan como "postuló". El acuse es el que sirve: llega solo y
 # enseguida. Un rechazo o una entrevista también prueban que postulaste, pero
@@ -108,7 +133,11 @@ def leer_avisos(carpeta: Path) -> list[Aviso]:
 
     avisos: list[Aviso] = []
     vistos: set[str] = set()
-    for archivo in sorted(carpeta.glob("*.md"), reverse=True):
+    # De la más VIEJA a la más nueva: si una oferta se avisó dos veces —pasa si
+    # se pierde la memoria por falta de volumen—, la que vale es la primera. Al
+    # revés, el retraso salía medido contra el segundo aviso, o sea más corto
+    # de lo real: el sesgo justo en la dirección que te hace parecer más rápido.
+    for archivo in sorted(carpeta.glob("*.md")):
         nombre = _NOMBRE_DIGEST.match(archivo.name)
         if not nombre:
             continue
@@ -155,19 +184,57 @@ def _fecha_de(respuesta: Respuesta) -> datetime | None:
         return None
 
 
+def _es_intermediario(dominio: str) -> bool:
+    return any(e in INTERMEDIARIOS for e in _SEPARADORES_DE_DOMINIO.split(dominio) if e)
+
+
+def _tokens_de(respuesta: Respuesta) -> tuple[str, ...]:
+    """Con qué nombres intentar emparejar este correo, en orden de confianza."""
+    etiquetas = [e for e in _SEPARADORES_DE_DOMINIO.split(respuesta.empresa) if e]
+    if any(e in LA_EMPRESA_VA_EN_EL_BUZON for e in etiquetas):
+        return (respuesta.buzon,)
+    return (respuesta.empresa,)
+
+
+def _coincide(token: str, empresa: str) -> bool:
+    """Si el token del remitente nombra a esa empresa.
+
+    **No es subcadena.** Lo era, y con eso el acuse de `aiscaling.ai` —token
+    `ai`— se ataba a una oferta de `BairesDev`, porque "ai" está adentro de
+    "bairesdev". Medido con datos reales del buzón: un retraso inventado de 27
+    horas entrando a la mediana como si fuera bueno.
+
+    Los dos lados se normalizan igual —sin guiones ni puntos— porque el token
+    sale de un dominio y el nombre de un feed: `leverage-labs.com` contra
+    "Leverage Labs" no casaba comparando el token crudo, y `connect-clera.com`
+    está en el buzón de verdad. Eso lo destapó el test de punta a punta, no el
+    de la función suelta.
+
+    Tiene que ser una palabra del nombre, o el nombre entero pegado, o un
+    prefijo de él: "grafana" nombra a "Grafana Labs", "generalmotors" a
+    "General Motors", y "ai" no nombra a nadie.
+    """
+    if not empresa:
+        return False
+    palabras = _normalizar(token).split()
+    buscado = "".join(palabras)
+    if len(buscado) < LARGO_MINIMO_TOKEN:
+        return False
+    del_nombre = _normalizar(empresa).split()
+    return buscado in del_nombre or "".join(del_nombre).startswith(buscado)
+
+
 def emparejar(
     avisos: list[Aviso], respuestas: list[Respuesta]
 ) -> tuple[list[tuple[Aviso, Respuesta, float]], list[Respuesta], list[Respuesta]]:
     """Ata cada acuse a la oferta que lo originó. Devuelve (atados, por ATS, sueltos).
 
     El emparejado es por empresa y no por link: el correo de respuesta nunca
-    trae el link de la oferta. `Respuesta.empresa` sale del dominio del
-    remitente —`cohere.com` da `cohere`— y se busca esa palabra adentro del
-    nombre de la empresa del digest.
+    trae el link de la oferta.
 
     Es parcial a propósito, y por eso las tres listas: lo que llega desde un
-    ATS no se puede atar a nada, y mezclarlo con los fallos reales del
-    emparejado haría creer que esto acierta menos de lo que acierta.
+    ATS que no nombra a la empresa no se puede atar, y mezclarlo con los fallos
+    reales del emparejado haría creer que esto acierta menos de lo que acierta.
     """
     atados: list[tuple[Aviso, Respuesta, float]] = []
     por_ats: list[Respuesta] = []
@@ -180,23 +247,28 @@ def emparejar(
         if cuando is None:
             sueltos.append(respuesta)
             continue
-        if respuesta.empresa in INTERMEDIARIOS:
-            por_ats.append(respuesta)
+
+        tokens = [
+            t
+            for t in _tokens_de(respuesta)
+            if len(_SEPARADORES_DE_DOMINIO.sub("", t)) >= LARGO_MINIMO_TOKEN
+        ]
+        if not tokens:
+            por_ats.append(respuesta) if _es_intermediario(respuesta.empresa) else sueltos.append(
+                respuesta
+            )
             continue
 
-        clave = respuesta.empresa
         # El aviso más reciente ANTERIOR al correo: postulaste a lo que te
         # avisaron, no a lo que te avisarían después.
         candidatos = [
-            a
-            for a in avisos
-            if a.cuando <= cuando
-            and clave
-            and a.empresa
-            and clave in _normalizar(a.empresa).replace(" ", "")
+            a for a in avisos if a.cuando <= cuando and any(_coincide(t, a.empresa) for t in tokens)
         ]
         if not candidatos:
-            sueltos.append(respuesta)
+            if _es_intermediario(respuesta.empresa):
+                por_ats.append(respuesta)
+            else:
+                sueltos.append(respuesta)
             continue
         aviso = max(candidatos, key=lambda a: a.cuando)
         atados.append((aviso, respuesta, (cuando - aviso.cuando).total_seconds() / 3600))
@@ -227,6 +299,11 @@ class Medicion:
     a_tiempo: list[Aviso]
     respuestas: int
     sin_buzon: str
+    # Cuántas ofertas había en los digests, pasen o no el mínimo. Sin esto,
+    # "no hay digests" y "hay digests pero ninguna llega al corte" se veían
+    # iguales, y el informe decía que no había con qué medir cuando sí había.
+    avisos: int
+    horas_a_tiempo: float
 
 
 def medir(
@@ -251,6 +328,8 @@ def medir(
         ],
         respuestas=len(respuestas),
         sin_buzon=sin_buzon,
+        avisos=len(avisos),
+        horas_a_tiempo=horas_a_tiempo,
     )
 
 
@@ -289,12 +368,11 @@ def informe(medicion: Medicion) -> str:
     realidad es "no miramos". Un informe que no distingue las dos cosas es el
     mismo fallo silencioso que este comando existe para destapar.
     """
-    if not medicion.huerfanas and not medicion.atados and not medicion.respuestas:
-        if not medicion.sin_buzon:
-            return (
-                "No hay digests en la carpeta de trabajo, así que no hay con qué medir.\n"
-                "Los escribe el cazador en cada vuelta; en Railway viven en el volumen."
-            )
+    if not medicion.avisos:
+        return (
+            "No hay digests en la carpeta de trabajo, así que no hay con qué medir.\n"
+            "Los escribe el cazador en cada vuelta; en Railway viven en el volumen."
+        )
 
     lineas = ["Retraso entre «te avisé» y «postulaste»", ""]
 
@@ -336,11 +414,17 @@ def informe(medicion: Medicion) -> str:
         lineas.append(f"  {len(medicion.sueltos)} sin oferta previa que les corresponda.")
 
     rastro = "sin comprobar contra el buzón" if medicion.sin_buzon else "sin rastro de postulación"
-    lineas += ["", f"Avisadas, {rastro}: {len(medicion.huerfanas)}"]
+    lineas += [
+        "",
+        f"De {medicion.avisos} avisadas, {rastro}: {len(medicion.huerfanas)}",
+    ]
 
     ahora = datetime.now(tz=UTC)
     if medicion.a_tiempo:
-        lineas.append(f"  todavía a tiempo: {len(medicion.a_tiempo)}")
+        lineas.append(
+            f"  todavía a tiempo ({_duracion(medicion.horas_a_tiempo)} o menos): "
+            f"{len(medicion.a_tiempo)}"
+        )
         for aviso in sorted(medicion.a_tiempo, key=lambda a: a.puntaje, reverse=True)[:8]:
             hace = (ahora - aviso.cuando).total_seconds() / 3600
             empresa = f" — {aviso.empresa}" if aviso.empresa else ""
