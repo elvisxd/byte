@@ -8,6 +8,8 @@ import asyncio
 import contextlib
 import email.message
 import json
+import logging
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -1164,6 +1166,32 @@ def test_una_empresa_sin_token_no_se_consulta() -> None:
     assert _empresas([{"nombre": "X", "ats": "greenhouse", "token": "x"}]) == (
         ("X", "greenhouse", "x"),
     )
+
+
+def test_el_fallo_dice_con_que_codigo_contesto_el_servidor(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Un token equivocado y un bloqueo dicen los dos `HTTPStatusError`, y son
+    problemas opuestos: 404 se arregla mirando la URL del board, 403 o 429 se
+    arregla esperando. Sin el código, la salida de `--probar-empresas` manda a
+    revisar tokens que estaban bien.
+    """
+
+    def manejador(pedido: httpx.Request) -> httpx.Response:
+        return httpx.Response(429 if "frenada" in str(pedido.url) else 404)
+
+    async def correr(token: str) -> list[Oferta]:
+        async with _cliente(manejador) as cliente:
+            return await fuentes.empresas(cliente, (("X", "greenhouse", token),))
+
+    with caplog.at_level(logging.WARNING):
+        assert asyncio.run(correr("inexistente")) == []
+        assert asyncio.run(correr("frenada")) == []
+
+    # structlog arma el renglón antes de que llegue a `logging`, así que el
+    # código se busca en el texto y no en un atributo del registro.
+    codigos = re.findall(r"fuente_fallo.*?status.*?(\d{3})", caplog.text)
+    assert codigos == ["404", "429"]
 
 
 def test_una_plataforma_desconocida_no_llama_a_ningun_lado() -> None:
