@@ -597,19 +597,206 @@ def linkedin_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
         return []
 
 
+def _cuerpo_de(mensaje: email.message.Message, tipo: str) -> str:
+    """La primera parte de `tipo` de un correo MIME, decodificada.
+
+    Devuelve "" si el correo no trae esa parte, y eso importa: Job Bank manda
+    sus alertas en **un solo cuerpo `text/html`**, sin alternativa en texto
+    plano. Un lector que sólo mire `text/plain` no encuentra nada y no falla —
+    devuelve cero ofertas—, que es la peor forma de romperse: silenciosa.
+    """
+    for parte in mensaje.walk() if mensaje.is_multipart() else [mensaje]:
+        if parte.get_content_type() != tipo:
+            continue
+        carga = parte.get_payload(decode=True)
+        if isinstance(carga, bytes):
+            return carga.decode(parte.get_content_charset() or "utf-8", errors="replace")
+    return ""
+
+
 def _ofertas_del_correo(crudo: bytes) -> list[Oferta]:
     """Saca el texto plano de un correo MIME y lo pasa al parser."""
     mensaje = email.message_from_bytes(crudo)
     fecha = _texto(mensaje.get("Date"), 60)
-    cuerpo = ""
-    for parte in mensaje.walk() if mensaje.is_multipart() else [mensaje]:
-        if parte.get_content_type() != "text/plain":
-            continue
-        carga = parte.get_payload(decode=True)
-        if isinstance(carga, bytes):
-            cuerpo = carga.decode(parte.get_content_charset() or "utf-8", errors="replace")
-            break
+    cuerpo = _cuerpo_de(mensaje, "text/plain")
     return ofertas_de_alerta_linkedin(cuerpo, fecha) if cuerpo else []
+
+
+# --- Job Bank (Canadá): las alertas que llegan al correo ---
+
+# Job Bank tampoco publica feed, pero manda las alertas guardadas por mail. El
+# remitente **no es** `jobbank.gc.ca`: es el dominio del ministerio que opera el
+# sitio (Employment and Social Development Canada / Emploi et Développement
+# social Canada). Filtrar por "jobbank" en el remitente no encuentra un solo
+# correo —se verificó contra el buzón—, y ese es exactamente el modo de fallar
+# sin ruido que hay que evitar acá.
+REMITENTE_JOBBANK = "no-reply-jobalert@hrsdc-rhdcc.gc.ca"
+# Job Bank manda una alerta por búsqueda guardada y por día, y acá hay una
+# alerta por código NOC. Treinta cubre varios días de todas ellas.
+TOPE_CORREOS_JOBBANK = 30
+
+# El correo es una tabla de correo de los años 2000: cada oferta es un `<a
+# class="resultJobItem">` con el título, y debajo una fila `<td>` por dato
+# —empresa, ubicación, salario, jornada—. La clase del enlace es lo único
+# estable que tiene; el resto son estilos en línea que cambian con el tema.
+_OFERTA_JOBBANK = re.compile(
+    r'<a\b([^>]*class="resultJobItem"[^>]*)>(.*?)</a>'
+    r'(.*?)(?=<a\b[^>]*class="resultJobItem"|\Z)',
+    re.S | re.I,
+)
+# El `href` se busca aparte y no dentro del patrón de arriba a propósito: atarlo
+# al orden en que Job Bank escribe los atributos es una forma de romperse el día
+# que los reordenen, y romperse acá significa cero ofertas sin un error.
+_ENLACE_JOBBANK = re.compile(r'href="[^"]*?/jobposting/(\d+)', re.I)
+_CELDA_JOBBANK = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
+_ETIQUETA_HTML = re.compile(r"<[^>]+>")
+_ESPACIOS = re.compile(r"\s+")
+# Dónde termina la ficha de una oferta y empieza el pie del correo. Hace falta
+# porque la última oferta del correo no tiene otra oferta detrás que la corte:
+# sin esto se llevaría puestos el consejo de carrera, "Manage my alerts" y el
+# aviso legal como si fueran la empresa y la ubicación.
+_RUIDO_JOBBANK = re.compile(
+    r"^(view all similar jobs|voir tous les emplois similaires"
+    r"|manage my alerts|g[ée]rer mes alertes|modify this alert|modifier cette alerte"
+    r"|unsubscribe|se d[ée]sabonner|please do not reply|making informed decisions)",
+    re.I,
+)
+# Los datos de una ficha son renglones cortos: un nombre de empresa, "Montréal,
+# QC", "$37.52 hourly". La prosa del pie pasa de los cien caracteres, así que el
+# largo es un segundo corte barato por si cambian los textos del pie.
+_LARGO_CELDA_JOBBANK = 120
+# Empresa, ubicación, salario y jornada. Un quinto renglón sería del pie.
+_DATOS_POR_OFERTA = 4
+# El pie del correo repite a quién apunta la alerta que lo generó. Cuando dice
+# esto, la alerta lleva el filtro `fglo=1` del portal y **todas** las ofertas
+# del correo son de empleadores que declararon considerar candidatos de afuera.
+#
+# Importa arrastrarlo: el correo no trae la descripción del puesto, sólo la
+# ficha, así que sin esta línea una oferta de Job Bank llega al criterio como
+# cuatro renglones sin una sola señal de patrocinio —y el patrocinio es la
+# única razón por la que Canadá está en esta lista—.
+_AUDIENCIA_JOBBANK = re.compile(
+    r"(canadians and international candidates|candidats internationaux)", re.I
+)
+
+
+def _celda_jobbank(crudo: str) -> str:
+    """El texto de un `<td>`: sin etiquetas, sin entidades y sin dobles espacios."""
+    return _ESPACIOS.sub(" ", html.unescape(_ETIQUETA_HTML.sub(" ", crudo))).strip()
+
+
+def ofertas_de_alerta_jobbank(cuerpo: str, fecha: str = "") -> list[Oferta]:
+    """Las ofertas de UN correo de alerta de Job Bank, en su HTML original.
+
+    Separado del buzón por la misma razón que el de LinkedIn: lo que se rompe
+    cuando ellos cambian la plantilla es esto, y así se prueba con un correo
+    real guardado en un test en vez de con una cuenta de verdad.
+    """
+    audiencia = _AUDIENCIA_JOBBANK.search(cuerpo)
+    etiquetas = (audiencia.group(1).lower(),) if audiencia else ()
+
+    ofertas: list[Oferta] = []
+    for atributos, titulo_html, resto in _OFERTA_JOBBANK.findall(cuerpo):
+        enlace = _ENLACE_JOBBANK.search(atributos)
+        titulo = _celda_jobbank(titulo_html)
+        if not enlace or not titulo:
+            continue
+        identificador = enlace.group(1)
+
+        datos: list[str] = []
+        for celda_html in _CELDA_JOBBANK.findall(resto):
+            celda = _celda_jobbank(celda_html)
+            if not celda:
+                continue
+            if _RUIDO_JOBBANK.match(celda) or len(celda) > _LARGO_CELDA_JOBBANK:
+                break
+            datos.append(celda)
+            if len(datos) == _DATOS_POR_OFERTA:
+                break
+
+        empresa = datos[0] if datos else ""
+        ubicacion = datos[1] if len(datos) > 1 else ""
+        # El salario lo pone Job Bank casi siempre —es obligatorio declararlo en
+        # las ofertas del portal— pero no siempre, y cuando falta, la jornada se
+        # corre un lugar. Se busca por la forma del dato, no por la posición.
+        salario = next((d for d in datos[2:] if "$" in d), "")
+        resto_datos = [d for d in datos[2:] if d != salario]
+
+        ofertas.append(
+            Oferta(
+                fuente="jobbank",
+                id_externo=identificador[:64],
+                titulo=titulo[:300],
+                empresa=empresa[:200],
+                # El link del correo lleva un `token` de cuarenta bytes y un
+                # `subid`: identifican **tu** suscripción a esa alerta, no la
+                # oferta. Se queda la URL canónica, que abre lo mismo.
+                url=f"https://www.jobbank.gc.ca/jobsearch/jobposting/{identificador}",
+                # El correo no trae la descripción, sólo la ficha. Es poco texto
+                # donde buscar el stack; a cambio, estas ofertas ya vienen
+                # filtradas por el código NOC y por "candidatos internacionales"
+                # desde la alerta, que es donde se define el criterio.
+                descripcion="\n".join([titulo, empresa, ubicacion, salario, *resto_datos]).strip(),
+                ubicacion=ubicacion[:200],
+                publicada=fecha[:60],
+                salario=salario[:200],
+                # No es una etiqueta del puesto sino de la alerta que lo trajo,
+                # y por eso va acá y no en `descripcion`: la descripción es lo
+                # que escribió el empleador.
+                etiquetas=etiquetas,
+            )
+        )
+    return ofertas
+
+
+def jobbank_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
+    """Las alertas de Job Bank de los últimos `dias`, leídas del buzón.
+
+    Mismo camino, misma contraseña de aplicación y el mismo **solo lectura** que
+    las alertas de LinkedIn: no marca, no mueve, no borra.
+
+    Qué llega lo deciden las alertas guardadas en Job Bank —el código NOC y el
+    filtro de candidatos internacionales—; acá sólo se puntúa. Si empiezan a
+    llegar camioneros, la alerta que los trae se arregla allá, no acá.
+
+    Nunca lanza: sin credenciales o con Gmail caído, la vuelta sigue con las
+    demás fuentes.
+    """
+    if not usuario or not clave:
+        logger.info("jobbank_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        return []
+
+    desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
+    try:
+        with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
+            buzon.login(usuario, clave)
+            buzon.select("INBOX", readonly=True)
+            estado, respuesta = buzon.search(None, f'(FROM "{REMITENTE_JOBBANK}" SINCE "{desde}")')
+            if estado != "OK" or not respuesta or not respuesta[0]:
+                return []
+            identificadores = respuesta[0].split()[-TOPE_CORREOS_JOBBANK:]
+
+            ofertas: dict[str, Oferta] = {}
+            for identificador in identificadores:
+                estado, datos = buzon.fetch(identificador, "(RFC822)")
+                if estado != "OK" or not datos or not isinstance(datos[0], tuple):
+                    continue
+                for oferta in _ofertas_jobbank_del_correo(datos[0][1]):
+                    # Con una alerta por código NOC, la misma oferta llega en
+                    # dos correos distintos: es una sola.
+                    ofertas.setdefault(oferta.id_externo, oferta)
+            return list(ofertas.values())
+    except (OSError, imaplib.IMAP4.error) as exc:
+        logger.warning("jobbank_imap_fallo", error_type=type(exc).__name__)
+        return []
+
+
+def _ofertas_jobbank_del_correo(crudo: bytes) -> list[Oferta]:
+    """Saca el HTML de un correo de Job Bank y lo pasa al parser."""
+    mensaje = email.message_from_bytes(crudo)
+    fecha = _texto(mensaje.get("Date"), 60)
+    cuerpo = _cuerpo_de(mensaje, "text/html")
+    return ofertas_de_alerta_jobbank(cuerpo, fecha) if cuerpo else []
 
 
 # --- Empresas, por su propio sistema de postulación ---

@@ -119,6 +119,10 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|h-?1b|green card|work permit"
         r"|lmia|global talent stream"
         r"|open to (international|foreign) (candidates|applicants)"
+        # Como lo dice Job Bank, palabra por palabra, en el pie de la alerta:
+        # es el filtro `fglo=1` del portal, el que deja pasar sólo las ofertas
+        # cuyo empleador declaró que considera candidatos de afuera.
+        r"|canadians and international candidates|candidats internationaux"
         r"|immigration (support|assistance|sponsorship)"
         r"|(path|pathway) to (permanent residency|pr)"
         r"|we (will )?(support|sponsor|handle|cover)[^.!?]{0,25}"

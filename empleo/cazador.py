@@ -86,14 +86,21 @@ async def recolectar(
         listado = tuple(e for e in criterio.empresas if e[1] != "workday")
         if listado:
             activas["empresas"] = lambda c: fuentes.empresas(c, listado)
+    # Las dos fuentes de correo comparten buzón y contraseña: se leen una vez,
+    # acá afuera, porque encender Job Bank con LinkedIn apagado es una
+    # combinación legítima —y con las credenciales adentro del `if` de LinkedIn
+    # sería un `NameError` en la primera vuelta.
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
     if criterio.fuentes.get("linkedin", False):
-        usuario = os.environ.get("GMAIL_USUARIO", "")
-        clave = os.environ.get("GMAIL_APP_PASSWORD", "")
         # `imaplib` es síncrona: en el bucle bloquearía a las otras cinco
         # fuentes mientras negocia TLS y descarga treinta correos.
         activas["linkedin"] = lambda _c: asyncio.to_thread(
             fuentes.linkedin_por_imap, usuario, clave
         )
+    if criterio.fuentes.get("jobbank", False):
+        # Misma razón que arriba para el hilo: es otra conexión IMAP.
+        activas["jobbank"] = lambda _c: asyncio.to_thread(fuentes.jobbank_por_imap, usuario, clave)
     if criterio.fuentes.get("upwork", False):
         token = os.environ.get("UPWORK_TOKEN", "")
         activas["upwork"] = lambda c: fuentes.upwork(c, token, consulta_upwork)
