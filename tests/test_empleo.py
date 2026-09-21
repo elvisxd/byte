@@ -2503,3 +2503,20 @@ def test_una_oferta_sin_salario_no_pierde_el_lugar() -> None:
     sin_sueldo = next(o for o in ofertas if o.empresa == "Turnberry Solutions")
     assert sin_sueldo.ubicacion == "In office, Chicago"
     assert sin_sueldo.salario == ""
+
+
+def test_sin_ubicacion_y_otro_pais_no_son_la_misma_cosa() -> None:
+    """`pais_de()` devuelve "" en dos casos que no se parecen en nada: cuando la
+    oferta no trae ubicación, y cuando la trae pero no es de EE.UU. ni de
+    Canadá —que es todo lo demás, porque el detector sólo conoce esos dos—.
+
+    Juntarlos decía que del 68% de las ofertas no sabíamos nada. Se destapó con
+    el desglose por fuente, que sumaba 291 y no 2.469: de las otras 2.178 sí
+    sabemos dónde están, están en otro lado.
+    """
+    sin_lugar = _oferta(ubicacion="")
+    en_otro_lado = _oferta(ubicacion="Berlin, Germany")
+
+    assert pais_de(sin_lugar) == pais_de(en_otro_lado) == ""
+    assert bool(sin_lugar.ubicacion.strip()) is False
+    assert bool(en_otro_lado.ubicacion.strip()) is True
