@@ -72,6 +72,10 @@ function plata(monto) {
 const NOMBRES = {
   largo_plazo: "largo plazo",
   cliente_norteamerica: "cliente de EE.UU./Canadá",
+  pide_experto: "piden experto",
+  duracion_larga: "duración larga",
+  duracion_corta: "duración corta",
+  jornada_completa: "jornada completa",
   // Se nombra el hecho, no el veredicto. Si una de estas asoma igual es porque
   // ganó en todo lo demás, y ahí lo que hace falta saber es de dónde es.
   cliente_bloqueado: "⚠ cliente fuera de tu lista",
@@ -149,17 +153,48 @@ function pintar(datos) {
     return;
   }
 
-  for (const oferta of datos.ofertas) {
-    const fila = crear("article", "oferta aplicar");
+  datos.ofertas.forEach((oferta, i) => {
+    // El puesto en la lista, no sólo el puntaje: "1" se lee de un vistazo y el
+    // puntaje es una escala sin tope que no dice nada por sí sola.
+    const fila = crear("article", `oferta aplicar${i === 0 ? " mejor" : ""}`);
     const cabecera = crear("div", "oferta-cabecera");
+    cabecera.appendChild(texto(crear("span", "puesto"), `#${i + 1}`));
     cabecera.appendChild(texto(crear("span", "puntaje"), String(oferta.puntaje)));
-    cabecera.appendChild(texto(crear("strong"), oferta.titulo));
+
+    // El título, en un botón que lo copia.
+    //
+    // La pantalla de búsqueda no trae el enlace de cada oferta —Upwork lo pone
+    // en el href del título y al copiar la página se pierde—, así que para
+    // abrirla hay que buscarla por su nombre. Copiarlo a mano de una lista es
+    // justo el paso donde se abandona: se selecciona de más, se pega con el
+    // puntaje pegado adelante y la búsqueda no encuentra nada.
+    const titulo = crear("button", "titulo", oferta.titulo);
+    titulo.type = "button";
+    titulo.title = "Copiar el título para buscarlo en Upwork";
+    titulo.addEventListener("click", async () => {
+      const antes = titulo.textContent;
+      try {
+        await navigator.clipboard.writeText(oferta.titulo);
+        titulo.textContent = "✓ copiado — pegalo en la búsqueda de Upwork";
+      } catch {
+        // Sin permiso de portapapeles —pasa en http:// y en algunos
+        // navegadores— se selecciona el texto para que copiar sea un Ctrl-C.
+        const rango = document.createRange();
+        rango.selectNodeContents(titulo);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(rango);
+        titulo.textContent = antes;
+      }
+      setTimeout(() => (titulo.textContent = antes), 2500);
+    });
+    cabecera.appendChild(titulo);
     fila.appendChild(cabecera);
     const datosTexto = datosDe(oferta);
     if (datosTexto) fila.appendChild(texto(crear("p", "datos"), datosTexto));
     fila.appendChild(texto(crear("p", "motivos"), oferta.motivos.join("; ")));
     resultados.appendChild(fila);
-  }
+  });
 }
 
 form.addEventListener("submit", async (evento) => {

@@ -72,6 +72,43 @@
   flex-wrap: wrap;
 }
 
+/* La mejor de la tanda. El borde más claro es lo que hace que el ojo caiga ahí
+   primero sin tener que comparar los puntajes uno por uno. */
+.oferta.mejor {
+  border-color: #48bb78;
+  background: rgba(72, 187, 120, 0.12);
+}
+
+.puesto {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #48bb78;
+  min-width: 2.5ch;
+}
+
+/* El título es un botón que copia: tiene que parecerlo sin gritar. Hereda la
+   tipografía del texto porque un <button> trae la del sistema y desentonaría
+   con el resto de la tarjeta. */
+.titulo {
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-bottom: 1px dashed var(--borde, #2c2f36);
+  padding: 0;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.titulo:hover,
+.titulo:focus-visible {
+  border-bottom-color: #48bb78;
+  color: #48bb78;
+}
+
 .puntaje {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
