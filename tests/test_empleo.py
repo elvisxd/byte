@@ -25,6 +25,7 @@ from empleo.criterio import (
     Puntaje,
     cargar_criterio,
     detectar_senales,
+    fuera_de_oficio,
     pais_de,
     puntuar,
 )
@@ -2820,3 +2821,72 @@ def test_el_recorte_del_buzon_llega_al_pie_del_aviso(
     assert conteo["buzón_sin_mirar"] == 143
     assert conteo["postulaciones"] == 1
     assert "buzón_sin_mirar: 143" in cazador._pie_fuentes(conteo)
+
+
+# --- El board entero de una empresa trae el departamento equivocado ---------
+
+
+def test_un_vendedor_no_es_un_puesto_tuyo() -> None:
+    """Oferta REAL del 21/09: "Sales Development Representative | France |
+    Remote — Grafana Labs", 57 puntos, tercera de 101 en el teléfono.
+
+    No vino del canal de LMIA como los cocineros: vino de la lista de
+    `[[empresas]]`. El cazador se baja el board ENTERO de cada una —3.606
+    puestos esa vuelta— y un board entero trae ventas, marketing, finanzas y
+    recursos humanos. La misma fuente buena, con el departamento equivocado.
+    """
+    vendedor = _oferta(
+        titulo="Sales Development Representative | France | Remote",
+        empresa="Grafana Labs",
+        ubicacion="France (Remote)",
+    )
+
+    assert fuera_de_oficio(vendedor)
+
+
+@pytest.mark.parametrize(
+    "titulo",
+    [
+        "Business Development Representative",
+        "Account Executive, Enterprise",
+        "Product Marketing Manager",
+        "Technical Recruiter",
+        "Talent Acquisition Partner",
+        "Customer Success Manager",
+        "Senior Accountant",
+        "Executive Assistant",
+        "Content Writer",
+        "Vendedor",
+    ],
+)
+def test_la_familia_comercial_entera_queda_fuera(titulo: str) -> None:
+    """Los vecinos del vendedor en el mismo board. La familia es la comercial y
+    administrativa, que es la que apareció; los oficios de la construcción, el
+    transporte y el cuidado NO están todavía, a propósito.
+    """
+    assert fuera_de_oficio(_oferta(titulo=titulo))
+
+
+@pytest.mark.parametrize(
+    "titulo",
+    [
+        # Puestos TÉCNICOS en equipos comerciales: el oficio técnico gana
+        # siempre, y frenarlos sería lo contrario de lo que se busca.
+        "Sales Engineer",
+        "Solutions Architect",
+        "Developer Advocate",
+        "Marketing Data Analyst",
+        # Y los de siempre, para que el filtro nuevo no se lleve nada puesto.
+        "Software Engineer, Beneficial Deployments",
+        "Senior Full Stack Engineer (AI)",
+        "Engineering Manager, Platform",
+        "Surface MCP - OT Systems Lead",
+        "Ingeniero de Software",
+    ],
+)
+def test_un_oficio_tecnico_en_el_titulo_gana_siempre(titulo: str) -> None:
+    """«Sales Engineer» y «Developer Advocate» son puestos de programación en
+    equipos comerciales. Por eso "development" NO está en la lista comercial y
+    "developer" sí está en la técnica.
+    """
+    assert not fuera_de_oficio(_oferta(titulo=titulo))

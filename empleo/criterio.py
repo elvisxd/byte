@@ -362,6 +362,45 @@ _OFICIO_GASTRONOMIA = re.compile(
 )
 
 
+# Los puestos de oficina que NO son el tuyo. Salió de una oferta real del
+# 21/09 que llegó al teléfono: "Sales Development Representative | France |
+# Remote — Grafana Labs", con 57 puntos, tercera de 101.
+#
+# El mecanismo importa porque no es el mismo que el de la gastronomía. Esas
+# venían del canal de LMIA; estas vienen de TU PROPIA LISTA de empresas: el
+# cazador se baja el board entero de cada una —3.606 puestos en esa vuelta— y
+# un board entero trae ventas, marketing, finanzas y recursos humanos. No es
+# una fuente mala: es la misma fuente, con el departamento equivocado.
+#
+# ⚠ Un oficio técnico en el título GANA SIEMPRE, igual que antes. "Sales
+# Engineer", "Solutions Architect" y "Developer Advocate" son puestos técnicos
+# en equipos comerciales y siguen entrando. Por eso "development" no está en la
+# lista y "developer" sí: "Sales Development Representative" no es un puesto de
+# programación y "Developer Advocate" sí.
+#
+# ⚠ La familia es la comercial y administrativa, que es la que apareció. Los
+# oficios de la construcción, el transporte y el cuidado llegan por el canal de
+# LMIA y NO están acá todavía, a propósito: se agranda con lo que aparece en el
+# buzón, no con lo que uno se imagina.
+_OFICIO_COMERCIAL = re.compile(
+    r"\b(sales (development|representative|manager|director|associate|executive|lead)"
+    r"|(business|market) development (representative|manager)"
+    r"|account (executive|manager|director)|\bsdr\b|\bbdr\b"
+    r"|customer (success|support|service) (manager|representative|associate|specialist)"
+    r"|(product |brand |growth |content |digital |performance )?marketing"
+    r" (manager|specialist|associate|director|lead)"
+    r"|copywriter|content writer|social media (manager|specialist)"
+    r"|(technical |talent )?recruiter|talent acquisition|people operations"
+    r"|human resources|recruiting (coordinator|manager)"
+    r"|accountant|bookkeeper|payroll|accounts (payable|receivable)"
+    r"|office (manager|administrator)|executive assistant|receptionist"
+    r"|paralegal|legal counsel"
+    r"|vendedor|ejecutivo de cuentas|representante de ventas"
+    r"|contador|recursos humanos|asistente (administrativ[oa]|ejecutiv[oa]))\b",
+    re.I,
+)
+
+
 def fuera_de_oficio(oferta: Oferta) -> bool:
     """¿El título nombra un oficio que no es el tuyo?
 
@@ -372,7 +411,7 @@ def fuera_de_oficio(oferta: Oferta) -> bool:
     titulo = oferta.titulo
     if _OFICIO_TECNICO.search(titulo):
         return False
-    return bool(_OFICIO_GASTRONOMIA.search(titulo))
+    return bool(_OFICIO_GASTRONOMIA.search(titulo) or _OFICIO_COMERCIAL.search(titulo))
 
 
 @dataclass(frozen=True, slots=True)
