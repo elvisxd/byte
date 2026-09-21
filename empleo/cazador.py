@@ -32,9 +32,14 @@ from empleo.criterio import Criterio, Puntaje, cargar_criterio, pais_de, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 from empleo.postulaciones import AVISABLES, Respuesta, bloque
-from empleo.retraso import informe, leer_avisos, medir, resumen
+from empleo.retraso import informe, leer_avisos, medir, parte, resumen, seguir
 
 logger = get_logger("empleo.cazador")
+
+# Cuántos días de buzón mira el seguimiento. Más que `--retraso` (45) porque un
+# proceso largo —cuatro rondas y una oferta— cruza los dos meses sin problema, y
+# el parte tiene que poder mostrar esa conversación entera y no su último tramo.
+DIAS_DE_SEGUIMIENTO = 90
 
 RAIZ = Path(__file__).resolve().parent.parent
 CRITERIO_POR_DEFECTO = RAIZ / "perfil" / "busqueda.toml"
@@ -731,6 +736,39 @@ async def medir_retraso(criterio: Criterio, carpeta: Path, al_telefono: bool = F
     return informe(medicion)
 
 
+async def ver_seguimiento(criterio: Criterio, carpeta: Path, al_telefono: bool) -> str:
+    """En qué quedó cada postulación. Sólo lee: digests y buzón.
+
+    Comparte el camino con `--retraso` a propósito —son el mismo cruce— pero
+    contestan cosas distintas: aquél mide cuánto tardás en postular, éste dice
+    qué pasó después.
+    """
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    # Mismo aviso que en `medir_retraso`: sin buzón TODO figura sin rastro, y
+    # ese número se lee como "no postulaste a ninguna" cuando dice "no miramos".
+    sin_buzon = "" if usuario and clave else "faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD"
+    respuestas = (
+        []
+        if sin_buzon
+        else await asyncio.to_thread(
+            fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
+        )
+    )
+    avisos = leer_avisos(carpeta)
+    medicion = medir(
+        avisos,
+        respuestas,
+        criterio.puntaje_minimo,
+        (criterio.descartar_despues_de_dias or 4) * 24,
+        sin_buzon,
+    )
+    texto = parte(seguir(avisos, respuestas), medicion)
+    if al_telefono:
+        avisar(texto)
+    return texto
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
@@ -758,9 +796,14 @@ def main() -> None:
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
     )
     parser.add_argument(
+        "--seguimiento",
+        action="store_true",
+        help="En qué quedó cada postulación: entrevista, piden algo, esperando, cerrada",
+    )
+    parser.add_argument(
         "--al-telefono",
         action="store_true",
-        help="Con --retraso: manda el resumen al panel además de imprimirlo",
+        help="Con --retraso o --seguimiento: manda el parte al panel además de imprimirlo",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -786,11 +829,15 @@ def main() -> None:
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
         return
-    if args.al_telefono and not args.retraso:
+    if args.al_telefono and not (args.retraso or args.seguimiento):
         # Sin esto el flag se ignoraba en silencio y arrancaba una vuelta
         # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
         # tipea esperando el informe recibía otra cosa, y encima con efectos.
-        parser.error("--al-telefono necesita --retraso")
+        parser.error("--al-telefono necesita --retraso o --seguimiento")
+    if args.seguimiento:
+        # Sólo lectura, igual que --retraso: se puede mirar con una vuelta en curso.
+        print(asyncio.run(ver_seguimiento(criterio, carpeta_de_trabajo(), args.al_telefono)))
+        return
     if args.retraso:
         # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
         # mientras una vuelta está corriendo.

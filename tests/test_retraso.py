@@ -11,7 +11,16 @@ from pathlib import Path
 import pytest
 
 from empleo.postulaciones import Respuesta
-from empleo.retraso import Aviso, emparejar, informe, leer_avisos, medir, resumen
+from empleo.retraso import (
+    Aviso,
+    emparejar,
+    informe,
+    leer_avisos,
+    medir,
+    parte,
+    resumen,
+    seguir,
+)
 
 
 def _digest(carpeta: Path, nombre: str, cuerpo: str) -> None:
@@ -504,3 +513,156 @@ def test_el_sin_rastro_se_cuenta_sobre_las_que_pasaban_el_corte() -> None:
     texto = informe(medicion)
 
     assert "De 1 que pasaban el corte (sobre 2 avisadas)" in texto
+
+
+# --- En qué quedó cada postulación ---
+
+
+def _hace(dias: float) -> datetime:
+    return datetime.now(tz=UTC) - timedelta(days=dias)
+
+
+def test_el_estado_de_una_postulacion_es_el_ultimo_correo_no_el_mas_grave() -> None:
+    """Un rechazo después de una entrevista quiere decir que te rechazaron. Una
+    prioridad fija —«entrevista gana siempre»— diría lo contrario para siempre,
+    y el parte mostraría como viva una postulación cerrada hace un mes."""
+    avisos = [_aviso("Cohere", 24 * 40)]
+    respuestas = [
+        _respuesta("no-reply@cohere.com", _hace(30), "acuse"),
+        _respuesta("talent@cohere.com", _hace(20), "entrevista"),
+        _respuesta("talent@cohere.com", _hace(5), "rechazo"),
+    ]
+
+    seguidas = seguir(avisos, respuestas)
+
+    assert len(seguidas) == 1
+    assert seguidas[0].estado == "rechazo"
+    assert seguidas[0].correos == 3
+
+
+def test_los_correos_de_una_empresa_son_una_postulacion_y_no_tres() -> None:
+    """Llegan desde el dominio propio Y desde el ATS. Agrupándolos por
+    remitente, una sola postulación se contaba tres veces y el parte decía que
+    tenés el triple de procesos abiertos de los que tenés."""
+    avisos = [_aviso("Wealthsimple", 24 * 20)]
+    respuestas = [
+        _respuesta("no-reply@wealthsimple.com", _hace(15), "acuse"),
+        _respuesta("careers@wealthsimple.com", _hace(10), "accion"),
+    ]
+
+    seguidas = seguir(avisos, respuestas)
+
+    assert len(seguidas) == 1
+    assert seguidas[0].empresa == "Wealthsimple"
+    assert seguidas[0].estado == "accion"
+
+
+def test_un_ats_que_no_nombra_a_nadie_no_inventa_una_empresa() -> None:
+    """`no-reply@ashbyhq.com` sin oferta que lo ate no nombra a ninguna empresa.
+    Agruparlo por "ashby" juntaría empresas distintas bajo un nombre que no es
+    de ninguna, y el parte mostraría una postulación a "Ashby"."""
+    seguidas = seguir([], [_respuesta("no-reply@ashbyhq.com", _hace(3), "acuse")])
+
+    assert seguidas == []
+
+
+def test_un_acuse_viejo_se_marca_para_insistir() -> None:
+    """Dos semanas es lo que tarda un proceso normal en dar señales. Más que
+    eso, el silencio ya dijo algo, y una lista donde todo se ve igual no ayuda
+    a decidir a cuál escribirle hoy."""
+    avisos = [_aviso("Jobber", 24 * 30)]
+    respuestas = [_respuesta("no-reply@jobber.com", _hace(20), "acuse")]
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    texto = parte(seguir(avisos, respuestas), medicion)
+
+    assert "insistí o soltalo" in texto
+    assert "Jobber" in texto
+
+
+def test_un_acuse_de_ayer_no_se_marca_para_insistir() -> None:
+    avisos = [_aviso("Jobber", 24 * 3)]
+    respuestas = [_respuesta("no-reply@jobber.com", _hace(1), "acuse")]
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    texto = parte(seguir(avisos, respuestas), medicion)
+
+    assert "insistí o soltalo" not in texto
+
+
+def test_el_parte_dice_que_no_puede_distinguir_las_sin_rastro() -> None:
+    """La línea más importante del parte, porque dice qué NO sabe el sistema.
+
+    El seguimiento deduce que postulaste cuando llega un correo de la empresa.
+    Una que nunca acusa recibo es indistinguible de una a la que no postulaste:
+    sin decirlo, "sin rastro" se lee como "no postulaste" y una empresa callada
+    queda contada como pereza tuya para siempre.
+    """
+    avisos = [_aviso(f"Empresa{n}", 24 * 10, puntaje=52) for n in range(5)]
+    medicion = medir(avisos, [], 25, 96)
+
+    texto = parte([], medicion)
+
+    assert "Avisadas y sin rastro: 5" in texto
+    assert "esto no los distingue" in texto
+
+
+def test_el_parte_ordena_por_lo_que_hay_que_hacer_y_no_por_fecha() -> None:
+    """Lo primero que querés saber no es qué pasó último: es si hay algo que
+    hacer hoy. La entrevista va arriba aunque el rechazo sea más reciente."""
+    avisos = [_aviso("Cohere", 24 * 30), _aviso("Stripe", 24 * 30)]
+    respuestas = [
+        _respuesta("talent@cohere.com", _hace(9), "entrevista"),
+        _respuesta("no-reply@stripe.com", _hace(1), "rechazo"),
+    ]
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    texto = parte(seguir(avisos, respuestas), medicion)
+
+    assert texto.index("Entrevista") < texto.index("Cerradas")
+
+
+def test_las_cerradas_van_en_una_linea_y_no_una_por_empresa() -> None:
+    """Son los nombres a los que no volver a escribir, no trabajo pendiente.
+    Una línea por rechazo llena el mensaje con lo único que ya no se puede
+    mover."""
+    avisos = [_aviso(f"Empresa{n}", 24 * 30) for n in range(6)]
+    respuestas = [_respuesta(f"no-reply@empresa{n}.com", _hace(n + 1), "rechazo") for n in range(6)]
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    texto = parte(seguir(avisos, respuestas), medicion)
+
+    assert "Cerradas (6)" in texto
+    assert texto.count("Empresa0") == 1
+
+
+def test_sin_buzon_el_parte_lo_dice_en_vez_de_mostrar_cero() -> None:
+    """Sin credenciales TODO figura sin rastro, y ese número se lee como "no
+    postulaste a ninguna" cuando dice "no miramos"."""
+    medicion = medir([], [], 25, 96, "faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD")
+
+    texto = parte([], medicion)
+
+    assert "faltan GMAIL_USUARIO" in texto
+
+
+def test_un_rechazo_automatico_no_queda_como_esperando_respuesta() -> None:
+    """El ATS emite el acuse y el «no seguimos» en el MISMO SEGUNDO, que es
+    como manda un rechazo automático. Rompiendo el empate con el orden en que
+    se muestran los estados ganaba el acuse, y la postulación quedaba en
+    «esperando respuesta» para siempre: una empresa a la que volvés a escribir.
+    """
+    avisos = [_aviso("Cohere", 24 * 10)]
+    mismo_instante = _hace(2)
+    respuestas = [
+        _respuesta("no-reply@cohere.com", mismo_instante, "acuse"),
+        _respuesta("no-reply@cohere.com", mismo_instante, "rechazo"),
+    ]
+    # La fecha del correo va al segundo: los dos caen en el mismo instante,
+    # que es lo que hace del empate un caso real y no uno inventado.
+    assert len({r.fecha for r in respuestas}) == 1
+
+    seguidas = seguir(avisos, respuestas)
+
+    assert len(seguidas) == 1
+    assert seguidas[0].estado == "rechazo"
