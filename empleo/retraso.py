@@ -527,9 +527,21 @@ def informe(medicion: Medicion) -> str:
 # "sin rastro". No se inventa la diferencia — se dice cuál es.
 
 # El orden en que se MUESTRAN, que es el orden en que importan. `entrevista`
-# primero porque es lo único que cambia tu día; `rechazo` último porque es lo
-# único que ya no se puede mover.
-ORDEN_DE_ESTADOS = ("entrevista", "accion", "acuse", "rechazo")
+# primero porque es lo único que cambia tu día.
+#
+# ⚠ `rechazo` NO está, y es a propósito: Elvis lo pidió el 21/09. Un "we have
+# decided not to move forward" no es trabajo pendiente ni información que
+# cambie lo que hacés hoy; es ruido en la única pantalla donde se decide a qué
+# dedicarle la mañana. El parte queda con lo que se puede mover —entrevistas,
+# lo que piden, lo que espera— y con lo que falta postular.
+#
+# ⚠ No se borra nada: el rechazo se sigue leyendo, se sigue guardando, sigue
+# rompiendo el empate del rechazo automático (ver `_DESEMPATE`) y sigue
+# saliendo en `--correos`, que es donde se va a buscar. Lo único que cambia es
+# que no ocupa lugar en el teléfono. La cuenta de la cabecera —"X con rastro ·
+# Y sin cerrar"— deja la diferencia a la vista, así que tampoco desaparece en
+# silencio.
+ORDEN_DE_ESTADOS = ("entrevista", "accion", "acuse")
 
 # El orden con el que se DECIDE cuál manda cuando dos correos traen la misma
 # fecha exacta, y no es el mismo. Acá gana el más definitivo, que es la misma
@@ -682,7 +694,6 @@ def parte(
         "entrevista": "Entrevista",
         "accion": "Piden algo tuyo",
         "acuse": "Esperando respuesta",
-        "rechazo": "Cerradas",
     }
     for estado in ORDEN_DE_ESTADOS:
         grupo = sorted(por_estado.get(estado, []), key=lambda p: p.ultima, reverse=True)
@@ -690,11 +701,6 @@ def parte(
             continue
         lineas.append("")
         lineas.append(f"{etiquetas[estado]} ({len(grupo)})")
-        # Las cerradas no necesitan una línea cada una: son los nombres a los
-        # que no volver a escribir, no trabajo pendiente.
-        if estado == "rechazo":
-            lineas.append("  " + ", ".join(sorted({p.empresa for p in grupo})))
-            continue
         for p in grupo:
             titulo = f" — {p.titulo}" if p.titulo else ""
             insistir = (
