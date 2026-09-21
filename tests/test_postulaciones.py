@@ -8,7 +8,15 @@ el día que llega uno de verdad.
 
 import pytest
 
-from empleo.postulaciones import Respuesta, bloque, clasificar
+from empleo.postulaciones import (
+    DE_POSTULACION,
+    Respuesta,
+    bloque,
+    clasificar,
+    es_probable_estafa,
+    inventario,
+    sospechas,
+)
 
 # (estado esperado, asunto, fragmento del cuerpo) — copiados de correos reales.
 REALES = [
@@ -59,21 +67,25 @@ REALES = [
         "email introduction.",
     ),
     (
-        "",
+        "alerta",
         "New jobs: Full Stack Engineer at Infovision",
         "I've found 2 new jobs that might interest you!",
     ),
     (
-        "",
+        "alerta",
         "You're on the list. Welcome to job alerts.",
         "Getting a job offer is even easier than before.",
     ),
     (
-        "",
+        "alerta",
         "Elvis, you have a new prequalified offer",
         "Refresh your personalized loan options. NEW LOAN OFFER",
     ),
-    ("", "Your working style results are in!", "Your working style assessment results are in."),
+    (
+        "alerta",
+        "Your working style results are in!",
+        "Your working style assessment results are in.",
+    ),
 ]
 
 
@@ -152,13 +164,22 @@ def test_completar_el_perfil_de_un_portal_no_es_una_postulacion() -> None:
     ACCION le ganaba al guardia de "esto no es una respuesta". Completar el
     perfil de un portal es alta de usuario, no algo que pida una postulación.
     """
-    assert clasificar("Four steps left on your WWR profile", _MARKETING_DE_WWR) == ""
+    # Lo que importa es que NO sea una respuesta a una postulación tuya. Desde
+    # que nada se descarta en silencio tiene un estado igual —"alerta"— y eso no
+    # debilita el test: `accion` es lo que interrumpe, y sigue afuera.
+    assert clasificar("Four steps left on your WWR profile", _MARKETING_DE_WWR) not in (
+        *DE_POSTULACION,
+        "contacto",
+    )
 
 
 def test_apply_suelto_no_alcanza_para_ser_una_postulacion() -> None:
     """El mismo correo dice "Save jobs to apply to later" y "not ready to
     apply". Un patrón que aceptara "apply" a secas lo volvería a dejar pasar."""
-    assert clasificar("Jobs for you", "Save jobs to apply to later. Not ready to apply?") == ""
+    assert clasificar("Jobs for you", "Save jobs to apply to later. Not ready to apply?") not in (
+        *DE_POSTULACION,
+        "contacto",
+    )
 
 
 def test_lo_que_sí_pide_algo_sigue_llegando() -> None:
@@ -171,3 +192,162 @@ def test_lo_que_sí_pide_algo_sigue_llegando() -> None:
         )
         == "accion"
     )
+
+
+# --- Nada se descarta en silencio ---
+
+
+def test_todo_correo_sale_con_un_estado() -> None:
+    """Antes, lo que el clasificador no reconocía devolvía "" y el lector lo
+    tiraba: ni contado, ni registrado, ni visible. De los sesenta correos que se
+    miran por vuelta no había forma de saber cuántos caían ahí ni de qué eran,
+    así que un ATS que cambiara la plantilla dejaba de verse y nadie se
+    enteraba. Ahora el cajón tiene nombre y se puede medir.
+    """
+    assert clasificar("Your invoice is ready", "Your monthly invoice is available.") == "otro"
+    assert clasificar("", "") == "otro"
+
+
+def test_un_reclutador_de_agencia_no_es_una_empresa_escribiendote() -> None:
+    """`corp to corp`, `C2C` y `W2` son la firma del cuerpo de intermediación
+    que revende horas: no aparecen nunca en el correo de la empresa que
+    contrata. Se mira ANTES que el contacto directo porque la agencia escribe
+    las dos cosas —"vi tu perfil" y "corp to corp"—, y al revés todas entraban
+    como empresas escribiéndote."""
+    estado = clasificar(
+        "Senior Full Stack Developer - Remote - C2C",
+        "Hi, one of our clients is looking for a developer. Corp to corp or W2. "
+        "I came across your profile. What is your hourly rate?",
+    )
+
+    assert estado == "reclutador"
+
+
+def test_una_empresa_que_te_escribe_por_un_puesto_es_un_contacto() -> None:
+    """La mitad buena del correo frío, y hasta ahora se tiraba entera."""
+    estado = clasificar(
+        "Senior Full-Stack Engineer at Cohere",
+        "Hi Elvis, I came across your GitHub and your experience with LangGraph "
+        "stood out. Would you be interested in talking about our team?",
+    )
+
+    assert estado == "contacto"
+
+
+# --- Señales de estafa ---
+
+
+def test_la_estafa_clasica_enciende_varias_senales() -> None:
+    """Las denuncias por estafa de empleo a la FTC pasaron de ~35.000 a más de
+    105.000 al año entre 2020 y 2024, y las pérdidas declaradas de 90 a más de
+    513 millones de dólares. Este correo tiene la forma que describen: plata
+    grande sin decir el trabajo, entrevista por Telegram, y que compres el
+    equipo vos.
+    """
+    senales = sospechas(
+        "recruiter.amazon.hiring@gmail.com",
+        "",
+        "dkim=pass spf=pass dmarc=pass",
+        "Amazon Remote Data Entry Position",
+        "We are hiring for a remote position. Pay is $350 per day, no experience "
+        "is required. Please add me on Telegram for the interview. You will need "
+        "to purchase equipment; we will send you a check.",
+    )
+
+    assert "pide plata por adelantado" in senales
+    assert "la entrevista es por chat" in senales
+    assert "escribe desde un correo gratuito" in senales
+    assert es_probable_estafa(senales)
+
+
+def test_el_reply_to_a_un_correo_gratuito_es_el_truco_clasico() -> None:
+    """El `From` imita a la empresa y el `Reply-To` manda tu respuesta a otro
+    lado. Los ATS legítimos también usan Reply-To distinto, así que sólo se
+    anota cuando el destino es un correo gratuito."""
+    senales = sospechas(
+        "careers@stripe-talent.com", "stripejobs99@outlook.com", "", "Opportunity", "Hi there"
+    )
+
+    assert any("responder iría a outlook.com" in s for s in senales)
+
+
+def test_un_reply_to_a_otro_dominio_corporativo_no_es_sospechoso() -> None:
+    """Greenhouse, Ashby y Workday mandan en nombre de la empresa y contestan a
+    otro dominio todo el tiempo. Marcar eso sería marcar media bandeja."""
+    senales = sospechas(
+        "no-reply@us.greenhouse-mail.io", "jobs@cohere.com", "", "Application received", "Hi"
+    )
+
+    assert not any("responder iría" in s for s in senales)
+
+
+def test_gmail_ya_verifico_la_autenticacion_y_se_le_cree() -> None:
+    """Gmail escribe el resultado de SPF, DKIM y DMARC en cada correo que
+    recibe. Tirar esa cabecera sería repetir a mano un trabajo ya hecho."""
+    senales = sospechas(
+        "careers@stripe.com",
+        "",
+        "mx.google.com; dkim=fail header.i=@stripe.com; spf=fail; dmarc=fail",
+        "Opportunity at Stripe",
+        "Hi",
+    )
+
+    assert any("no pasa la autenticación" in s for s in senales)
+    assert es_probable_estafa(senales)
+
+
+def test_una_sola_senal_blanda_no_silencia_una_oportunidad() -> None:
+    """La división entre duras y blandas es la decisión de diseño de todo
+    esto. Un reclutador independiente legítimo escribe desde Gmail y una
+    agencia legítima pone "$85/hr" en el asunto: perder ese correo cuesta más
+    que ver una estafa marcada y decidirlo vos.
+    """
+    assert not es_probable_estafa(("escribe desde un correo gratuito",))
+    assert not es_probable_estafa(("promete plata sin decir el trabajo",))
+    # Dos blandas ya son un patrón, no una coincidencia.
+    assert es_probable_estafa(
+        ("escribe desde un correo gratuito", "promete plata sin decir el trabajo")
+    )
+    # Y una dura sola alcanza: ninguna empresa te pide plata.
+    assert es_probable_estafa(("pide plata por adelantado",))
+
+
+def test_un_contacto_con_estafa_no_interrumpe_pero_no_desaparece() -> None:
+    """Por el correo frío entra la mitad de las estafas de empleo, y un canal
+    que te despierta con fraude es un canal que dejás de abrir. Pero tirarlo
+    sería volver al problema de antes: sigue en `--correos`, con las señales a
+    la vista."""
+    estafa = Respuesta(
+        "<1@x>",
+        "hr@gmail.com",
+        "Remote job",
+        "",
+        "contacto",
+        ("pide plata por adelantado",),
+    )
+    buena = Respuesta("<2@x>", "sarah@cohere.com", "Role at Cohere", "", "contacto", ())
+
+    assert estafa.interrumpe is False
+    assert buena.interrumpe is True
+
+
+def test_un_acuse_de_verdad_interrumpe_aunque_tenga_una_senal() -> None:
+    """La conversación ya existe: postulaste vos. Silenciar un "falta el video"
+    porque el ATS manda desde un dominio raro es perder la postulación."""
+    r = Respuesta("<1@x>", "no-reply@x.com", "Video required", "", "accion", ("lo que sea",))
+
+    assert r.interrumpe is True
+
+
+def test_el_inventario_muestra_el_cajon_de_lo_no_reconocido() -> None:
+    """Es de lo único que sirve: verlo crecer."""
+    rs = [
+        Respuesta("<1@x>", "a@digitalocean.com", "Your invoice is ready", "", "otro", ()),
+        Respuesta("<2@x>", "b@cohere.com", "Thanks for applying", "", "acuse", ()),
+    ]
+
+    texto = inventario(rs)
+
+    assert "Buzón — 2 correos" in texto
+    assert "sin reconocer (1)" in texto
+    assert "Your invoice is ready" in texto

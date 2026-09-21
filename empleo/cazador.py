@@ -31,7 +31,7 @@ from empleo.aviso import avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
-from empleo.postulaciones import AVISABLES, Respuesta, bloque
+from empleo.postulaciones import Respuesta, bloque, inventario
 from empleo.retraso import informe, leer_avisos, medir, parte, resumen, seguir
 
 logger = get_logger("empleo.cazador")
@@ -436,7 +436,11 @@ async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
 
     respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave)
     memoria = Memoria(carpeta / "postulaciones.json")
-    nuevas = [r for r in respuestas if r.estado in AVISABLES and not memoria.conoce(r.id_mensaje)]
+    # `interrumpe` y no `estado in AVISABLES`: un contacto con señales de estafa
+    # sigue apareciendo en `--correos`, con las señales a la vista, pero no te
+    # despierta el teléfono. Un canal que te interrumpe con fraude es un canal
+    # que dejás de abrir.
+    nuevas = [r for r in respuestas if r.interrumpe and not memoria.conoce(r.id_mensaje)]
     # Se anota acá y no después de avisar, al revés que las ofertas: un pendiente
     # repetido cinco veces por día es peor que uno perdido, porque el correo
     # sigue en tu bandeja mientras que la oferta caduca.
@@ -657,6 +661,25 @@ async def ver_seguimiento(criterio: Criterio, carpeta: Path, al_telefono: bool) 
     return texto
 
 
+async def ver_correos(criterio: Criterio) -> str:
+    """Qué hay en el buzón, por tipo. Sólo lee.
+
+    Es la herramienta que hacía falta para poder decir "no se descarta
+    ninguno": antes, lo que el clasificador no reconocía desaparecía sin
+    contarse, y no había forma de saber cuánto era ni de qué.
+    """
+    if not criterio.fuentes.get("postulaciones", True):
+        return "La fuente `postulaciones` está apagada en el TOML."
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not usuario or not clave:
+        return "Faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD: sin buzón no hay nada que mirar."
+    respuestas = await asyncio.to_thread(
+        fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
+    )
+    return inventario(respuestas)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
@@ -677,6 +700,11 @@ def main() -> None:
         "--retraso",
         action="store_true",
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
+    )
+    parser.add_argument(
+        "--correos",
+        action="store_true",
+        help="Qué hay en el buzón por tipo, incluido lo que no se reconoció",
     )
     parser.add_argument(
         "--seguimiento",
@@ -717,6 +745,10 @@ def main() -> None:
         # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
         # tipea esperando el informe recibía otra cosa, y encima con efectos.
         parser.error("--al-telefono necesita --retraso o --seguimiento")
+    if args.correos:
+        # Sólo lectura, igual que --retraso y --seguimiento.
+        print(asyncio.run(ver_correos(criterio)))
+        return
     if args.seguimiento:
         # Sólo lectura, igual que --retraso: se puede mirar con una vuelta en curso.
         print(asyncio.run(ver_seguimiento(criterio, carpeta_de_trabajo(), args.al_telefono)))

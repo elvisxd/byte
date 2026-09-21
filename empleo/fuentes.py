@@ -32,7 +32,7 @@ import httpx
 
 from api.logging import get_logger
 from empleo.oferta import Oferta
-from empleo.postulaciones import Respuesta, clasificar
+from empleo.postulaciones import Respuesta, clasificar, sospechas
 
 logger = get_logger("empleo.fuentes")
 
@@ -1313,17 +1313,22 @@ def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respue
                 estado, datos = buzon.fetch(identificador, "(RFC822)")
                 if estado != "OK" or not datos or not isinstance(datos[0], tuple):
                     continue
-                hallada = _respuesta_del_correo(datos[0][1])
-                if hallada is not None:
-                    encontradas.append(hallada)
+                encontradas.append(_respuesta_del_correo(datos[0][1]))
             return encontradas
     except (OSError, imaplib.IMAP4.error) as exc:
         logger.warning("postulaciones_imap_fallo", error_type=type(exc).__name__)
         return []
 
 
-def _respuesta_del_correo(crudo: bytes) -> Respuesta | None:
-    """Clasifica un correo MIME. `None` si no es una respuesta de postulación."""
+def _respuesta_del_correo(crudo: bytes) -> Respuesta:
+    """Clasifica un correo MIME. Siempre devuelve uno: nada se descarta.
+
+    Antes devolvía `None` para lo que el clasificador no reconocía, y ahí
+    terminaba: el correo no se contaba, no se registraba y no se veía. De los
+    sesenta que se miran por vuelta no había forma de saber cuántos caían en
+    ese agujero ni de qué eran —un ATS que cambiara la plantilla dejaba de
+    verse y nadie se enteraba—. Ahora todo sale con estado, aunque sea `otro`.
+    """
     mensaje = email.message_from_bytes(crudo)
     asunto = _texto(str(make_header(decode_header(mensaje.get("Subject", "")))), 300)
     cuerpo = ""
@@ -1336,13 +1341,22 @@ def _respuesta_del_correo(crudo: bytes) -> Respuesta | None:
             break
     # Sólo el principio: las plantillas dicen lo importante arriba y el pie trae
     # enlaces de baja y avisos legales que sólo agregan falsos positivos.
-    estado = clasificar(asunto, cuerpo[:4000])
-    if not estado:
-        return None
+    recorte = cuerpo[:4000]
+    remitente = _texto(mensaje.get("From"), 200)
     return Respuesta(
         id_mensaje=_texto(mensaje.get("Message-ID"), 200) or asunto,
-        remitente=_texto(mensaje.get("From"), 200),
+        remitente=remitente,
         asunto=asunto,
         fecha=_texto(mensaje.get("Date"), 60),
-        estado=estado,
+        estado=clasificar(asunto, recorte),
+        # `Authentication-Results` lo escribe Gmail al recibir: ya verificó SPF,
+        # DKIM y DMARC, y tirar esa cabecera sería repetir a mano un trabajo que
+        # ya está hecho. Puede haber varias; se miran todas.
+        sospechas=sospechas(
+            remitente,
+            _texto(mensaje.get("Reply-To"), 200),
+            " ".join(_texto(v, 400) for v in mensaje.get_all("Authentication-Results") or []),
+            asunto,
+            recorte,
+        ),
     )
