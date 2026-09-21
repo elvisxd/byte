@@ -95,3 +95,103 @@ def test_el_minimo_del_reparto_sale_del_mismo_criterio_que_el_aviso() -> None:
     cazador: dos umbrales distintos se desincronizan y nadie se entera."""
     duro = replace(CRITERIO, puntaje_minimo=10_000)
     assert repartir(evaluar(parsear(BUENA), CRITERIO), 10, duro.puntaje_minimo) == []
+
+
+# El pegado tal como sale de la pantalla de búsqueda: con los renglones en
+# blanco que Upwork mete DENTRO de la tarjeta, antes de "Skills" y antes del pie
+# del cliente. Es lo que rompía el corte por línea en blanco.
+PANTALLA_REAL = """Posted 50 minutes ago
+•
+Proposals: 20 to 50
+WhatsApp API Consultant
+Hourly: $75-$200 - Expert - Est. Time: Less than 1 month
+We need an expert on the Meta WhatsApp Cloud API. Node/TypeScript, Postgres.
+
+Skills
+WhatsApp
+API Integration
+
+Verified 
+Payment verified
+ 
+Rating is 5.0 out of 5.
+ $300K+ spent 
+  United States
+
+Posted yesterday
+•
+Proposals: 5 to 10
+AI/ML Engineer for Image Generation
+Hourly: $19-$40 - Intermediate - Est. Time: More than 6 months
+This is a part-time, long-term role with potential for ongoing collaboration.
+
+Skills
+Adobe Photoshop
+
+Unverified 
+Payment unverified
+ 
+Rating is 0 out of 5.
+ $0 spent 
+  India"""
+
+
+def test_los_renglones_en_blanco_de_la_tarjeta_no_parten_la_oferta() -> None:
+    """Upwork deja renglones vacíos DENTRO de cada tarjeta. Cortando ahí, una
+    oferta se parte en tres: el título queda en un pedazo y "$300K+ spent" en
+    otro, así que el historial del cliente le suma puntos a un fragmento sin
+    texto. Medido contra un pegado real: 6 ofertas salían como 12 bloques."""
+    entradas = parsear(PANTALLA_REAL)
+    assert len(entradas) == 2
+    # Y el dato del cliente quedó pegado a SU oferta, no suelto.
+    assert entradas[0].gastado_usd == 300_000
+    assert entradas[0].verificado is True
+    assert entradas[1].gastado_usd == 0
+
+
+def test_el_titulo_es_el_titulo_y_no_la_linea_de_presupuesto() -> None:
+    """Elegir "el primer renglón largo" devolvía la línea de tarifa, que suele
+    ser la más larga de la tarjeta. Sin el título, el aviso no se puede leer."""
+    entradas = parsear(PANTALLA_REAL)
+    assert entradas[0].oferta.titulo == "WhatsApp API Consultant"
+    assert entradas[1].oferta.titulo == "AI/ML Engineer for Image Generation"
+
+
+def test_el_trabajo_que_sigue_vale_mas_que_la_changa() -> None:
+    """El costo de conseguir al cliente se paga una vez y se amortiza sobre lo
+    que dure el contrato. Un fijo que sigue vale más que uno más grande que no."""
+    largo = parsear("Senior Python Engineer\nThis is a long-term role, ongoing collaboration.")
+    assert "largo_plazo" in evaluar(largo, CRITERIO)[0].puntaje.senales
+
+
+def test_negar_el_largo_plazo_no_cuenta_como_largo_plazo() -> None:
+    """ "This is not a long-term role" tiene todas las palabras buenas adentro y
+    dice lo contrario. La negación gana, igual que con el patrocinio."""
+    negado = parsear("Senior Python Engineer\nThis is not a long-term role, one-off project.")
+    senales = evaluar(negado, CRITERIO)[0].puntaje.senales
+    assert "largo_plazo" not in senales
+    assert "sin_largo_plazo" in senales
+
+
+def test_el_cliente_que_nunca_contrato_no_es_neutro() -> None:
+    """$0 gastados es el que todavía no contrató a nadie: la propuesta puede no
+    llegar a competir nunca. Pero "sin dato" es otra cosa —el pegado se cortó—,
+    y castigar eso convertiría un copiado incompleto en un cliente malo."""
+    cero = parsear("Algo\nProposals: 5 to 10\nPayment unverified\n$0 spent")[0]
+    assert cero.gastado_usd == 0
+    assert any("nunca contrató" in m for m in evaluar([cero], CRITERIO)[0].motivos)
+
+    sin_dato = parsear("Algo\nProposals: 5 to 10\nPayment unverified")[0]
+    assert sin_dato.gastado_usd is None
+    assert not any("nunca contrató" in m for m in evaluar([sin_dato], CRITERIO)[0].motivos)
+
+
+def test_el_historial_del_cliente_es_una_escala_y_no_un_umbral() -> None:
+    """$300K y $5K son los dos "cliente con historial" y no son el mismo
+    cliente. Con un solo umbral, el que gastó sesenta veces más puntúa igual."""
+
+    def total(gastado: str) -> int:
+        entrada = parsear(f"Algo\nProposals: Less than 5\nPayment verified\n{gastado} spent")
+        return evaluar(entrada, CRITERIO)[0].total
+
+    assert total("$300K+") > total("$20K+") > total("$2K+") > total("$100")

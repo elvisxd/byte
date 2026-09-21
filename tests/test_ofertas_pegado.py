@@ -135,3 +135,94 @@ def test_la_pagina_se_sirve_y_no_trae_nada_inline(cliente) -> None:
     assert "ofertas.js" in html and "ofertas.css" in html
     assert "<script>" not in html
     assert "<style" not in html
+
+
+# La pantalla de búsqueda de Upwork tal como sale hoy: el "Posted …" ABRE cada
+# tarjeta, hay renglones en blanco DENTRO de ella —antes de "Skills", antes del
+# pie del cliente— y el pie trae la reputación y el gasto histórico.
+#
+# El otro maquetado, con el título arriba del "Posted", es el de `UPWORK`: los
+# dos tienen que funcionar, y por eso están los dos.
+UPWORK_PANTALLA = """Posted 50 minutes ago
+•
+Proposals: 20 to 50
+WhatsApp API Consultant
+Hourly: $75-$200 - Expert - Est. Time: Less than 1 month
+We need an expert on the Meta WhatsApp Cloud API, webhooks into a Node/TypeScript \
+and Postgres backend. Long-term, ongoing collaboration.
+
+Skills
+WhatsApp
+API Integration
+
+Verified 
+Payment verified
+ 
+Rating is 5.0 out of 5.
+ $300K+ spent 
+  United States
+
+Posted yesterday
+•
+Proposals: 20 to 50
+Full-Stack EdTech Developer — Paid $500–$750 Trial Milestone
+Fixed-price - Expert - Est. Budget: $750
+This is intended to be the first phase of a larger monthly milestone-based project \
+using React, Next.js, Node.js and PostgreSQL.
+
+Skills
+Full-Stack Development
+React
+
+Unverified 
+Payment unverified
+ 
+Rating is 0 out of 5.
+ $0 spent 
+  United States"""
+
+
+def test_los_renglones_en_blanco_de_la_tarjeta_no_parten_la_oferta(cliente) -> None:
+    """Upwork deja renglones vacíos DENTRO de cada tarjeta. Cortando ahí, una
+    oferta se parte en tres y el pedazo con "$300K+ spent" queda sin título.
+
+    Medido contra un pegado real de 6 ofertas: cortar por renglón en blanco daba
+    12 bloques y cortar por "parece un título" daba 15 —las listas de skills son
+    renglones cortos sin punto final, así que "Adobe Illustrator" abría una
+    oferta—. Las dos entregaban una lista con aspecto correcto y los datos del
+    cliente pegados a la oferta equivocada, que es el error caro acá."""
+    datos = _pegar(cliente, UPWORK_PANTALLA, connects=10)
+    assert len(datos["ofertas"]) == 2
+
+
+def test_el_historial_del_cliente_queda_pegado_a_su_oferta(cliente) -> None:
+    """Es el dato que más mueve la decisión —el que gastó $300K contrata; el de
+    $0 puede no contratar nunca— y al partirse la tarjeta le sumaba puntos a un
+    fragmento sin texto. Acá se verifica por el ORDEN, que es lo que se ve."""
+    datos = _pegar(cliente, UPWORK_PANTALLA, connects=10)
+    titulos = [o["titulo"] for o in datos["ofertas"]]
+    assert titulos[0].startswith("WhatsApp API Consultant")
+    # La de $0 y sin verificar va al fondo aunque nombre más tecnologías del
+    # stack: React, Next.js, Node.js y PostgreSQL contra un solo "TypeScript".
+    assert titulos[-1].startswith("Full-Stack EdTech Developer")
+
+
+def test_el_titulo_no_es_la_lista_de_skills_ni_el_pie_del_cliente(cliente) -> None:
+    """Sin esto los títulos salían "Full-Stack Development", "Adobe Illustrator"
+    o "Rating is 5.0 out of 5.". Una lista así es ilegible aunque el orden esté
+    bien, porque no se puede saber a qué oferta corresponde cada línea."""
+    datos = _pegar(cliente, UPWORK_PANTALLA, connects=10)
+    for oferta in datos["ofertas"]:
+        assert (
+            not oferta["titulo"]
+            .lower()
+            .startswith(("skills", "rating is", "verified", "unverified", "posted", "proposals"))
+        )
+
+
+def test_el_titulo_puede_nombrar_plata_sin_dejar_de_ser_titulo(cliente) -> None:
+    """ "Paid $500–$750 Trial Milestone" es un título, no una línea de tarifa.
+    Descartarlo por nombrar plata dejaba a la oferta titulada con el renglón
+    siguiente, que era "Full-Stack Development" de la lista de skills."""
+    datos = _pegar(cliente, UPWORK_PANTALLA, connects=10)
+    assert any("$500" in o["titulo"] for o in datos["ofertas"])

@@ -152,6 +152,17 @@ _METADATO = re.compile(
 )
 
 
+# Encabezados de las listas que Upwork pone debajo de la oferta. No son
+# metadatos con formato reconocible —son la palabra sola— pero tampoco son
+# títulos, y sin esto "Skills" abría una oferta nueva.
+_ENCABEZADO_DE_LISTA = re.compile(r"^(skills?|skip skills|more\s?about)\b", re.I)
+
+# El pie del cliente: reputación y país. "Rating is 5.0 out of 5." termina en
+# punto y ya caía, pero "Payment verified" y el país no, y se llevaban el
+# título. Se listan porque son de Upwork, no porque sea una regla general.
+_PIE_DEL_CLIENTE = re.compile(r"^(verified|unverified|rating is)\b", re.I)
+
+
 def _parece_titulo(linea: str) -> bool:
     """Si la línea puede ser el título de una oferta y no un dato de la tarjeta."""
     # El tope de largo y el punto final son lo que separa un título de la
@@ -163,8 +174,18 @@ def _parece_titulo(linea: str) -> bool:
         and not linea.endswith((".", "!", "?"))
         and not _COLA.match(linea)
         and not _METADATO.match(linea)
+        and not _POSTED.match(linea)
+        and not _ENCABEZADO_DE_LISTA.match(linea)
+        and not _PIE_DEL_CLIENTE.match(linea)
         and not _FIN_DE_TARJETA.search(linea)
-        and not _PLATA.search(linea)
+        # ⚠ Que la línea NOMBRE plata no la descalifica; que EMPIECE por plata,
+        # sí. Los títulos de Upwork llevan el presupuesto adentro más seguido de
+        # lo que parece —"Paid $500–$750 Trial Milestone With Long-Term
+        # Opportunity"— y descartarlos dejaba a la oferta titulada con el
+        # renglón siguiente, que era "Full-Stack Development" de la lista de
+        # skills. Una línea de tarifa, en cambio, abre con el número o con
+        # "Hourly"/"Fixed-price", y eso ya lo ataja `_METADATO`.
+        and not _PLATA.match(linea)
     )
 
 
@@ -209,15 +230,94 @@ def _por_inicio_de_tarjeta(texto: str) -> list[str]:
     return bloques
 
 
+# El encabezado con el que Upwork abre CADA tarjeta de la búsqueda: "Posted 50
+# minutes ago", "Posted yesterday". Aparece una vez por oferta y siempre
+# primero, lo que lo vuelve el único corte que no depende del maquetado.
+_POSTED = re.compile(r"^\s*(?:posted|publicado)\b.*$", re.I | re.M)
+
+
+def _por_posted(texto: str) -> list[str]:
+    """Corta el pegado de Upwork usando el "Posted …" como ancla de cada tarjeta.
+
+    ⚠ Las otras dos estrategias fallan con la pantalla real de Upwork, y hay que
+    saber por qué antes de tocar esto:
+
+    - **Por renglón en blanco**: Upwork deja renglones vacíos DENTRO de la
+      tarjeta —antes de "Skills", antes del pie del cliente—, así que parte cada
+      oferta en tres. El pedazo con "$300K+ spent" queda sin el título.
+    - **Por inicio de tarjeta**: busca algo que parezca título, y las listas de
+      skills de Upwork son justamente renglones cortos sin punto final. Abre una
+      oferta nueva llamada "API Development" o "Adobe Illustrator".
+
+    Medido contra un pegado real de 6 ofertas: la primera devolvía 12 bloques y
+    la segunda 15. Esta devuelve 6.
+
+    ⚠⚠ El "Posted …" NO siempre abre la tarjeta. Hay dos maquetados y el corte
+    tiene que sobrevivir a los dos:
+
+        Posted 50 minutes ago          Senior AI Engineer for RAG
+        Proposals: 20 to 50            Hourly: $60-$90
+        WhatsApp API Consultant        Posted 25 minutes ago
+
+    A la izquierda el título va después del ancla; a la derecha, antes. Cortando
+    en el "Posted" a secas, el segundo caso le arranca el título a cada oferta y
+    se lo pega a la anterior. Por eso el corte no se hace en el ancla sino en el
+    primer renglón de su tarjeta: desde el ancla se sube mientras las líneas
+    sigan siendo parte de la misma oferta.
+    """
+    lineas = texto.splitlines()
+    anclas = [i for i, x in enumerate(lineas) if _POSTED.match(x.strip())]
+    if not anclas:
+        return []
+
+    def principio(ancla: int, piso: int) -> int:
+        """Desde dónde empieza de verdad la tarjeta de este "Posted".
+
+        Se sube mientras haya título o datos —tarifa, propuestas— y se frena en
+        el renglón vacío o en la tarjeta anterior. `piso` es dónde terminó la
+        oferta de arriba: sin él, subir se comería la tarjeta previa entera.
+        """
+        i = ancla
+        while i > piso:
+            previa = lineas[i - 1].strip()
+            if not previa or not (_parece_titulo(previa) or _METADATO.match(previa)):
+                break
+            i -= 1
+        return i
+
+    cortes: list[int] = []
+    piso = 0
+    for ancla in anclas:
+        inicio = principio(ancla, piso)
+        cortes.append(inicio)
+        piso = ancla + 1
+    # Lo de antes del primer corte es el menú de la página, no una oferta.
+    limites = cortes + [len(lineas)]
+    bloques = ["\n".join(lineas[i:j]).strip() for i, j in zip(limites, limites[1:], strict=False)]
+    return [b for b in bloques if b]
+
+
 def separar(texto: str) -> tuple[list[str], int]:
     """Los bloques que son ofertas, y cuántos se descartaron por no serlo."""
     limpio = _sin_ruido(texto)
     por_blanco = [b for b in _por_renglon_en_blanco(limpio) if _es_oferta(b)]
     por_tarjeta = [b for b in _por_inicio_de_tarjeta(limpio) if _es_oferta(b)]
-    # Se elige el que más ofertas encuentra. Si la página vino con renglones en
-    # blanco, el primero gana solo; si vino corrida, el primero devuelve uno o
-    # dos bloques enormes y el segundo los separa de verdad.
-    elegidos = por_tarjeta if len(por_tarjeta) > len(por_blanco) else por_blanco
+    por_posted = [b for b in _por_posted(limpio) if _es_oferta(b)]
+
+    # ⚠ El "Posted …" GANA cuando está, aunque encuentre MENOS bloques.
+    #
+    # Las otras dos se comparan entre sí por cantidad, y para ellas está bien:
+    # ahí más bloques significa "separó de verdad lo que vino corrido". Pero
+    # cuando el problema es el contrario —una oferta partida en tres— la
+    # cantidad premia exactamente al que está fallando. Con el pegado real,
+    # elegir por cantidad se quedaba con 15 fragmentos en vez de 6 ofertas.
+    #
+    # El encabezado no es una heurística: es el único renglón que Upwork pone
+    # una vez por tarjeta. Si está, sabe más que cualquier conteo.
+    if por_posted:
+        elegidos = por_posted
+    else:
+        elegidos = por_tarjeta if len(por_tarjeta) > len(por_blanco) else por_blanco
     descartados = len(_por_renglon_en_blanco(texto)) - len(elegidos)
     return elegidos, max(0, descartados)
 

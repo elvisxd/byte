@@ -112,23 +112,72 @@ def _gastado(bloque: str) -> float | None:
     return cantidad * {"k": 1_000, "m": 1_000_000}.get(sufijo, 1)
 
 
-def parsear(texto: str) -> list[OfertaUpwork]:
-    """Parte el texto pegado en ofertas.
+# El encabezado de cada tarjeta: "Posted 50 minutes ago", "Posted yesterday".
+# Es lo único que aparece UNA vez por oferta y siempre al principio, así que es
+# lo que marca dónde empieza una y termina la anterior.
+_ENCABEZADO = re.compile(r"^\s*(?:posted|publicado)\b.*$", re.I | re.M)
 
-    Separa por líneas en blanco porque es lo único estable: la pantalla de
-    Upwork cambia de maquetado seguido, pero copiar y pegar siempre deja un
-    renglón vacío entre tarjetas. Un bloque sin título ni datos se descarta.
+# Renglones de la tarjeta que NO son el título: metadatos, el pie del cliente y
+# los encabezados de las listas de skills. Sin esto el título sale siendo
+# "Rating is 5.0 out of 5." o "Fixed-price - Expert - Est. Budget: $750".
+_NO_ES_TITULO = re.compile(
+    r"^\s*(?:proposals?\b|hourly\b|fixed[- ]price\b|est\.?\s|budget\b|skills?\b"
+    r"|skip skills\b|payment\s+(?:un)?verified\b|verified\b|unverified\b"
+    r"|rating is\b|\$[\d.,]|more\s?about\b|\u2022|\W*$)",
+    re.I,
+)
+
+
+def _titulo(lineas: list[str]) -> str:
+    """El título de la tarjeta: el primer renglón que no sea metadato.
+
+    En la pantalla de Upwork el título es la primera línea de la tarjeta DESPUÉS
+    del "Posted …", y las que le siguen son todas reconocibles como metadato.
+    Elegir "el primer renglón largo" —lo que se hacía antes— devolvía la línea
+    de presupuesto, que suele ser la más larga de todas.
     """
+    for linea in lineas:
+        if not _NO_ES_TITULO.match(linea):
+            return linea
+    return lineas[0] if lineas else ""
+
+
+def _tarjetas(texto: str) -> list[str]:
+    """Parte el pegado en una tarjeta por oferta.
+
+    ⚠ NO se puede cortar por línea en blanco. Upwork deja renglones vacíos
+    DENTRO de la tarjeta —antes de "Skills", antes de "Payment verified"—, así
+    que cortar ahí parte cada oferta en dos o tres pedazos: el título queda en
+    uno y "$300K+ spent" en otro. Medido contra un pegado real: 6 ofertas
+    salieron como 12 bloques, y el historial del cliente terminó sumándole
+    puntos a un fragmento sin texto.
+
+    El "Posted …" sí aparece una vez por oferta y siempre al principio, así que
+    es el corte que sobrevive al maquetado.
+    """
+    marcas = [m.start() for m in _ENCABEZADO.finditer(texto)]
+    if not marcas:
+        # Sin encabezados no hay nada mejor que la línea en blanco: es el caso
+        # de pegar una sola oferta ya abierta, no la pantalla de búsqueda.
+        return [b for b in re.split(r"\n\s*\n", texto.strip()) if b.strip()]
+    # Lo que va antes del primer "Posted" es el menú de la página, no una oferta.
+    limites = marcas + [len(texto)]
+    return [
+        texto[i:j].strip() for i, j in zip(limites, limites[1:], strict=False) if texto[i:j].strip()
+    ]
+
+
+def parsear(texto: str) -> list[OfertaUpwork]:
+    """Parte el texto pegado en ofertas."""
     salida: list[OfertaUpwork] = []
-    for bruto in re.split(r"\n\s*\n", texto.strip()):
-        bloque = bruto.strip()
+    for bloque in _tarjetas(texto):
         lineas = [x.strip() for x in bloque.splitlines() if x.strip()]
         if len(lineas) < 2:
             continue
 
-        # La primera línea con letras es el título; las de metadata sueltas
-        # ("Posted 2 hours ago") no lo son.
-        titulo = next((x for x in lineas if len(x) > 12 and not _HACE.fullmatch(x)), lineas[0])
+        # La primera línea es el "Posted …" que marcó el corte: el título viene
+        # después.
+        titulo = _titulo(lineas[1:] if _ENCABEZADO.match(lineas[0]) else lineas)
         horas = _a_horas(bloque)
         connects = _CONNECTS.search(bloque)
         verificado = (
@@ -216,9 +265,33 @@ def _ajustar(entrada: OfertaUpwork) -> tuple[int, list[str]]:
         ajuste += 10
         motivos.append("+10 pago verificado")
 
-    if entrada.gastado_usd is not None and entrada.gastado_usd >= 5_000:
-        ajuste += 15
-        motivos.append(f"+15 cliente con ${entrada.gastado_usd:,.0f} gastados")
+    # El historial del cliente, por tramos y no todo-o-nada.
+    #
+    # Lo que separa al que contrata del que publica y desaparece no es un umbral
+    # sino una escala: $300K gastados y $5K son los dos "cliente con historial",
+    # pero no son el mismo cliente. Y el que gastó $0 no es neutro —es el que
+    # todavía no contrató a nadie—, así que resta: con Connects escasos, una
+    # propuesta a alguien que puede no contratar nunca es la más cara de todas.
+    #
+    # ⚠ $0 y "sin dato" son cosas distintas. Upwork muestra "$0 spent" para el
+    # cliente nuevo y no muestra nada cuando el pegado se cortó; castigar el
+    # segundo caso convertiría un copiado incompleto en un cliente malo.
+    if entrada.gastado_usd is not None:
+        gastado = entrada.gastado_usd
+        if gastado >= 100_000:
+            ajuste += 30
+            motivos.append(f"+30 cliente con ${gastado:,.0f} gastados")
+        elif gastado >= 10_000:
+            ajuste += 20
+            motivos.append(f"+20 cliente con ${gastado:,.0f} gastados")
+        elif gastado >= 1_000:
+            ajuste += 10
+            motivos.append(f"+10 cliente con ${gastado:,.0f} gastados")
+        elif gastado > 0:
+            motivos.append(f"±0 cliente con ${gastado:,.0f} gastados")
+        else:
+            ajuste -= 15
+            motivos.append("-15 cliente que nunca contrató ($0)")
 
     return ajuste, motivos
 

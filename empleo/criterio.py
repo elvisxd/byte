@@ -74,6 +74,27 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|remote\.com|independent contractor)\b"
     ),
     "freelance": re.compile(r"\b(freelance|per[ -]project|hourly rate|short[ -]term contract)\b"),
+    # Trabajo que sigue después del primer entregable. En Upwork esto es lo que
+    # separa un contrato de una changa: el costo de conseguir al cliente se paga
+    # una vez —los Connects, la propuesta, las llamadas— y se amortiza sobre lo
+    # que dure. Un fijo de $750 que sigue vale más que uno de $1.500 que no.
+    #
+    # ⚠ Se niega antes de afirmarse, como el patrocinio: "not a long-term role"
+    # y "this is not an ongoing position" tienen todas las palabras buenas y
+    # dicen lo contrario. Por eso `sin_largo_plazo` se evalúa y gana.
+    "sin_largo_plazo": re.compile(
+        r"\b(not?\s+(?:a\s+)?(?:long[ -]?term|ongoing|recurring)"
+        r"|one[ -](?:off|time)\s+(?:project|job|task|gig)"
+        r"|single\s+project\s+only|no\s+(?:ongoing|follow[ -]?up)\s+work)\b"
+    ),
+    "largo_plazo": re.compile(
+        r"\b(long[ -]?term|ongoing (?:work|collaboration|basis|support|partnership)"
+        r"|on ?going relationship|more than 6 months|3 to 6 months|6\+? months"
+        r"|retainer|monthly milestones?|month[ -]to[ -]month"
+        r"|potential for (?:more|additional|ongoing|future)"
+        r"|room to grow|first (?:of|phase of a) (?:many|larger)"
+        r"|technical partner|not a one[ -]off)\b"
+    ),
     # Híbrido y presencial: el caso que originó esto es una oferta de Santiago
     # marcada "híbrida" a la que no se puede aplicar desde Estados Unidos. No
     # es un puesto peor, es un puesto imposible, y encima los boards de la
@@ -179,6 +200,7 @@ class Criterio:
 PESOS = {"fuerte": 12, "medio": 6, "leve": 2}
 
 DEFECTOS_PREFERENCIAS = {
+    "largo_plazo": 20,
     "latam": 30,
     "remoto_global": 20,
     "reubicacion": 20,
@@ -377,6 +399,10 @@ def detectar_senales(oferta: Oferta, aceptable_en: tuple[str, ...] = ()) -> tupl
     encontradas = [nombre for nombre, patron in SENALES.items() if patron.search(texto)]
     if "sin_patrocinio" in encontradas and "patrocinio" in encontradas:
         encontradas.remove("patrocinio")
+    # Misma regla para el largo plazo: "this is not a long-term role" contiene
+    # la frase positiva adentro, así que la negación manda.
+    if "sin_largo_plazo" in encontradas and "largo_plazo" in encontradas:
+        encontradas.remove("largo_plazo")
     # Una oferta que declara que no hay oficina no es híbrida ni presencial por
     # nombrar esas palabras para negarlas.
     # Lo mismo con la reubicación: nombrarla para negarla no es ofrecerla.

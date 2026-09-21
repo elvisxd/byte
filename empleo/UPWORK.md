@@ -142,9 +142,26 @@ uv run python -m empleo.upwork --connects 10
 ```
 
 Lee cuántas propuestas lleva cada una, si el pago está verificado, cuánto gastó
-el cliente y hace cuánto se publicó; las puntúa contra tu perfil con el mismo
-criterio que el cazador; y dice **en cuáles gastar y en cuáles no**, hasta que
-el presupuesto se acaba.
+el cliente, si el trabajo sigue después del primer entregable y hace cuánto se
+publicó; las puntúa contra tu perfil con el mismo criterio que el cazador; y
+dice **en cuáles gastar y en cuáles no**, hasta que el presupuesto se acaba.
+
+Lo mismo, sin terminal, en `/ofertas` del panel: se pega ahí y sale la lista.
+
+**El historial del cliente es una escala, no un umbral.** $300K gastados y $5K
+son los dos "cliente con historial" y no son el mismo cliente; y el de $0 no es
+neutro, es el que todavía no contrató a nadie. Los tramos están en
+`empleo/upwork.py`. Ojo: $0 y "sin dato" son cosas distintas —lo segundo es que
+el pegado se cortó— y sólo lo primero resta.
+
+⚠ **Cortar el pegado por renglón en blanco no funciona.** Upwork deja renglones
+vacíos DENTRO de la tarjeta, antes de "Skills" y antes del pie del cliente. Un
+pegado real de 6 ofertas salía como 12 bloques, con "$300K+ spent" separado de
+su oferta. Y cortar por "lo que parece un título" salía peor —15 bloques—
+porque las listas de skills son renglones cortos sin punto final: "Adobe
+Illustrator" abría una oferta. El corte va por el "Posted …", que aparece una
+vez por tarjeta, con la salvedad de que hay dos maquetados y en uno el título
+va ARRIBA del "Posted": ver `_por_posted` en `empleo/pegado.py`.
 
 Que no elija ninguna es un resultado válido y frecuente. Con uno o dos tiros por
 mes, no gastar hoy es una decisión, no una falla.
