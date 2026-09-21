@@ -250,3 +250,47 @@ def test_canada_cuenta_igual_que_estados_unidos() -> None:
     """Son la misma lista: se pidieron los dos juntos."""
     canada = parsear(_EEUU.replace("United States", "Canada"))
     assert "cliente_norteamerica" in evaluar(canada, CRITERIO)[0].puntaje.senales
+
+
+def test_la_duracion_declarada_vale_mas_que_la_promesa_en_prosa() -> None:
+    """ "Est. Time: More than 6 months" es un campo del formulario: el cliente lo
+    tildó de una lista al publicar. "long-term opportunity" lo escribe cualquiera
+    en el título — de hecho una oferta del pegado real lo tenía en el título y
+    era un fijo de $750 con cliente sin verificar.
+
+    Por eso son dos señales distintas y no una."""
+    declarada = parsear(
+        "Senior Python Engineer\nHourly: $70-$120 - Expert - Est. Time: More than 6 months\nx"
+    )
+    senales = evaluar(declarada, CRITERIO)[0].puntaje.senales
+    assert "duracion_larga" in senales
+
+    corta = parsear(
+        "Senior Python Engineer\nHourly: $70 - Expert - Est. Time: Less than 1 month\nx"
+    )
+    assert "duracion_corta" in evaluar(corta, CRITERIO)[0].puntaje.senales
+
+
+def test_pedir_experto_es_el_campo_no_la_palabra_en_la_descripcion() -> None:
+    """ "We need an expert on the WhatsApp Cloud API" es prosa y no dice nada del
+    nivel que pide la oferta: el campo viene en la línea de tarifa, separado por
+    guiones. Sin distinguirlos, cualquier descripción que use la palabra
+    "expert" sumaría puntos por un nivel que nadie declaró."""
+    campo = parsear("Algo\nHourly: $75-$200 - Expert - Est. Time: Less than 1 month\nx")
+    assert "pide_experto" in evaluar(campo, CRITERIO)[0].puntaje.senales
+
+    prosa = parsear("Algo\nProposals: Less than 5\nWe need an expert on the Meta WhatsApp API.")
+    assert "pide_experto" not in evaluar(prosa, CRITERIO)[0].puntaje.senales
+
+
+def test_la_jornada_se_muestra_pero_no_decide() -> None:
+    """30+ hrs/week no es mejor ni peor: depende de cuánto tiempo tengas esa
+    semana, y eso el código no lo sabe. Se detecta para mostrarlo y se le deja
+    peso cero — ponerle signo sería decidir por el usuario algo que cambia de
+    mes a mes."""
+    from empleo.criterio import DEFECTOS_PENALIZACIONES, DEFECTOS_PREFERENCIAS
+
+    entrada = parsear("Algo\nHourly - Expert - Est. Time: Less than 1 week, 30+ hrs/week\nx")
+    assert "jornada_completa" in evaluar(entrada, CRITERIO)[0].puntaje.senales
+    assert "jornada_completa" not in DEFECTOS_PREFERENCIAS
+    assert "jornada_completa" not in DEFECTOS_PENALIZACIONES
