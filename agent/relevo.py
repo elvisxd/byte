@@ -46,6 +46,8 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
 CUARENTENA_MINUTO_S = 60.0
 CUARENTENA_CAIDO_S = 120.0
 # ⚠ HAY FALLOS QUE NO SE CURAN ESPERANDO, Y TRATARLOS COMO CAÍDAS CUESTA VUELTAS.
@@ -237,6 +239,74 @@ def por_minuto(texto: str) -> bool:
     return "per minute" in bajo or "tpm" in bajo
 
 
+# Mismo cálculo aproximado que `agent/graph.py` (4 caracteres por token y 4 de
+# sobre por mensaje). No es el tokenizador de Groq —el suyo cuenta un 5-10 % más—
+# y por eso el recorte lleva margen: quedarse corto es un segundo 413.
+_CHARS_POR_TOKEN = 4
+MARGEN_RECORTE = 96
+
+
+def _tokens_aprox(mensajes: list[Any]) -> int:
+    total = 0
+    for m in mensajes:
+        contenido = getattr(m, "content", m)
+        if not isinstance(contenido, str):
+            contenido = str(contenido)
+        total += len(contenido) // _CHARS_POR_TOKEN + 4
+    return total
+
+
+def recortar_entrada(entrada: Any, quitar: int) -> list[Any] | None:
+    """La misma vuelta con `quitar` tokens menos de historial, o None si no se puede.
+
+    ⚠ ES LA RESPUESTA A CÓMO CUENTA GROQ. Medido el 2026-09-20 a las 12:19 EDT:
+    el 20b CONTESTÓ con 7510 tokens de entrada la misma petición que el 120b
+    rechazó con «Limit 8000, Requested 9266», y 9266 − 7510 = 1756, exactamente
+    la salida anterior del 120b. Groq le suma a cada petición la última salida
+    de ESE modelo. Con `history_budget` en 7372 (12288 × 0,6, dimensionado para
+    el contexto del LOCAL) y salidas de hasta 8192, el choque está garantizado:
+    a las 12:04 un razonamiento de 8144 dejó la siguiente en «Requested 15778»
+    y la vuelta se perdió entera.
+
+    El excedente lo dice el propio error, así que se quita justo eso —y el
+    margen— del historial de la vuelta, y se reintenta el MISMO modelo. No se
+    toca el prompt: se quitan los pasos más viejos de esta vuelta (cada AIMessage
+    con sus ToolMessages), del más antiguo al más nuevo, y NUNCA el system, ni
+    el primer mensaje humano —que trae el mapa del mercado—, ni el último paso
+    —que es lo que el modelo tiene que contestar—. Si con eso no alcanza, None:
+    se rota como antes.
+
+    ⚠ LOS PARES SE QUITAN ENTEROS. Un ToolMessage sin el AIMessage que lo pidió
+    es un 400 del protocolo de OpenAI, o sea otra vuelta perdida por arreglar
+    una.
+    """
+    if not isinstance(entrada, list) or quitar <= 0:
+        return None
+    # Cabecera intocable: los system del principio y el primer humano.
+    i = 0
+    while i < len(entrada) and isinstance(entrada[i], SystemMessage):
+        i += 1
+    if i >= len(entrada) or not isinstance(entrada[i], HumanMessage):
+        return None
+    cabecera, cuerpo = entrada[: i + 1], entrada[i + 1 :]
+    # El cuerpo son pasos: un AIMessage y lo que le sigue hasta el siguiente AIMessage.
+    pasos: list[list[Any]] = []
+    for m in cuerpo:
+        if isinstance(m, AIMessage) or not pasos:
+            pasos.append([m])
+        else:
+            pasos[-1].append(m)
+    if len(pasos) < 2:
+        return None  # no hay nada viejo que quitar sin quitar lo actual
+    objetivo = quitar + MARGEN_RECORTE
+    quitados = 0
+    for k in range(len(pasos) - 1):  # el último paso no se toca
+        quitados += _tokens_aprox(pasos[k])
+        if quitados >= objetivo:
+            return [*cabecera, *(m for paso in pasos[k + 1 :] for m in paso)]
+    return None
+
+
 def segundos_hasta_medianoche_pacifico(ahora: datetime | None = None) -> float:
     momento = (ahora or datetime.now(tz=PACIFICO)).astimezone(PACIFICO)
     manana = (momento + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -269,6 +339,8 @@ class _Estado:
         self.ultima_llamada = float("-inf")
         # Ver `Relevo.reservar_primero`. Compartido con las copias ligadas.
         self.reservar_primero = False
+        # Cuántas veces un 413 se resolvió recortando la vuelta (`recortar_entrada`).
+        self.recortes_413 = 0
 
 
 class Relevo:
@@ -389,6 +461,28 @@ class Relevo:
             getattr(self.catalogo, metodo)(*args, **kwargs)
         except Exception as exc:
             print(f"[relevo] {_hora()} no se pudo anotar en el catálogo: {exc}", flush=True)
+
+    @property
+    def recortes_413(self) -> int:
+        return self._estado.recortes_413
+
+    def _recortada_por_413(self, nombre: str, exc: BaseException, entrada: Any) -> list[Any] | None:
+        """Si el error es un 413 con cifras, la misma entrada con el excedente quitado."""
+        if codigo_http(exc) != 413:
+            return None
+        cifras = presupuesto_del_413(str(exc))
+        if not cifras:
+            return None
+        tope, pedido = cifras
+        recortada = recortar_entrada(entrada, pedido - tope)
+        if recortada is None:
+            return None
+        print(
+            f"[relevo] {_hora()} {nombre} 413 (pedido {pedido} > tope {tope}): "
+            f"recorto {pedido - tope + MARGEN_RECORTE} tokens de historial y reintento",
+            flush=True,
+        )
+        return recortada
 
     def _agotar(self, nombre: str, tipo: str, exc: BaseException) -> None:
         sugerida = espera_sugerida(exc)
@@ -533,6 +627,26 @@ class Relevo:
                     tipo = tipo_de_agotamiento(exc)
                     if tipo is None or emitio:
                         raise
+                    # ⚠ UN 413 CON CIFRAS SE REINTENTA CON MENOS HISTORIAL, EL MISMO
+                    # MODELO, UNA VEZ. Antes de esto el 413 rotaba y, con los dos
+                    # de Groq chocando contra el mismo muro, la vuelta se perdía
+                    # («la vuelta 11 falló», 2026-09-20). Ver `recortar_entrada`.
+                    recortada = self._recortada_por_413(nombre, exc, entrada)
+                    if recortada is not None:
+                        try:
+                            async for trozo in modelo.astream(recortada, **kwargs):
+                                emitio = emitio or _es_respuesta(trozo)
+                                uso = _sumar_uso(uso, getattr(trozo, "usage_metadata", None))
+                                yield trozo
+                        except Exception as exc2:
+                            tipo2 = tipo_de_agotamiento(exc2)
+                            if tipo2 is None or emitio:
+                                raise
+                            self._agotar(nombre, tipo2, exc2)
+                            continue
+                        self._estado.recortes_413 += 1
+                        self._contesto(nombre, uso)
+                        return
                     self._agotar(nombre, tipo, exc)
                     continue
                 self._contesto(nombre, uso)
@@ -562,6 +676,19 @@ class Relevo:
                     tipo = tipo_de_agotamiento(exc)
                     if tipo is None:
                         raise
+                    recortada = self._recortada_por_413(nombre, exc, entrada)
+                    if recortada is not None:
+                        try:
+                            respuesta = await modelo.ainvoke(recortada, **kwargs)
+                        except Exception as exc2:
+                            tipo2 = tipo_de_agotamiento(exc2)
+                            if tipo2 is None:
+                                raise
+                            self._agotar(nombre, tipo2, exc2)
+                            continue
+                        self._estado.recortes_413 += 1
+                        self._contesto(nombre)
+                        return respuesta
                     self._agotar(nombre, tipo, exc)
                     continue
                 self._contesto(nombre)
