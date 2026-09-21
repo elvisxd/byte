@@ -515,10 +515,20 @@ def informe(medicion: Medicion) -> str:
 # recibo es indistinguible de una a la que no postulaste: las dos aparecen como
 # "sin rastro". No se inventa la diferencia — se dice cuál es.
 
-# El orden en que se muestran, que es el orden en que importan. `entrevista`
+# El orden en que se MUESTRAN, que es el orden en que importan. `entrevista`
 # primero porque es lo único que cambia tu día; `rechazo` último porque es lo
 # único que ya no se puede mover.
 ORDEN_DE_ESTADOS = ("entrevista", "accion", "acuse", "rechazo")
+
+# El orden con el que se DECIDE cuál manda cuando dos correos traen la misma
+# fecha exacta, y no es el mismo. Acá gana el más definitivo, que es la misma
+# prioridad que ya usa el clasificador de `postulaciones.py`: una vez que
+# dijeron que no, nada más de ese día importa.
+#
+# Con el orden de arriba, un rechazo automático —el acuse y el "no seguimos"
+# emitidos por el ATS en el mismo segundo, que es como los manda— se leía como
+# acuse, y la postulación quedaba en "esperando respuesta" para siempre.
+_DESEMPATE = ("rechazo", "entrevista", "accion", "acuse")
 
 # Después de cuántos días un acuse sin novedades deja de ser "esperando" y pasa
 # a ser "insistí o soltalo". Dos semanas es lo que tarda un proceso normal en
@@ -549,16 +559,20 @@ class Postulacion:
 
 
 def _mas_avanzado(estados: list[tuple[datetime, str]]) -> str:
-    """El estado que manda: el más reciente, y ante empate el que más pesa.
+    """El estado que manda: el más reciente, y ante empate el más definitivo.
 
     Por fecha y no por prioridad: un rechazo después de una entrevista quiere
     decir que te rechazaron, y una prioridad fija diría lo contrario para
-    siempre. El empate se rompe con el orden de arriba porque dos correos del
-    mismo día son lo mismo que un correo.
+    siempre.
+
+    El empate es por fecha EXACTA, no por día: dos correos de la misma mañana
+    tienen un orden y se respeta. Lo que empata de verdad es el rechazo
+    automático, donde el ATS emite el acuse y el "no seguimos" en el mismo
+    segundo — y ahí gana el rechazo, que es el único definitivo.
     """
     ultimo = max(fecha for fecha, _ in estados)
-    del_dia = [e for fecha, e in estados if fecha == ultimo]
-    return min(del_dia, key=lambda e: ORDEN_DE_ESTADOS.index(e) if e in ORDEN_DE_ESTADOS else 99)
+    a_la_vez = [e for fecha, e in estados if fecha == ultimo]
+    return min(a_la_vez, key=lambda e: _DESEMPATE.index(e) if e in _DESEMPATE else 99)
 
 
 def seguir(avisos: list[Aviso], respuestas: list[Respuesta]) -> list[Postulacion]:
