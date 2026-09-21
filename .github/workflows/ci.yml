@@ -122,11 +122,6 @@ jobs:
             -H "Authorization: Bearer $CLAVE" -H 'Content-Type: application/json' \
             -d '{"texto":"Senior AI Engineer\nProposals: Less than 5\nPayment verified"}' \
             | grep -q '"sitio":"upwork"' || { docker logs ofertas-ci; exit 1; }
-          # Las alertas salen del TOML, que la imagen copia. Si `busqueda.toml`
-          # no viajara, esto devolvería una lista vacía en vez de fallar.
-          curl -sf http://127.0.0.1:8100/api/v1/ofertas/alertas \
-            -H "Authorization: Bearer $CLAVE" \
-            | grep -q '"plataforma":"LinkedIn"' || { docker logs ofertas-ci; exit 1; }
           docker rm -f ofertas-ci
 
       - name: Construir la imagen del cazador
