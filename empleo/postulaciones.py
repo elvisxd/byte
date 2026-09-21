@@ -434,12 +434,70 @@ class Respuesta:
 HABLA_DE_POSTULACION = re.compile(
     r"\b(your application|application (received|submitted|status|for|to)"
     r"|thank(s| you)?( you)? for applying|for applying"
+    r"|received your (resume|r[eé]sum[eé]|cv)"
+    r"|your (resume|r[eé]sum[eé]|cv) (has been|was) received"
     r"|your candidacy|tu postulaci[oó]n|tu aplicaci[oó]n)",
     re.I,
 )
 
+# Los ATS. Si el correo lo manda una plataforma de reclutamiento, habla de una
+# postulación tuya POR DEFINICIÓN: a esas direcciones no les escribe nadie más.
+#
+# Existe porque la compuerta de arriba pide la palabra "application" y hay
+# plantillas que nunca la dicen. Medido contra el buzón: de 41 correos reales,
+# los dos únicos que caían en `otro` eran acuses de JazzHR —"Thank you for your
+# interest in employment at SeedTrust", "Thank you for investing your time to
+# explore opportunities with Morning Star"—. Los dos son acuses de libro y los
+# dos se perdían.
+#
+# ⚠ La lista se agranda con lo que aparece en el buzón, no con lo que uno se
+# imagina. Las nueve primeras salen de correos reales de estos 14 días; el
+# resto son las plataformas grandes que todavía no aparecieron.
+ATS_CONOCIDOS = frozenset(
+    {
+        # vistos en el buzón
+        "greenhouse-mail.io",
+        "us.greenhouse-mail.io",
+        "greenhouse-jobs.com",
+        "us.greenhouse-jobs.com",
+        "ashbyhq.com",
+        "applytojob.com",
+        "myworkday.com",
+        "jobvite.com",
+        "ats.rippling.com",
+        "breezy-mail.com",
+        "avature.net",
+        # las grandes que faltan
+        "lever.co",
+        "hire.lever.co",
+        "icims.com",
+        "smartrecruiters.com",
+        "workable.com",
+        "bamboohr.com",
+        "teamtailor.com",
+        "recruitee.com",
+        "successfactors.com",
+        "taleo.net",
+        "workablemail.com",
+        "greenhouse.io",
+    }
+)
 
-def clasificar(asunto: str, cuerpo: str) -> str:
+
+def de_un_ats(remitente: str) -> bool:
+    """Si el correo viene de una plataforma de reclutamiento conocida.
+
+    El dominio se mira por sufijo porque los ATS mandan desde subdominios por
+    cliente —`nara-health.breezy-mail.com`, `activision@myworkday.com`— y la
+    lista guarda el dominio de la plataforma, no el del cliente.
+    """
+    dominio = _dominio(remitente)
+    if not dominio:
+        return False
+    return any(dominio == a or dominio.endswith("." + a) for a in ATS_CONOCIDOS)
+
+
+def clasificar(asunto: str, cuerpo: str, remitente: str = "") -> str:
     """El estado de un correo. Siempre devuelve uno: nada se descarta.
 
     Antes devolvía `""` para todo lo que no reconocía y el lector lo tiraba sin
@@ -447,6 +505,10 @@ def clasificar(asunto: str, cuerpo: str) -> str:
     saber cuántos caían ahí ni de qué eran, así que un ATS que cambiara la
     plantilla dejaba de verse y nadie se enteraba. Ahora el cajón tiene nombre
     —`otro`— y se puede medir con `--correos`.
+
+    El `remitente` es opcional y sólo se usa para la compuerta de abajo: un
+    correo de un ATS habla de una postulación aunque la plantilla nunca diga la
+    palabra "application". Sin él, el clasificador se comporta igual que antes.
     """
     texto = f"{asunto}\n{cuerpo}"
     if NO_ES_RESPUESTA.search(texto) and not ACCION.search(texto):
@@ -458,7 +520,7 @@ def clasificar(asunto: str, cuerpo: str) -> str:
     # `rechazo` y `entrevista` se dicen de una sola forma y no necesitan esto.
     # Las otras dos salen de frases que cualquiera escribe, así que además
     # tienen que hablar de una postulación tuya.
-    if HABLA_DE_POSTULACION.search(texto):
+    if HABLA_DE_POSTULACION.search(texto) or de_un_ats(remitente):
         if ACCION.search(texto):
             return "accion"
         if ACUSE.search(texto):

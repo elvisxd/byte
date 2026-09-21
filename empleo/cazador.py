@@ -36,6 +36,10 @@ from empleo.retraso import informe, leer_avisos, medir, parte, resumen, seguir
 
 logger = get_logger("empleo.cazador")
 
+# El prefijo con el que `fuentes` anota que el tope dejó correos sin leer.
+SIN_MIRAR = "correos_sin_mirar"
+
+
 # Cuántos días de buzón mira el seguimiento. Más que `--retraso` (45) porque un
 # proceso largo —cuatro rondas y una oferta— cruza los dos meses sin problema, y
 # el parte tiene que poder mostrar esa conversación entera y no su último tramo.
@@ -512,6 +516,17 @@ async def _pendientes(
         # contestó y no había nada", que es distinto del `error` de abajo.
         de_postulaciones = [r for r in respuestas if r.estado in DE_POSTULACION]
         conteo["postulaciones"] = -1 if (fallos and not respuestas) else len(de_postulaciones)
+        # Y si el tope dejó correos sin mirar, se dice. Sin esta línea el
+        # recorte se anotaba en el registro de fallos y ahí se quedaba: el
+        # registro sólo decide `error` contra número, así que con una sola
+        # respuesta leída el aviso se veía perfecto aunque el buzón tuviera el
+        # triple. Un recorte que no se ve es exactamente el agujero que esto
+        # venía a tapar.
+        sin_mirar = sum(
+            int(f.split(":", 1)[1]) for f in fallos if f.startswith(SIN_MIRAR) and ":" in f
+        )
+        if sin_mirar:
+            conteo["buzón_sin_mirar"] = sin_mirar
     memoria = Memoria(carpeta / "postulaciones.json")
     # `interrumpe` y no `estado in AVISABLES`: un contacto con señales de estafa
     # sigue apareciendo en `--correos`, con las señales a la vista, pero no te
