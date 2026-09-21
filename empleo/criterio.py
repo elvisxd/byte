@@ -87,6 +87,31 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|one[ -](?:off|time)\s+(?:project|job|task|gig)"
         r"|single\s+project\s+only|no\s+(?:ongoing|follow[ -]?up)\s+work)\b"
     ),
+    # La DURACIÓN declarada, que es un campo del formulario y no prosa. Upwork la
+    # pone en la tarjeta como "Est. Time: More than 6 months".
+    #
+    # Vale más que `largo_plazo` —que busca promesas en el texto— porque el
+    # cliente la eligió de una lista al publicar: "long-term opportunity" lo
+    # escribe cualquiera en el título, "More than 6 months" hay que tildarlo.
+    # El nivel que pide la oferta. Es un campo del formulario, no prosa: el
+    # cliente lo eligió de tres opciones al publicar.
+    #
+    # Dato de mercado (Vibeworker, n=127.607 publicaciones de junio de 2026):
+    # Entry 8,3% · Intermediate 67,4% · Expert 24,4%. O sea que "Expert" no es
+    # una etiqueta que reparten: es uno de cada cuatro.
+    "pide_experto": re.compile(r"(?:^|[-|·•]\s*)expert\b(?!\s*(?:level\s*)?not)", re.I),
+    "duracion_larga": re.compile(r"est\.?\s*time:\s*(more than 6 months|3 to 6 months)", re.I),
+    "duracion_corta": re.compile(
+        r"est\.?\s*time:\s*(less than 1 (?:week|month)|1 to 3 months)", re.I
+    ),
+    # Jornada completa ("30+ hrs/week").
+    #
+    # ⚠ Se detecta y se MUESTRA, pero no suma ni resta: no tiene peso en
+    # `DEFECTOS_PREFERENCIAS` a propósito. Que una oferta pida 30+ horas no es
+    # mejor ni peor, depende de cuánto tiempo tengas esa semana — y eso el
+    # código no lo sabe. Ponerle un signo sería decidir por vos algo que cambia
+    # de mes a mes; mostrarlo te deja decidir a vos en un segundo.
+    "jornada_completa": re.compile(r"\b\d{2,}\+?\s*hrs?/week", re.I),
     "largo_plazo": re.compile(
         r"\b(long[ -]?term|ongoing (?:work|collaboration|basis|support|partnership)"
         r"|on ?going relationship|more than 6 months|3 to 6 months|6\+? months"
@@ -149,6 +174,20 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|we (will )?(support|sponsor|handle|cover)[^.!?]{0,25}"
         r"(work permit|visa|immigration|relocation to))\b"
     ),
+    # De dónde es el CLIENTE que publica, no dónde hay que estar para trabajar
+    # —eso es `solo_us`, que es otra cosa y ya existe—. En Upwork la pantalla de
+    # búsqueda lo pone como última línea de la tarjeta.
+    #
+    # Se buscan las dos listas por separado y ninguna descarta sola: una oferta
+    # de un país castigado que sea excepcional en todo lo demás todavía puede
+    # asomar, con el país a la vista. Filtrar en silencio es cómo un criterio
+    # equivocado se vuelve invisible.
+    "cliente_norteamerica": re.compile(
+        r"^\s*(united states|u\.?s\.?a?\.?|usa|america|canada|canad[aá])\s*$", re.I | re.M
+    ),
+    "cliente_bloqueado": re.compile(
+        r"^\s*(india|bharat|spain|espa[nñ]a|pakistan|bangladesh)\s*$", re.I | re.M
+    ),
     "solo_us": re.compile(
         r"\b(u\.?s\.?a?[ -]only|united states only|us[ -]based (only|candidates)"
         r"|must (be |reside |live ).{0,30}(united states|u\.?s\.?a?\b)"
@@ -200,6 +239,15 @@ class Criterio:
 PESOS = {"fuerte": 12, "medio": 6, "leve": 2}
 
 DEFECTOS_PREFERENCIAS = {
+    "cliente_norteamerica": 15,
+    # Menos que `largo_plazo` (20) a propósito: son la misma idea medida dos
+    # veces, y sumar los dos pesos completos le daría 40 a una oferta que sólo
+    # dijo una cosa de dos maneras. Ver la nota de `duracion_larga` arriba.
+    "duracion_larga": 12,
+    # Que pidan experto no te hace ganar la oferta, pero dice que el trabajo no
+    # es de los que se resuelven con el primero que conteste — que con Connects
+    # escasos es donde tenés ventaja. Peso chico: es contexto, no decisión.
+    "pide_experto": 8,
     "largo_plazo": 20,
     "latam": 30,
     "remoto_global": 20,

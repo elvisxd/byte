@@ -281,3 +281,35 @@ $10K+ spent"""
     datos = _pegar(cliente, sin_prosa)
     assert datos["poca_informacion"] is True
     assert datos["ofertas"] == []
+
+
+def test_no_se_muestran_mas_de_cinco(cliente) -> None:
+    """El mínimo solo no alcanza y se vio con un pegado real: una pantalla de
+    ofertas buenas dio 6 de 6 elegidas. Una lista que no descarta nada no
+    responde "¿a cuáles aplico?", que es la única pregunta de esta página.
+
+    Las que quedan afuera no son malas —pasaron el mínimo—: es que hay cinco
+    mejores, y eso es lo que se puede convertir en propuestas escritas a mano."""
+    buenas = "\n\n".join(
+        f"""Posted yesterday
+Proposals: Less than 5
+Senior Python Engineer number {n} for LangGraph
+Hourly: $80-$140 - Expert - Est. Time: More than 6 months
+Long-term ongoing work with Python, FastAPI, pgvector, LangGraph and Anthropic
+Claude building retrieval augmented generation pipelines for our platform team.
+Payment verified
+$120K+ spent
+United States"""
+        for n in range(8)
+    )
+    datos = _pegar(cliente, buenas)
+    assert datos["analizadas"] == 8
+    assert len(datos["ofertas"]) == 5
+
+
+def test_el_orden_es_de_mejor_a_peor(cliente) -> None:
+    """El tope sólo sirve si lo que corta es la cola. Si el orden se rompiera,
+    quedarían afuera las mejores sin que nada lo delate."""
+    datos = _pegar(cliente, UPWORK_PANTALLA)
+    puntajes = [o["puntaje"] for o in datos["ofertas"]]
+    assert puntajes == sorted(puntajes, reverse=True)

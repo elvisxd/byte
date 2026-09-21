@@ -132,6 +132,79 @@ palabras que pongas ahí tienen que ser las mismas que pusiste en estas búsqued
 — si buscás "LLM engineer" y tu perfil dice "desarrollador full-stack", estás
 del lado equivocado del mismo filtro.
 
+## Lo que la pantalla de búsqueda NO muestra
+
+Esto se investigó el 2026-09-21 y ahorra buscarlo de nuevo: **el hire rate, las
+entrevistas en curso, el rating del cliente, "member since", "last viewed" y los
+Connects que cuesta la oferta NO están en la tarjeta de la lista.** Viven en el
+panel «About the client» / «Activity on this job», que sólo se ve al ABRIR cada
+oferta.
+
+Tres confirmaciones independientes:
+
+1. Documentación de Upwork: «We include this metric under the "About the client"
+   section of every job post» (hire rate), y «**When you click on a job posting
+   to apply**, you'll be able to learn more about the client».
+2. Los scrapers comerciales cobran ~11x por oferta enriquecida ($0,002 el
+   listado, $0,022 con el panel del cliente): son dos peticiones distintas.
+3. Existen extensiones de Chrome cuyo único producto es meter esos datos en la
+   tarjeta. Si Upwork los mostrara, no habría producto.
+
+Verificado además contra un pegado real de 6 ofertas: cero ocurrencias de «hire
+rate» e «interviewing».
+
+⚠ **Así que no se implementan. Y el sustituto es mejor que el original:**
+
+### Filtrá en la URL de búsqueda, no acá
+
+Upwork **ya sabe** filtrar por lo que nosotros no podemos leer. Su propia
+documentación:
+
+> "In the Job Filters section, you can filter out jobs with fewer than five
+> proposals and clients that aren't payment verified **or haven't made any hires
+> yet**."
+
+Pegando desde una búsqueda ya filtrada, el criterio hereda gratis el hire rate y
+la verificación, sin abrir una sola oferta y sin gastar Connects. Es el mayor
+retorno de toda la investigación.
+
+Ojo con la contrapartida, que Upwork también documenta: filtrar «clientes que no
+han contratado nunca» esconde al cliente nuevo legítimo. Es la misma decisión que
+tomamos acá con `$0 spent`, que resta pero no descarta.
+
+⚠ **«Featured Job» no se puntúa a favor.** Upwork dice literalmente que «**We do
+not conduct any special review of these featured posts or screen the clients**»,
+y su propio material vende que atraen «50% more proposals from Top Rated and
+Rising Talent». Cliente que pagó por visibilidad, sin filtro de calidad y con más
+competencia: como mucho es neutro.
+
+⚠ **Día de la semana y hora de publicación: DESCARTADOS.** El estudio más grande
+que existe (UpHunt, 3,25 millones de publicaciones) mide **volumen de ofertas
+publicadas**, no contrataciones: no tiene la variable de resultado. Que el martes
+se publique más no implica que el martes contraten más — si se publica más,
+también compite más gente. Es el mismo error que `dia_hora_r_por_trade` en el
+repo del panel: medir el total en vez de la tasa por unidad.
+
+Y para esta herramienta es irrelevante por construcción: **todo lo que pegás se
+pegó el mismo día**, así que el día no distingue una oferta de otra dentro del
+lote. Cero poder discriminante.
+
+## Qué tan sólidos son los pesos de todo esto
+
+**No hay ni un solo estudio ni dataset público con la variable que importa: «¿esta
+propuesta ganó?».** Upwork no publica esos datos, y los únicos que los tienen son
+las empresas que venden herramientas de bidding automatizado — que tienen un
+interés directo en que creas que la velocidad y el volumen deciden.
+
+Los números que circulan («11,86% de respuesta pujando a los 3 minutos», «3 a 5
+veces más vistas») salen de ahí. Se usa **la dirección**, que es mecánicamente
+plausible y coincide con la documentación oficial, y **no la magnitud**.
+
+O sea: los pesos de este criterio son *prior*, no medición. Lo único que puede
+convertirlos en evidencia es tu propio registro — guardar cada oferta puntuada
+junto con lo que pasó después (¿contestaron? ¿entrevista? ¿contrato?). En unos
+meses eso es el único dataset honesto que existe para tu caso.
+
 ## Cómo se usa esto
 
 Copiás las tarjetas de la búsqueda de Upwork —con el renglón en blanco entre

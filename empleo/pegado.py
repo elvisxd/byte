@@ -100,6 +100,14 @@ _CHROME = re.compile(
 # pena afinar, y subirlo sólo agrega falsos "no traen descripción".
 MINIMO_PARA_DECIDIR = 60
 
+# Cuántas se muestran como máximo, ya ordenadas de mejor a peor.
+#
+# Cinco porque es lo que se lee de una pasada y lo que se puede convertir en
+# propuestas escritas a mano en un día. Subirlo devuelve el problema que el tope
+# resuelve: con una pantalla de ofertas buenas, "las que pasan el mínimo" fueron
+# 6 de 6 y la lista dejó de decidir nada.
+TOPE = 5
+
 
 def _prosa(bloque: str) -> int:
     """Cuánto texto del PUESTO trae el bloque, sin contar los metadatos.
@@ -119,6 +127,7 @@ def _prosa(bloque: str) -> int:
             continue
         total += len(linea)
     return total
+
 
 # Señales de que un bloque sí es una oferta.
 _PLATA = re.compile(r"\$\s?[\d.,]+|\bUSD\b|/\s?(yr|hr|año|hora)", re.I)
@@ -451,9 +460,18 @@ def analizar(texto: str, criterio: Criterio) -> Analisis:
     # Sin descripción no se elige ninguna: el puntaje saldría de un título de
     # seis palabras. Es el único caso en que la lista sale vacía teniendo
     # ofertas buenas, y la página lo dice con todas las letras.
-    elegidas = (
+    pasan = (
         [] if poca_informacion else [v for v in veredictos if v.total >= criterio.puntaje_minimo]
     )
+
+    # ⚠ El mínimo solo NO alcanza, y se vio con un pegado real: una pantalla de
+    # ofertas buenas dio 6 de 6 elegidas. Una lista que no descarta nada no
+    # responde "¿a cuáles aplico?", que es la única pregunta de esta página.
+    #
+    # El tope es lo que la vuelve una respuesta. Las que quedan afuera no es que
+    # sean malas —pasaron el mínimo— es que hay cinco mejores, y con el tiempo
+    # de escribir propuestas que hay en un día, esa distinción es la que importa.
+    elegidas = pasan[:TOPE]
     return Analisis(
         sitio=sitio,
         veredictos=veredictos,

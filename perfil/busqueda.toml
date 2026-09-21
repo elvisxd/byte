@@ -67,6 +67,12 @@ patrocinio = 15
 contractor = 12
 # Freelance por proyecto (Upwork y similares).
 freelance = 5
+# El CLIENTE que publica es de Estados Unidos o Canadá.
+#
+# Ojo: es de dónde es QUIEN CONTRATA, no dónde hay que estar para trabajar —eso
+# es `solo_us` en las penalizaciones, y son cosas distintas—. En la pantalla de
+# búsqueda de Upwork aparece como última línea de la tarjeta.
+cliente_norteamerica = 15
 # Trabajo que sigue después del primer entregable: "long-term", "ongoing",
 # "retainer", "monthly milestones", "not a one-off".
 #
@@ -88,6 +94,18 @@ junior = 40
 # Dice explícitamente que no patrocina visas. Se muestra siempre, pero solo
 # resta si abajo declarás que la necesitás.
 sin_patrocinio = 25
+# Cliente de un país que no querés: India, España, Pakistán, Bangladesh.
+#
+# Pesa como un junior a propósito: con 40, una oferta de estos países cae debajo
+# del mínimo aunque el stack coincida entero, así que en los hechos deja de
+# aparecer. Pero NO descarta en el código —ninguna señal descarta sola—, así que
+# una excepcional (cliente de $300K, largo plazo, tu stack exacto) todavía puede
+# asomar, y cuando lo hace el país se ve en la línea de datos.
+#
+# Para agregar o sacar países se edita el patrón `cliente_bloqueado` en
+# `empleo/criterio.py`: la lista es parte del código porque un país mal escrito
+# acá no fallaría, simplemente dejaría de filtrar sin que nadie se entere.
+cliente_bloqueado = 40
 # Solo Estados Unidos. Resta, aunque hoy estés en Orlando y puedas trabajar ahí:
 # lo que buscás es un puesto que sobreviva a las mudanzas de `privado.md`, y uno
 # que exige estar en el país no lo hace. No descarta —ninguna señal descarta

@@ -195,3 +195,102 @@ def test_el_historial_del_cliente_es_una_escala_y_no_un_umbral() -> None:
         return evaluar(entrada, CRITERIO)[0].total
 
     assert total("$300K+") > total("$20K+") > total("$2K+") > total("$100")
+
+
+# El país del cliente es la ÚLTIMA línea de la tarjeta en la pantalla de Upwork.
+_EEUU = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+Payment verified
+$120K+ spent
+United States"""
+
+_INDIA = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+Payment verified
+$120K+ spent
+India"""
+
+
+def test_el_pais_del_cliente_ordena_sin_descartar() -> None:
+    """US y Canadá suman; India y España restan como un junior: con 40 la oferta
+    cae debajo del mínimo aunque el stack coincida entero.
+
+    Pero NO se descarta en el código. Ninguna señal descarta sola acá, y filtrar
+    en silencio es cómo un criterio equivocado se vuelve invisible: no verías las
+    ofertas que te estás perdiendo, verías menos ofertas y nada más."""
+    eeuu = evaluar(parsear(_EEUU), CRITERIO)[0]
+    india = evaluar(parsear(_INDIA), CRITERIO)[0]
+    assert "cliente_norteamerica" in eeuu.puntaje.senales
+    assert "cliente_bloqueado" in india.puntaje.senales
+    assert eeuu.total > india.total
+    # La de India sigue existiendo y con su señal a la vista, no desaparece.
+    assert india.puntaje.senales
+
+
+def test_nombrar_un_pais_en_la_descripcion_no_es_ser_de_ahi() -> None:
+    """ "Some of our engineers are based in India and Spain" lo escribe una
+    empresa de EE.UU. contratando afuera — es lo contrario de una señal mala.
+
+    El patrón exige que el país sea la línea ENTERA, que es como Upwork lo pone
+    al pie de la tarjeta. Sin ese ancla, esta oferta se hundiría 40 puntos por
+    mencionar dónde vive su equipo."""
+    texto = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+We are a US company with a distributed team; some of our engineers are based in
+India and Spain, and we hire worldwide through Deel.
+Payment verified
+$120K+ spent
+United States"""
+    senales = evaluar(parsear(texto), CRITERIO)[0].puntaje.senales
+    assert "cliente_norteamerica" in senales
+    assert "cliente_bloqueado" not in senales
+
+
+def test_canada_cuenta_igual_que_estados_unidos() -> None:
+    """Son la misma lista: se pidieron los dos juntos."""
+    canada = parsear(_EEUU.replace("United States", "Canada"))
+    assert "cliente_norteamerica" in evaluar(canada, CRITERIO)[0].puntaje.senales
+
+
+def test_la_duracion_declarada_vale_mas_que_la_promesa_en_prosa() -> None:
+    """ "Est. Time: More than 6 months" es un campo del formulario: el cliente lo
+    tildó de una lista al publicar. "long-term opportunity" lo escribe cualquiera
+    en el título — de hecho una oferta del pegado real lo tenía en el título y
+    era un fijo de $750 con cliente sin verificar.
+
+    Por eso son dos señales distintas y no una."""
+    declarada = parsear(
+        "Senior Python Engineer\nHourly: $70-$120 - Expert - Est. Time: More than 6 months\nx"
+    )
+    senales = evaluar(declarada, CRITERIO)[0].puntaje.senales
+    assert "duracion_larga" in senales
+
+    corta = parsear(
+        "Senior Python Engineer\nHourly: $70 - Expert - Est. Time: Less than 1 month\nx"
+    )
+    assert "duracion_corta" in evaluar(corta, CRITERIO)[0].puntaje.senales
+
+
+def test_pedir_experto_es_el_campo_no_la_palabra_en_la_descripcion() -> None:
+    """ "We need an expert on the WhatsApp Cloud API" es prosa y no dice nada del
+    nivel que pide la oferta: el campo viene en la línea de tarifa, separado por
+    guiones. Sin distinguirlos, cualquier descripción que use la palabra
+    "expert" sumaría puntos por un nivel que nadie declaró."""
+    campo = parsear("Algo\nHourly: $75-$200 - Expert - Est. Time: Less than 1 month\nx")
+    assert "pide_experto" in evaluar(campo, CRITERIO)[0].puntaje.senales
+
+    prosa = parsear("Algo\nProposals: Less than 5\nWe need an expert on the Meta WhatsApp API.")
+    assert "pide_experto" not in evaluar(prosa, CRITERIO)[0].puntaje.senales
+
+
+def test_la_jornada_se_muestra_pero_no_decide() -> None:
+    """30+ hrs/week no es mejor ni peor: depende de cuánto tiempo tengas esa
+    semana, y eso el código no lo sabe. Se detecta para mostrarlo y se le deja
+    peso cero — ponerle signo sería decidir por el usuario algo que cambia de
+    mes a mes."""
+    from empleo.criterio import DEFECTOS_PENALIZACIONES, DEFECTOS_PREFERENCIAS
+
+    entrada = parsear("Algo\nHourly - Expert - Est. Time: Less than 1 week, 30+ hrs/week\nx")
+    assert "jornada_completa" in evaluar(entrada, CRITERIO)[0].puntaje.senales
+    assert "jornada_completa" not in DEFECTOS_PREFERENCIAS
+    assert "jornada_completa" not in DEFECTOS_PENALIZACIONES
