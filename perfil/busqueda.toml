@@ -67,6 +67,18 @@ patrocinio = 15
 contractor = 12
 # Freelance por proyecto (Upwork y similares).
 freelance = 5
+# Trabajo que sigue después del primer entregable: "long-term", "ongoing",
+# "retainer", "monthly milestones", "not a one-off".
+#
+# En Upwork esto es lo que separa un contrato de una changa. El costo de
+# conseguir al cliente —los Connects, escribir la propuesta, las llamadas— se
+# paga UNA vez y se amortiza sobre lo que dure: un fijo de $750 que sigue vale
+# más que uno de $1.500 que no. Por eso pesa como el remoto global y no como el
+# freelance suelto.
+#
+# Nombrarlo para negarlo NO suma: "this is not a long-term role" tiene todas
+# las palabras buenas y dice lo contrario. La negación se detecta primero.
+largo_plazo = 20
 
 [penalizaciones]
 # Restan. Ninguna descarta sola: el aviso muestra la señal y decidís vos.

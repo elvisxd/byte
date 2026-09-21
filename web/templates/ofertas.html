@@ -14,7 +14,7 @@
       <a href="/" class="volver">← Byte</a>
       <h1>¿A cuáles aplico?</h1>
       <p class="subtitulo">
-        Abrí la búsqueda de Upwork o LinkedIn, seleccioná todo (Ctrl-A), copiá y pegá acá.
+        Abrí la búsqueda de Upwork, seleccioná todo (Ctrl-A), copiá y pegá acá.
         Con el menú y el pie adentro: se descartan solos.
       </p>
     </header>
@@ -28,19 +28,16 @@
           aria-label="Página de resultados pegada"
         ></textarea>
         <div class="controles">
-          <label for="connects">
-            Connects disponibles
-            <span class="ayuda">(sólo Upwork; el plan Basic da 10 por mes)</span>
-          </label>
-          <input id="connects" type="number" min="0" max="1000" value="10" />
           <button type="submit" class="primario" id="boton-analizar">Analizar</button>
         </div>
         <p id="error" class="error" role="alert"></p>
       </form>
 
+      <!-- Sólo dos secciones: el recuento de lo que se leyó y las elegidas.
+           La guía del sitio y las alertas guardadas vivían acá y se sacaron:
+           eran de cada visita lo mismo, así que empujaban hacia abajo lo único
+           que cambia al pegar. -->
       <section id="resumen" class="resumen" hidden></section>
-      <section id="guia" class="guia" hidden></section>
-      <section id="alertas" class="alertas" hidden></section>
       <section id="resultados" aria-live="polite"></section>
     </main>
 
