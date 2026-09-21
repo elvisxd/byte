@@ -261,8 +261,18 @@ _SOSPECHAS: tuple[tuple[str, re.Pattern[str], bool], ...] = (
 )
 
 DURAS = {nombre for nombre, _, dura in _SOSPECHAS if dura}
-# Las dos que no salen de un patrón de texto sino del sobre del correo.
+# Las dos que no salen de un patrón de texto sino del SOBRE del correo, y que
+# por eso no están en la tabla de arriba. Las dos son duras:
+#
+# - El `Reply-To` a un correo gratuito que no es el dominio del `From` es el
+#   truco de suplantación entero en una línea: el remitente imita a la empresa
+#   y tu respuesta se va a otro lado. Un ATS legítimo contesta a otro dominio
+#   corporativo, nunca a un Gmail, y eso ya se filtra donde se detecta.
+# - Un DMARC fallado en un correo que dice venir de una empresa es la firma de
+#   la suplantación, y lo calculó Gmail, no nosotros.
 DURAS.add("no pasa la autenticación del remitente")
+_DURA_RESPONDER_A = "responder iría a"
+DURAS.add(_DURA_RESPONDER_A)
 _BLANDA_CORREO_GRATIS = "escribe desde un correo gratuito"
 
 
@@ -309,7 +319,7 @@ def sospechas(
         # tu respuesta a otro lado. Los ATS legítimos también lo usan, así que
         # sólo se anota cuando el destino es un correo gratuito.
         if hacia in CORREO_GRATIS:
-            encontradas.append(f"responder iría a {hacia}, no a {de}")
+            encontradas.append(f"{_DURA_RESPONDER_A} {hacia}, no a {de}")
 
     # Gmail ya hizo el trabajo: escribe el resultado de SPF, DKIM y DMARC en la
     # cabecera de cada correo que recibe. Un fallo no prueba fraude —un correo
@@ -501,14 +511,20 @@ def inventario(respuestas: list[Respuesta], por_tipo: int = 5) -> str:
         aviso = f" · {con_senales} con señales" if con_senales else ""
         lineas.append("")
         lineas.append(f"{etiquetas[estado]} ({len(grupo)}){aviso}")
-        # `otro` se muestra entero hasta el tope: es el cajón, y de lo único
-        # que sirve es de verlo. Los demás con una muestra alcanza.
-        for r in grupo[: por_tipo * 2 if estado == "otro" else por_tipo]:
+        # `otro` muestra el doble: es el cajón, y de lo único que sirve es de
+        # verlo. Los demás con una muestra alcanza.
+        #
+        # El resto se cuenta contra lo que de verdad se mostró y no contra
+        # `por_tipo`: mostrando diez de doce decía "+7 más", y equivocar ese
+        # número justo en el cajón —cuya única función es contar bien lo que no
+        # se reconoció— es equivocarlo donde más importa.
+        cuantos = por_tipo * 2 if estado == "otro" else por_tipo
+        for r in grupo[:cuantos]:
             lineas.append(f"  {r.empresa} — {r.asunto[:70]}")
             for senal in r.sospechas:
                 lineas.append(f"    ⚠ {senal}")
-        if len(grupo) > por_tipo:
-            lineas.append(f"  (+{len(grupo) - por_tipo} más)")
+        if len(grupo) > cuantos:
+            lineas.append(f"  (+{len(grupo) - cuantos} más)")
     return "\n".join(lineas)
 
 

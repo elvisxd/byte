@@ -351,3 +351,43 @@ def test_el_inventario_muestra_el_cajon_de_lo_no_reconocido() -> None:
     assert "Buzón — 2 correos" in texto
     assert "sin reconocer (1)" in texto
     assert "Your invoice is ready" in texto
+
+
+def test_el_reply_to_a_un_gmail_alcanza_solo_para_no_despertarte() -> None:
+    """Segunda lectura del mismo archivo. El comentario decía "las dos que
+    salen del sobre del correo" y sólo agregaba una: la señal del `Reply-To`
+    estaba contada como blanda, así que sola no silenciaba nada.
+
+    Y es el truco de suplantación entero en una línea —el remitente imita a la
+    empresa y tu respuesta se va a otro lado—, o sea lo más duro que hay acá.
+    Medido antes del arreglo: ese correo despertaba el teléfono.
+    """
+    senales = sospechas(
+        "careers@stripe-talent.com",
+        "stripejobs99@outlook.com",
+        "dkim=pass spf=pass dmarc=pass",
+        "Exciting opportunity at Stripe",
+        "Hi, we would like to talk about a role.",
+    )
+
+    assert len(senales) == 1
+    assert es_probable_estafa(senales)
+    assert (
+        Respuesta("<1@x>", "careers@stripe-talent.com", "x", "", "contacto", senales).interrumpe
+        is False
+    )
+
+
+def test_el_cajon_cuenta_bien_lo_que_no_muestra() -> None:
+    """`otro` muestra el doble que los demás, y el resto se descontaba contra
+    `por_tipo`: con doce correos mostraba diez y decía "+7 más". Equivocar ese
+    número justo en el cajón —cuya única función es contar bien lo que no se
+    reconoció— es equivocarlo donde más importa.
+    """
+    rs = [Respuesta(f"<{n}@x>", f"a@d{n}.com", f"Asunto {n}", "", "otro", ()) for n in range(12)]
+
+    texto = inventario(rs, por_tipo=5)
+
+    assert "sin reconocer (12)" in texto
+    assert "(+2 más)" in texto
+    assert sum(1 for linea in texto.splitlines() if linea.startswith("  d")) == 10
