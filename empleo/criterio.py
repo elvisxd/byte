@@ -149,6 +149,20 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|we (will )?(support|sponsor|handle|cover)[^.!?]{0,25}"
         r"(work permit|visa|immigration|relocation to))\b"
     ),
+    # De dónde es el CLIENTE que publica, no dónde hay que estar para trabajar
+    # —eso es `solo_us`, que es otra cosa y ya existe—. En Upwork la pantalla de
+    # búsqueda lo pone como última línea de la tarjeta.
+    #
+    # Se buscan las dos listas por separado y ninguna descarta sola: una oferta
+    # de un país castigado que sea excepcional en todo lo demás todavía puede
+    # asomar, con el país a la vista. Filtrar en silencio es cómo un criterio
+    # equivocado se vuelve invisible.
+    "cliente_norteamerica": re.compile(
+        r"^\s*(united states|u\.?s\.?a?\.?|usa|america|canada|canad[aá])\s*$", re.I | re.M
+    ),
+    "cliente_bloqueado": re.compile(
+        r"^\s*(india|bharat|spain|espa[nñ]a|pakistan|bangladesh)\s*$", re.I | re.M
+    ),
     "solo_us": re.compile(
         r"\b(u\.?s\.?a?[ -]only|united states only|us[ -]based (only|candidates)"
         r"|must (be |reside |live ).{0,30}(united states|u\.?s\.?a?\b)"
@@ -200,6 +214,7 @@ class Criterio:
 PESOS = {"fuerte": 12, "medio": 6, "leve": 2}
 
 DEFECTOS_PREFERENCIAS = {
+    "cliente_norteamerica": 15,
     "largo_plazo": 20,
     "latam": 30,
     "remoto_global": 20,

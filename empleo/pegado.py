@@ -120,6 +120,7 @@ def _prosa(bloque: str) -> int:
         total += len(linea)
     return total
 
+
 # Señales de que un bloque sí es una oferta.
 _PLATA = re.compile(r"\$\s?[\d.,]+|\bUSD\b|/\s?(yr|hr|año|hora)", re.I)
 

@@ -71,6 +71,10 @@ function plata(monto) {
 // entiende, que es mejor que esconderla por no tener entrada en la tabla.
 const NOMBRES = {
   largo_plazo: "largo plazo",
+  cliente_norteamerica: "cliente de EE.UU./Canadá",
+  // Se nombra el hecho, no el veredicto. Si una de estas asoma igual es porque
+  // ganó en todo lo demás, y ahí lo que hace falta saber es de dónde es.
+  cliente_bloqueado: "⚠ cliente fuera de tu lista",
   sin_largo_plazo: "sin continuidad",
   remoto_global: "remoto global",
   solo_us: "sólo EE.UU.",
