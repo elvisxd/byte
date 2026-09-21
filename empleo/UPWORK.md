@@ -146,7 +146,19 @@ el cliente, si el trabajo sigue después del primer entregable y hace cuánto se
 publicó; las puntúa contra tu perfil con el mismo criterio que el cazador; y
 dice **en cuáles gastar y en cuáles no**, hasta que el presupuesto se acaba.
 
-Lo mismo, sin terminal, en `/ofertas` del panel: se pega ahí y sale la lista.
+Lo mismo, sin terminal, en `/ofertas` del panel: se pega ahí y salen **sólo las
+que pasan el mínimo**, con su puntaje y por qué. Las descartadas ni siquiera
+viajan al navegador.
+
+La página no reparte Connects: eso quedó en el CLI (`repartir()`). Pedirlos
+obligaba a declarar cuántos te quedan antes de ver nada, y el corte por puntaje
+ya deja pocas.
+
+⚠ **Que no salga ninguna es un resultado, y se dice con todas las letras.** Son
+tres finales distintos y confundirlos manda a arreglar lo que no está roto:
+«no reconocí ninguna oferta» (pegaste otra cosa), «leí N y ninguna llega al
+mínimo» (hoy no hay) y «estas tarjetas no traen la descripción» (pegaste la
+lista sin los cuerpos).
 
 **El historial del cliente es una escala, no un umbral.** $300K gastados y $5K
 son los dos "cliente con historial" y no son el mismo cliente; y el de $0 no es

@@ -31,7 +31,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from empleo.alertas import a_json as alertas_json
 from empleo.criterio import cargar_criterio
 from empleo.paginas import pagina_con_version
 from empleo.pegado import a_json, analizar
@@ -50,7 +49,6 @@ class SinClave(RuntimeError):
 
 class PegadoIn(BaseModel):
     texto: str = Field(description="La página de resultados, copiada y pegada tal cual")
-    connects: int = Field(default=0, ge=0, le=1000)
 
 
 def _autorizado(recibida: str, esperada: str) -> bool:
@@ -70,8 +68,8 @@ def crear_app(clave: str | None = None) -> FastAPI:
     app = FastAPI(title="Byte — Ofertas", docs_url=None, redoc_url=None)
     router = APIRouter()
 
-    def _trabajo(texto: str, connects: int) -> dict:
-        return a_json(analizar(texto, cargar_criterio(CRITERIO), connects))
+    def _trabajo(texto: str) -> dict:
+        return a_json(analizar(texto, cargar_criterio(CRITERIO)))
 
     @router.post("/ofertas/pegado")
     async def pegado(cuerpo: PegadoIn, authorization: str = Header(default="")) -> dict:
@@ -86,23 +84,7 @@ def crear_app(clave: str | None = None) -> FastAPI:
         # En un hilo: el parseo recorre el texto varias veces y leer el TOML toca
         # el disco. Este servicio tiene un proceso, así que bloquear el bucle
         # deja esperando a cualquier otro pedido.
-        return await asyncio.to_thread(_trabajo, cuerpo.texto[:MAX_CARACTERES], cuerpo.connects)
-
-    @router.get("/ofertas/alertas")
-    async def alertas(authorization: str = Header(default="")) -> dict:
-        """Qué pegar en cada plataforma para crear una alerta guardada.
-
-        La misma ruta que sirve la API grande, para que `ofertas.js` siga siendo
-        un solo archivo. Va aparte del pegado porque no depende de lo pegado: se
-        muestra al abrir la página, que es cuando sirve.
-        """
-        prefijo = "Bearer "
-        recibida = authorization[len(prefijo) :] if authorization.startswith(prefijo) else ""
-        if not _autorizado(recibida, clave):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=401, detail="no autorizado")
-        return {"alertas": await asyncio.to_thread(lambda: alertas_json(cargar_criterio(CRITERIO)))}
+        return await asyncio.to_thread(_trabajo, cuerpo.texto[:MAX_CARACTERES])
 
     app.include_router(router, prefix="/api/v1")
 

@@ -29,7 +29,6 @@ from dataclasses import dataclass
 
 from empleo.criterio import Criterio, patron_de
 from empleo.oferta import Oferta
-from empleo.sitios import guia_de
 from empleo.upwork import (
     CONNECTS_POR_DEFECTO,
     OfertaUpwork,
@@ -37,7 +36,6 @@ from empleo.upwork import (
     _gastado,
     _propuestas,
     evaluar,
-    repartir,
 )
 from empleo.upwork import (
     _a_horas as _antiguedad,
@@ -85,10 +83,42 @@ _CHROME = re.compile(
     re.I,
 )
 
-# Cuántos caracteres tiene que tener una tarjeta, en promedio, para que se
-# pueda puntuar su contenido y no sólo su título. Por debajo, lo que hay es un
-# encabezado: alcanza para ordenar, no para decidir.
-MINIMO_PARA_DECIDIR = 220
+# Cuántos caracteres de PROSA tiene que traer una tarjeta, en promedio, para que
+# se pueda puntuar su contenido y no sólo su título.
+#
+# ⚠ Se mide la descripción, no la tarjeta entera. Medir el bloque completo
+# contaba los metadatos —"Posted 6 days ago", "Proposals: 50+", "Payment
+# unverified", "$0 spent"— como si fueran texto del puesto, y en Upwork esos
+# renglones son la mitad de la tarjeta. Dos ofertas CON descripción daban 213 de
+# promedio y caían bajo el umbral, así que la página decía "estas tarjetas no
+# traen la descripción" con la descripción delante, y escondía el mensaje que
+# correspondía: que ninguna llegaba al mínimo.
+# 60 = una sola oración de descripción. Es el piso deliberadamente bajo: lo que
+# se quiere distinguir no es "poca descripción" de "mucha", sino que HAYA
+# descripción. Una tarjeta de LinkedIn sin cuerpo mide 0 y una oferta con un
+# párrafo mide varios cientos; entre esas dos no hay casos borde que valga la
+# pena afinar, y subirlo sólo agrega falsos "no traen descripción".
+MINIMO_PARA_DECIDIR = 60
+
+
+def _prosa(bloque: str) -> int:
+    """Cuánto texto del PUESTO trae el bloque, sin contar los metadatos.
+
+    Una línea de prosa es la que no reconocemos como dato de la tarjeta y tiene
+    largo de oración. No hace falta que sea exacto: se usa para distinguir "hay
+    descripción" de "esto es un encabezado", y esas dos cosas no se parecen.
+    """
+    total = 0
+    for bruto in bloque.splitlines():
+        linea = bruto.strip()
+        if len(linea) < 40:
+            continue
+        if _METADATO.match(linea) or _POSTED.match(linea) or _PIE_DEL_CLIENTE.match(linea):
+            continue
+        if _ENCABEZADO_DE_LISTA.match(linea) or _FIN_DE_TARJETA.match(linea):
+            continue
+        total += len(linea)
+    return total
 
 # Señales de que un bloque sí es una oferta.
 _PLATA = re.compile(r"\$\s?[\d.,]+|\bUSD\b|/\s?(yr|hr|año|hora)", re.I)
@@ -346,14 +376,15 @@ class Analisis:
     sitio: str
     veredictos: list[Veredicto]
     elegidas: list[Veredicto]
+    # Cuántos bloques se descartaron por no parecer ofertas. NO viaja al
+    # navegador: cuenta renglones en blanco del pegado, no tarjetas, así que con
+    # la pantalla de Upwork —que trae varios por tarjeta— daba números que se
+    # leían como ofertas perdidas sin serlo. Queda para depurar el corte.
     descartados: int
-    connects_gastados: int = 0
-    connects_disponibles: int = 0
-    # True cuando las tarjetas vienen sin descripción. Pasa siempre en LinkedIn:
-    # la pantalla de resultados muestra título, empresa, lugar, sueldo y cuánta
-    # gente aplicó, y nada más. Con eso el ORDEN sigue valiendo —competencia y
-    # frescura son datos duros— pero el veredicto "aplicá a esta" no, porque el
-    # puntaje de stack se calcula sobre un título de seis palabras.
+    # True cuando las tarjetas vienen sin descripción: se pegó la lista pero sin
+    # el cuerpo de cada oferta. Con eso el puntaje de stack se calcula sobre un
+    # título de seis palabras, así que no se elige ninguna — decir "aplicá a
+    # esta" con esa base sería inventar una certeza.
     poca_informacion: bool = False
 
 
@@ -401,65 +432,66 @@ def _a_oferta(bloque: str, sitio: str) -> OfertaUpwork:
     )
 
 
-def analizar(texto: str, criterio: Criterio, connects: int = 0) -> Analisis:
-    """Lo pegado, convertido en una lista ordenada de a cuáles aplicar."""
+def analizar(texto: str, criterio: Criterio) -> Analisis:
+    """Lo pegado, convertido en la lista de a cuáles aplicar.
+
+    **No reparte presupuesto.** Entran las que pasan `puntaje_minimo` del TOML y
+    nada más. El reparto por Connects existió acá y se sacó: obligaba a declarar
+    cuántos te quedan antes de ver nada, y con el criterio afinado el corte por
+    puntaje ya deja pocas. Si hace falta volver, está en `upwork.repartir()`,
+    que sigue siendo lo que usa el CLI.
+    """
     bloques, descartados = separar(texto)
     sitio = detectar(texto)
     entradas = [_a_oferta(b, sitio) for b in bloques]
     veredictos = evaluar(entradas, criterio)
-    promedio = sum(len(b) for b in bloques) / len(bloques) if bloques else 0
+    promedio = sum(_prosa(b) for b in bloques) / len(bloques) if bloques else 0
     poca_informacion = bool(bloques) and promedio < MINIMO_PARA_DECIDIR
 
-    # Los Connects sólo existen en Upwork. En LinkedIn postular es gratis, así
-    # que no hay presupuesto que repartir: entran todas las que pasen el mínimo.
-    if poca_informacion:
-        # Sin descripción no se elige ninguna: decir "aplicá a esta" con un
-        # puntaje sacado de seis palabras sería inventar una certeza. El orden
-        # queda, que es lo que de verdad se puede afirmar.
-        elegidas: list[Veredicto] = []
-    elif sitio == "upwork" and connects:
-        elegidas = repartir(veredictos, connects, criterio.puntaje_minimo)
-    else:
-        elegidas = [v for v in veredictos if v.total >= criterio.puntaje_minimo]
+    # Sin descripción no se elige ninguna: el puntaje saldría de un título de
+    # seis palabras. Es el único caso en que la lista sale vacía teniendo
+    # ofertas buenas, y la página lo dice con todas las letras.
+    elegidas = (
+        [] if poca_informacion else [v for v in veredictos if v.total >= criterio.puntaje_minimo]
+    )
     return Analisis(
         sitio=sitio,
         veredictos=veredictos,
         elegidas=elegidas,
         descartados=descartados,
-        connects_gastados=sum(v.entrada.connects for v in elegidas) if sitio == "upwork" else 0,
-        connects_disponibles=connects,
         poca_informacion=poca_informacion,
     )
 
 
 def a_json(analisis: Analisis) -> dict:
-    """La forma que consume la página."""
+    """La forma que consume la página: **sólo las elegidas**.
 
-    def fila(veredicto: Veredicto, aplicar: bool) -> dict:
+    Las descartadas no viajan. Mandarlas para que la página las esconda sería
+    poner en el navegador una lista que nadie va a mirar, y la razón de que no
+    se muestren es justamente que no aportan a la decisión.
+
+    Sí viaja `analizadas`: cuántas se leyeron en total. Es lo que convierte un
+    "0 elegidas" en información —"miré 18 y ninguna vale"— en vez de dejarlo
+    indistinguible de "no entendí lo que pegaste".
+    """
+
+    def fila(veredicto: Veredicto) -> dict:
         entrada = veredicto.entrada
         return {
             "titulo": entrada.oferta.titulo,
             "empresa": entrada.oferta.empresa,
             "puntaje": veredicto.total,
-            "aplicar": aplicar,
-            "connects": entrada.connects if analisis.sitio == "upwork" else None,
             "competencia": entrada.propuestas,
             "horas": entrada.horas,
             "verificado": entrada.verificado,
+            "gastado": entrada.gastado_usd,
             "senales": list(veredicto.puntaje.senales),
             "motivos": list(veredicto.puntaje.motivos) + list(veredicto.motivos),
         }
 
-    ids = {id(v) for v in analisis.elegidas}
     return {
         "sitio": analisis.sitio,
-        "descartados": analisis.descartados,
+        "analizadas": len(analisis.veredictos),
         "poca_informacion": analisis.poca_informacion,
-        "connects_gastados": analisis.connects_gastados,
-        "connects_disponibles": analisis.connects_disponibles,
-        "ofertas": [fila(v, id(v) in ids) for v in analisis.veredictos],
-        # El manual del sitio va en la respuesta y no en el HTML porque
-        # depende de qué se pegó: la página no sabe de qué sitio es hasta que
-        # el servidor lo detecta.
-        "guia": guia_de(analisis.sitio, analisis.veredictos),
+        "ofertas": [fila(v) for v in analisis.elegidas],
     }

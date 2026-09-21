@@ -16,7 +16,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from api.deps import Context, CredentialId
-from empleo.alertas import a_json as alertas_json
 from empleo.criterio import cargar_criterio
 from empleo.pegado import a_json, analizar
 
@@ -30,12 +29,6 @@ MAX_CARACTERES = 400_000
 
 class PegadoIn(BaseModel):
     texto: str = Field(description="La página de resultados, copiada y pegada tal cual")
-    connects: int = Field(
-        default=0,
-        ge=0,
-        le=1000,
-        description="Connects disponibles. Sólo se usa si lo pegado es de Upwork.",
-    )
 
 
 def _ruta_criterio(criterio_configurado: str) -> Path:
@@ -46,10 +39,10 @@ def _ruta_criterio(criterio_configurado: str) -> Path:
     )
 
 
-def _trabajo(texto: str, criterio_configurado: str, connects: int) -> dict:
+def _trabajo(texto: str, criterio_configurado: str) -> dict:
     """Leer el TOML y parsear. Va en un hilo: ver el endpoint."""
     ruta = _ruta_criterio(criterio_configurado)
-    return a_json(analizar(texto, cargar_criterio(ruta), connects))
+    return a_json(analizar(texto, cargar_criterio(ruta)))
 
 
 @router.post("/ofertas/pegado")
@@ -65,17 +58,4 @@ async def pegado(cuerpo: PegadoIn, ctx: Context, _credential: CredentialId) -> d
         _trabajo,
         cuerpo.texto[:MAX_CARACTERES],
         ctx.settings.empleo_criterio,
-        cuerpo.connects,
     )
-
-
-@router.get("/ofertas/alertas")
-async def alertas(ctx: Context, _credential: CredentialId) -> dict:
-    """Las cadenas para crear alertas guardadas en cada plataforma.
-
-    Es un GET aparte y no parte de la respuesta de `/pegado` porque no depende de
-    lo pegado: la página las muestra al abrirse, que es cuando sirven. Crear la
-    alerta se hace una vez; pegar resultados, todos los días.
-    """
-    ruta = _ruta_criterio(ctx.settings.empleo_criterio)
-    return {"alertas": await asyncio.to_thread(lambda: alertas_json(cargar_criterio(ruta)))}

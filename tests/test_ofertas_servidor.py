@@ -51,13 +51,13 @@ def test_con_la_clave_analiza_igual_que_la_api_grande(cliente: TestClient) -> No
     de desde dónde entraste, que es la peor clase de sorpresa."""
     respuesta = cliente.post(
         "/api/v1/ofertas/pegado",
-        json={"texto": UPWORK, "connects": 10},
+        json={"texto": UPWORK},
         headers={"Authorization": f"Bearer {CLAVE}"},
     )
     assert respuesta.status_code == 200
     datos = respuesta.json()
     assert datos["sitio"] == "upwork"
-    assert datos["connects_gastados"] == 6
+    assert datos["analizadas"] == 1
     assert datos["ofertas"][0]["titulo"].startswith("Senior AI Engineer")
 
 
@@ -76,20 +76,6 @@ def test_la_salud_no_pide_credencial(cliente: TestClient) -> None:
 def test_no_expone_la_documentacion(cliente: TestClient) -> None:
     """En una URL pública, /docs es un mapa de la superficie para quien tantea."""
     assert cliente.get("/docs").status_code == 404
-
-
-def test_las_alertas_se_sirven_por_la_misma_ruta(cliente: TestClient) -> None:
-    """Mismo motivo que el pegado: `ofertas.js` es UN archivo para los dos lados,
-    así que la ruta de las alertas tiene que existir acá con el mismo nombre."""
-    respuesta = cliente.get("/api/v1/ofertas/alertas", headers={"Authorization": f"Bearer {CLAVE}"})
-    assert respuesta.status_code == 200, respuesta.text
-    plataformas = [a["plataforma"] for a in respuesta.json()["alertas"]]
-    assert "LinkedIn" in plataformas and "Upwork" in plataformas
-
-
-def test_las_alertas_tambien_piden_clave(cliente: TestClient) -> None:
-    """Es una URL pública: todo lo que sirva el criterio va detrás de la clave."""
-    assert cliente.get("/api/v1/ofertas/alertas").status_code == 401
 
 
 def test_los_estaticos_llevan_version(cliente: TestClient) -> None:
