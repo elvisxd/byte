@@ -817,12 +817,17 @@ async def ver_seguimiento(criterio: Criterio, carpeta: Path, al_telefono: bool) 
     return texto
 
 
-async def ver_correos(criterio: Criterio) -> str:
+async def ver_correos(criterio: Criterio, al_telefono: bool = False) -> str:
     """Qué hay en el buzón, por tipo. Sólo lee.
 
     Es la herramienta que hacía falta para poder decir "no se descarta
     ninguno": antes, lo que el clasificador no reconocía desaparecía sin
     contarse, y no había forma de saber cuánto era ni de qué.
+
+    `--al-telefono` existe por la misma razón que en `--retraso`: las
+    credenciales de Gmail viven en Railway y no en la Mac, así que el único
+    lugar donde este comando ve el buzón de verdad es allá —y la salida de una
+    corrida allá no siempre se puede leer—. El panel sí llega.
     """
     if not criterio.fuentes.get("postulaciones", True):
         return "La fuente `postulaciones` está apagada en el TOML."
@@ -833,7 +838,10 @@ async def ver_correos(criterio: Criterio) -> str:
     respuestas = await asyncio.to_thread(
         fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
     )
-    return inventario(respuestas)
+    texto = inventario(respuestas)
+    if al_telefono:
+        avisar(texto)
+    return texto
 
 
 def main() -> None:
@@ -875,7 +883,7 @@ def main() -> None:
     parser.add_argument(
         "--al-telefono",
         action="store_true",
-        help="Con --retraso o --seguimiento: manda el parte al panel además de imprimirlo",
+        help="Con --retraso, --seguimiento o --correos: manda el parte al panel también",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -901,14 +909,14 @@ def main() -> None:
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
         return
-    if args.al_telefono and not (args.retraso or args.seguimiento):
+    if args.al_telefono and not (args.retraso or args.seguimiento or args.correos):
         # Sin esto el flag se ignoraba en silencio y arrancaba una vuelta
         # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
         # tipea esperando el informe recibía otra cosa, y encima con efectos.
-        parser.error("--al-telefono necesita --retraso o --seguimiento")
+        parser.error("--al-telefono necesita --retraso, --seguimiento o --correos")
     if args.correos:
         # Sólo lectura, igual que --retraso y --seguimiento.
-        print(asyncio.run(ver_correos(criterio)))
+        print(asyncio.run(ver_correos(criterio, args.al_telefono)))
         return
     if args.seguimiento:
         # Sólo lectura, igual que --retraso: se puede mirar con una vuelta en curso.

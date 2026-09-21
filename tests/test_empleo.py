@@ -2612,3 +2612,38 @@ def test_la_cocina_en_la_descripcion_no_descalifica_a_nadie() -> None:
     )
 
     assert "fuera_de_oficio" not in puntuar(oferta, CRITERIO).senales
+
+
+def test_correos_al_telefono_manda_el_inventario(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Las credenciales de Gmail viven en Railway y no en la Mac, así que el
+    único lugar donde `--correos` ve el buzón de verdad es allá — y la salida
+    de una corrida allá no siempre se puede leer. El panel sí llega."""
+    from empleo.postulaciones import Respuesta
+
+    monkeypatch.setenv("GMAIL_USUARIO", "yo@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+    monkeypatch.setattr(
+        fuentes,
+        "respuestas_por_imap",
+        lambda *_a, **_k: [Respuesta("<1@x>", "a@cohere.com", "Thanks", "", "acuse", ())],
+    )
+    mandados: list[str] = []
+    monkeypatch.setattr(cazador, "avisar", lambda texto: mandados.append(texto) or True)
+
+    texto = asyncio.run(cazador.ver_correos(Criterio(fuentes={"postulaciones": True}), True))
+
+    assert "Buzón — 1 correos" in texto
+    assert mandados == [texto]
+
+
+def test_correos_sin_al_telefono_no_manda_nada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Es un comando de mirar: por defecto no interrumpe a nadie."""
+    monkeypatch.setenv("GMAIL_USUARIO", "yo@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+    monkeypatch.setattr(fuentes, "respuestas_por_imap", lambda *_a, **_k: [])
+    mandados: list[str] = []
+    monkeypatch.setattr(cazador, "avisar", lambda texto: mandados.append(texto) or True)
+
+    asyncio.run(cazador.ver_correos(Criterio(fuentes={"postulaciones": True})))
+
+    assert mandados == []
