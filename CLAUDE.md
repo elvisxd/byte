@@ -13,17 +13,22 @@
 cualquier explicación. No al final, no "lo subí a la rama X": el link, que es lo
 único con lo que se puede hacer algo.
 
-**Todo va en draft y lo aprueba y mergea Elvis.** Nunca se mergea ni se aprueba
-por él, ni siquiera con el CI en verde y sin comentarios. Verde quiere decir
-"listo para que lo mires", no "listo para entrar".
+**Los PRs propios se mergean en verde, sin preguntar.** Lo decidió Elvis el
+2026-09-18 («Merges tu siempre») y lo repitió el 21: con los 6 checks en verde y
+sin hilos abiertos, se mergea. Rojo se arregla o se explica en el PR; nunca se
+mergea en rojo, y nunca se aprueba ni mergea un PR que no sea propio.
 
 Y como el link es lo que hace falta, se pasa aunque el mensaje sea corto, aunque
 el cambio sea chico, y aunque en esa misma vuelta se esté contando otra cosa.
 
-**Su infraestructura tampoco se toca sin permiso.** El proyecto tiene servicios
-vivos en Railway —`cazador-service`, `vigia-service`— y ahí un redeploy, una
-variable o un volumen cambian algo que está corriendo de verdad. Se revisa, se
-informa qué se encontró, y se pregunta antes de tocar.
+**Railway se puede tocar, con dos límites que siguen siendo de Elvis.** Las
+variables de `vigia-service` (`BYTE_REF`, `MODELOS_*`, `LEER`, `RUBRICA`,
+`CATALOGO`, `CONTAR`, `PERFIL`) se ponen y se despliega sin preguntar, pero:
+un reinicio de los brazos va FUERA de la ventana 08:00–20:30 EDT —dentro le
+cuesta una vuelta a cada brazo—, y una variable que cambie la conducta de un
+brazo DE LA COMPARACIÓN (gemini, groq: su lista de modelos, su tope de salida,
+el prompt) se propone con cifras y no se toca: altera qué mide el experimento.
+`BYTE_REF` va siempre a un sha, nunca a `main` (Docker cachea el clone).
 
 ## Este repo es público
 
@@ -75,3 +80,34 @@ Tres cosas que no son de estilo y tienen pruebas que fallan si se rompen:
   commiteó **solo y antes que cualquier código** a propósito.
 
 Lo demás está en `paper/README.md` y `paper/EJES.md`.
+
+### Dónde va el experimento — leer antes de tocar nada (2026-09-21)
+
+- **Gemini cruzó las 50 y NO discrimina.** 77 resueltas: Brier 0.2578 contra
+  0.2405 de decir siempre la tasa base. Diga 29 %, 47 % o 64 %, el nivel se toca
+  ~40 % de las veces. El segundo corte (sin 15m, régimen) lo confirma. Ese 40 %
+  no es su acierto: es la tasa con la que los niveles que elige se tocan.
+- **Groq va 30/50 (~7 al día). La comparación v4 se lee cuando cruce**, y hasta
+  entonces el prompt (`VERSION_PROMPT = 4`) no se toca. Las seis hipótesis de
+  mejora están FIJADAS en `paper/HIPOTESIS_PROMPT_V5.md` antes de esa lectura:
+  H1 (se ancla en la tasa base) y H5 (revisa ≥3 ejes solo en 8 de 53
+  pensamientos) convergen en un solo cambio —las listas de comprobación en prosa
+  se saltan; van como campos de `predecir`/`abrir_operacion`—. H3: el régimen
+  no aporta (coincidir = peor) y a 31/77 les falta. H6 es de cadencia.
+- **Nada se aplica a gemini solo.** Si el prompt cambia, cambia para todos los
+  brazos en el mismo commit con `VERSION_PROMPT` +1, y se separan las muestras.
+- **Los brazos corren en Railway**, no en la Mac (`railway-vigia-service` del
+  dashboard). Su log imprime en cada arranque: `CONTAR` (recuento), `LEER`
+  (la lectura de un brazo ≥50, con la puerta de las 50 EN EL CÓDIGO), `RUBRICA`
+  (trazas), `PERFIL` (emisión), `CATALOGO` (modelos por brazo). Es el tablero
+  cuando el panel no se alcanza.
+- **El 413 de Groq es `pedido = entrada + salida anterior de ESE modelo`**, no
+  un tope de tamaño ni el reloj — medido tres veces con aritmética exacta
+  (2026-09-20/21). Se reintenta el mismo modelo recortando el historial
+  (`agent/relevo.py`, `recortar_entrada`, byte#150). Un 413, 429 o 503 NUNCA
+  entra en `agent/catalogo.py`: solo el 404 y el 402 son veredictos del modelo.
+- **`z-ai/glm-5.2:free` no tiene herramientas** (404 «no endpoints found that
+  support tool use»): no vuelve. Cualquier id de OpenRouter sin `:free` se
+  cobra y el brazo se niega a llamarlo (`paper/sesion.py`).
+- Lo que el log de Railway enseña por predicción resuelta lleva el Brier
+  (`paper/sesion.py:393`); no se suma a mano antes de las 50 de cada brazo.
