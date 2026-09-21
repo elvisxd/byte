@@ -195,3 +195,58 @@ def test_el_historial_del_cliente_es_una_escala_y_no_un_umbral() -> None:
         return evaluar(entrada, CRITERIO)[0].total
 
     assert total("$300K+") > total("$20K+") > total("$2K+") > total("$100")
+
+
+# El país del cliente es la ÚLTIMA línea de la tarjeta en la pantalla de Upwork.
+_EEUU = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+Payment verified
+$120K+ spent
+United States"""
+
+_INDIA = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+Payment verified
+$120K+ spent
+India"""
+
+
+def test_el_pais_del_cliente_ordena_sin_descartar() -> None:
+    """US y Canadá suman; India y España restan como un junior: con 40 la oferta
+    cae debajo del mínimo aunque el stack coincida entero.
+
+    Pero NO se descarta en el código. Ninguna señal descarta sola acá, y filtrar
+    en silencio es cómo un criterio equivocado se vuelve invisible: no verías las
+    ofertas que te estás perdiendo, verías menos ofertas y nada más."""
+    eeuu = evaluar(parsear(_EEUU), CRITERIO)[0]
+    india = evaluar(parsear(_INDIA), CRITERIO)[0]
+    assert "cliente_norteamerica" in eeuu.puntaje.senales
+    assert "cliente_bloqueado" in india.puntaje.senales
+    assert eeuu.total > india.total
+    # La de India sigue existiendo y con su señal a la vista, no desaparece.
+    assert india.puntaje.senales
+
+
+def test_nombrar_un_pais_en_la_descripcion_no_es_ser_de_ahi() -> None:
+    """ "Some of our engineers are based in India and Spain" lo escribe una
+    empresa de EE.UU. contratando afuera — es lo contrario de una señal mala.
+
+    El patrón exige que el país sea la línea ENTERA, que es como Upwork lo pone
+    al pie de la tarjeta. Sin ese ancla, esta oferta se hundiría 40 puntos por
+    mencionar dónde vive su equipo."""
+    texto = """Senior Python Engineer for RAG pipeline
+Proposals: Less than 5
+We are a US company with a distributed team; some of our engineers are based in
+India and Spain, and we hire worldwide through Deel.
+Payment verified
+$120K+ spent
+United States"""
+    senales = evaluar(parsear(texto), CRITERIO)[0].puntaje.senales
+    assert "cliente_norteamerica" in senales
+    assert "cliente_bloqueado" not in senales
+
+
+def test_canada_cuenta_igual_que_estados_unidos() -> None:
+    """Son la misma lista: se pidieron los dos juntos."""
+    canada = parsear(_EEUU.replace("United States", "Canada"))
+    assert "cliente_norteamerica" in evaluar(canada, CRITERIO)[0].puntaje.senales
