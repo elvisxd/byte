@@ -106,6 +106,28 @@ largo_plazo = 20
 [penalizaciones]
 # Restan. Ninguna descarta sola: el aviso muestra la señal y decidís vos.
 #
+# Un oficio que no es el tuyo, leído del TÍTULO. Hoy: gastronomía.
+#
+# El canal de LMIA sirve y se queda —es la vía por la que un empleador
+# canadiense contrata a alguien de afuera— pero trae con él todo lo que se
+# contrata por esa vía, y la cocina es lo que más volumen tiene. Medido con la
+# oferta real que llegó el 21/09/2026: «Line Cook (LMIA/PNP Available)» sacaba
+# 40 contra un mínimo de 25 y entraba al aviso.
+#
+# Pesa 60 y no 40 porque 40 es exactamente lo que juntaba esa oferta: el
+# patrocinio (15) más la frescura (25). Con 60 queda en -20.
+#
+# ⚠ Un oficio técnico en el título GANA siempre: «Software Engineer, Restaurant
+# Platform» es un puesto de programación en una empresa de gastronomía, que es
+# lo contrario de lo que se quiere frenar. Toast, Olo y Lightspeed contratan
+# ingenieros todo el tiempo.
+#
+# ⚠ Y no descarta: sigue en el digest, con la señal a la vista. Para agregar
+# otros oficios —camioneros, cuidadores, limpieza, que llegan por la misma vía—
+# se edita `_OFICIO_GASTRONOMIA` en `empleo/criterio.py`. Están fuera por ahora
+# porque todavía no aparecieron en el buzón: la lista se agranda con lo que
+# llega, no con lo que uno se imagina.
+fuera_de_oficio = 60
 # Junior / entry level: a los diez años es tiempo perdido.
 junior = 40
 # Dice explícitamente que no patrocina visas. Se muestra siempre, pero solo

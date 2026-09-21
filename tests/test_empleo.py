@@ -2176,14 +2176,23 @@ def test_la_frescura_sigue_ordenando_a_las_que_si_valen_algo() -> None:
 
 def test_a_una_oferta_vieja_e_inservible_la_frescura_le_sigue_restando() -> None:
     """La penalización no se toca: hundir no admite a nadie. Sólo el premio
-    quedó condicionado."""
+    quedó condicionado.
+
+    Se comprueba el motivo y no el total: el título de este ejemplo —el mismo
+    cocinero de siempre— también enciende `fuera_de_oficio` desde que existe
+    esa señal, y fijar el número exacto haría fallar este test cada vez que se
+    agregue una penalización que no tiene nada que ver con la frescura.
+    """
     vieja = _oferta(
         titulo="Cocinero de línea",
         descripcion="Turnos rotativos.",
         publicada=(datetime.now(tz=UTC) - timedelta(days=40)).isoformat(),
     )
 
-    assert puntuar(vieja, CRITERIO).total == -10
+    puntaje = puntuar(vieja, CRITERIO)
+
+    assert any(m.startswith("-10 mas_vieja") for m in puntaje.motivos)
+    assert puntaje.total < 0
 
 
 # --- Una fuente caída no puede contarse como cero ---
@@ -2520,3 +2529,86 @@ def test_sin_ubicacion_y_otro_pais_no_son_la_misma_cosa() -> None:
     assert pais_de(sin_lugar) == pais_de(en_otro_lado) == ""
     assert bool(sin_lugar.ubicacion.strip()) is False
     assert bool(en_otro_lado.ubicacion.strip()) is True
+
+
+# --- LMIA sí, restaurantes no ---
+
+
+def _lmia(titulo: str, descripcion: str = "") -> Oferta:
+    return _oferta(
+        titulo=titulo,
+        ubicacion="Toronto, ON",
+        descripcion=descripcion + " LMIA and PNP available. Work permit support provided.",
+        publicada=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+def test_un_cocinero_con_lmia_ya_no_llega_al_telefono() -> None:
+    """La oferta real que llegó el 21/09/2026: «Line Cook (LMIA/PNP
+    Available)», de una agencia de contratación. Sacaba 40 contra un mínimo
+    de 25 y entraba al aviso.
+
+    La aritmética importa porque no es obvia: `patrocinio` suma 15, eso pone el
+    total en positivo, y con el total en positivo se desbloquean los 25 de
+    `hasta_24h`. O sea que la señal que hace útil a Job Bank era la misma que
+    dejaba pasar al cocinero.
+    """
+    cocinero = _lmia("Line Cook (LMIA/PNP Available)")
+
+    puntaje = puntuar(cocinero, CRITERIO)
+
+    assert "fuera_de_oficio" in puntaje.senales
+    assert puntaje.total < CRITERIO.puntaje_minimo
+
+
+@pytest.mark.parametrize(
+    "titulo",
+    ["Cook", "Sous Chef", "Kitchen Helper", "Food Service Supervisor", "Dishwasher", "Cocinero"],
+)
+def test_la_gastronomia_entera_queda_afuera(titulo: str) -> None:
+    assert puntuar(_lmia(titulo), CRITERIO).total < CRITERIO.puntaje_minimo
+
+
+@pytest.mark.parametrize(
+    "titulo",
+    [
+        "Software Engineer, Restaurant Platform",
+        "Kitchen Display Systems Developer",
+        "Senior Server Engineer",
+    ],
+)
+def test_un_puesto_tecnico_en_una_empresa_de_gastronomia_sigue_entrando(titulo: str) -> None:
+    """La mitad del cambio, y la que puede costar caro: Toast, Olo y Lightspeed
+    contratan ingenieros todo el tiempo. Un oficio técnico en el título gana
+    siempre, aunque el título también nombre cocina.
+    """
+    oferta = _lmia(titulo, "We build software using Python and React.")
+
+    puntaje = puntuar(oferta, CRITERIO)
+
+    assert "fuera_de_oficio" not in puntaje.senales
+    assert puntaje.total >= CRITERIO.puntaje_minimo
+
+
+def test_el_canal_de_lmia_se_queda() -> None:
+    """Es la vía por la que un empleador canadiense contrata a alguien de
+    afuera, y la única razón por la que Canadá está en la lista. Una ficha de
+    Job Bank de un puesto del oficio —sin descripción, que es como vienen—
+    sigue llegando."""
+    web = _lmia("Web Developer")
+
+    puntaje = puntuar(web, CRITERIO)
+
+    assert "patrocinio" in puntaje.senales
+    assert puntaje.total >= CRITERIO.puntaje_minimo
+
+
+def test_la_cocina_en_la_descripcion_no_descalifica_a_nadie() -> None:
+    """En la descripción, "restaurant" es el cliente y "kitchen" puede ser el
+    nombre de un producto. Sólo el título dice de qué es el trabajo."""
+    oferta = _lmia(
+        "Senior Backend Engineer",
+        "We build ordering software for restaurants, bars and kitchens. Python, Django.",
+    )
+
+    assert "fuera_de_oficio" not in puntuar(oferta, CRITERIO).senales
