@@ -77,13 +77,34 @@ lados en cada vuelta, así que el sesgo es limpio de medir.
 (qué pools se enseñan y cómo); si solo gemini, es del modelo. Es exactamente la
 distinción que el criterio existe para hacer.
 
-### H5 · Los ejes: sin evidencia para quitar ni añadir (ejes)
+### H5 · Los ejes no sobran ni faltan: no los revisa (prompt)
 
-La rúbrica de registro da **95 razones distintas de 97**: no repite una
-plantilla. Las 4 operaciones fueron `range-sweep`, que es muestra de nada. Las
-líneas de la rúbrica que dicen si recorre los ejes o insiste tras un rechazo
-necesitan las trazas, y esas se leen a partir del arreglo del enlace (dashboard).
-**Hoy no hay dato para decir que un eje sobra o falta.**
+La rúbrica sobre las 28 vueltas con traza en el volumen (medida el 2026-09-21
+a las 04:03 EDT, con `RUBRICA=gemini`):
+
+```
+1. rechazos: reacciona / insiste            12 / 2
+2. razones distintas / total                95 / 97   (la más repetida: 2 veces)
+2. pensamientos que recorren ≥3 ejes         8 / 53
+3. al tope de iteraciones sin registrar         0
+4. cierres manuales antes de una vela        0 / 0
+```
+
+Todo limpio menos una línea. Reacciona a los rechazos (12 contra 2), no repite
+una plantilla, nunca choca con el tope sin escribir, no cierra a destiempo. Pero
+**solo 8 de 53 pensamientos recorren tres o más ejes**. El v4 pide «eje por
+eje, los cuatro activos: ¿está ocurriendo AHORA su patrón? Contestá sí o no para
+CADA uno»; lo hace el 15 % de las veces. Las 4 operaciones fueron
+`range-sweep`, que es coherente con mirar un eje y parar.
+
+**Así que la mejora no es quitar ni añadir un eje: es que revise los que hay.**
+Es el mismo mecanismo que H1 —una lista de comprobación pedida en prosa que el
+modelo se salta— y la misma solución: que el sí/no por eje sea un campo de
+`abrir_operacion` y `predecir`, no un párrafo del prompt. Las dos hipótesis
+convergen en un solo cambio de herramienta.
+
+**Prueba:** que «recorren ≥3 ejes» suba de 8/53 a la mayoría, y que las
+operaciones dejen de ser de un solo eje.
 
 ### H6 · El tope diario se come el cierre de 4h (cadencia, no prompt)
 
