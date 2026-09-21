@@ -20,7 +20,14 @@ import httpx
 import pytest
 
 from empleo import cazador, fuentes
-from empleo.criterio import Criterio, Puntaje, cargar_criterio, detectar_senales, puntuar
+from empleo.criterio import (
+    Criterio,
+    Puntaje,
+    cargar_criterio,
+    detectar_senales,
+    pais_de,
+    puntuar,
+)
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 
@@ -1952,3 +1959,227 @@ def test_el_pie_de_fuentes_no_se_recorta_aunque_las_ofertas_sean_largas() -> Non
     assert len(aviso) <= MAX_CARACTERES
     assert "linkedin: 4" in aviso
     assert "weworkremotely: 121" in aviso
+
+
+# --- En qué país está el puesto ---
+
+
+@pytest.mark.parametrize(
+    ("ubicacion", "esperado"),
+    [
+        ("Toronto, ON", "canada"),
+        ("Toronto, ON, Canada", "canada"),
+        ("Vancouver, British Columbia", "canada"),
+        ("Remote - Canada", "canada"),
+        ("New York, NY", "estados_unidos"),
+        ("Boston, Massachusetts", "estados_unidos"),
+        ("San Francisco, CA, USA", "estados_unidos"),
+        ("Remote (US)", "estados_unidos"),
+        ("United States", "estados_unidos"),
+        ("Worldwide", ""),
+        ("Remote, LATAM", ""),
+        ("London, UK", ""),
+        ("Bangalore, India", ""),
+        ("Buenos Aires, Argentina", ""),
+        ("", ""),
+    ],
+)
+def test_el_pais_del_puesto_sale_de_la_ubicacion(ubicacion: str, esperado: str) -> None:
+    assert pais_de(_oferta(ubicacion=ubicacion)) == esperado
+
+
+def test_el_pais_no_se_busca_en_la_descripcion() -> None:
+    """La lección que ya costó caro una vez, ahora del otro lado. «We serve
+    customers across Canada» lo escribe una empresa de Berlín, y «some of our
+    engineers are based in India» la escribe una de EE.UU. contratando afuera.
+    El campo de ubicación es el único lugar donde el país es un dato.
+    """
+    oferta = _oferta(
+        ubicacion="Berlin, Germany",
+        descripcion="We serve customers across Canada and the United States.",
+    )
+
+    assert pais_de(oferta) == ""
+
+
+def test_ontario_california_no_es_canada() -> None:
+    """Los dos países comparten nombres de subdivisión, y Ontario es una ciudad
+    real de California. Gana la que se nombra última, porque las direcciones van
+    de lo chico a lo grande.
+    """
+    assert pais_de(_oferta(ubicacion="Ontario, California")) == "estados_unidos"
+
+
+def test_el_nombre_del_pais_le_gana_a_la_provincia() -> None:
+    """ "Toronto, ON, Canada" tiene ON antes que Canada. Si ganara el primero,
+    bastaría con que una oferta estadounidense nombrara una ciudad llamada
+    igual que una provincia para volverse canadiense."""
+    assert pais_de(_oferta(ubicacion="Toronto, ON, Canada")) == "canada"
+
+
+def test_us_en_minuscula_es_el_pronombre_y_no_el_pais() -> None:
+    """ "Join us", "work with us": hay feeds que meten media frase en el campo de
+    ubicación. La sigla se busca en mayúsculas; el nombre largo, como sea."""
+    assert pais_de(_oferta(ubicacion="come work with us")) == ""
+    assert pais_de(_oferta(ubicacion="Remote US")) == "estados_unidos"
+    assert pais_de(_oferta(ubicacion="UNITED STATES")) == "estados_unidos"
+
+
+def test_los_codigos_de_dos_letras_no_atrapan_palabras_comunes() -> None:
+    """ON, IN, OR, OK, ME, DE, HI, LA, MS, PA y CO son palabras inglesas. Por
+    eso los códigos van en mayúsculas y detrás de una coma."""
+    for suelto in ("hands on deck", "all hands on deck", "remote or hybrid", "in office"):
+        assert pais_de(_oferta(ubicacion=suelto)) == "", suelto
+
+
+def test_el_pais_ordena_pero_no_admite_solo() -> None:
+    """15 y no 25 —el mínimo del aviso— a propósito: casi todos los 1.700
+    puestos de las `[[empresas]]` están en EE.UU., y con 25 el país solo los
+    metía a todos al teléfono. El mismo principio de las penalizaciones, del
+    otro lado: ninguna señal descarta sola, ninguna señal admite sola."""
+    vacia = _oferta(ubicacion="New York, NY", titulo="Cocinero", descripcion="")
+
+    puntaje = puntuar(vacia, CRITERIO)
+
+    assert "estados_unidos" in puntaje.senales
+    assert puntaje.total < CRITERIO.puntaje_minimo
+
+
+def test_una_oferta_de_estados_unidos_le_gana_a_la_misma_de_alemania() -> None:
+    """Que es todo lo que se le pidió al peso: ordenar."""
+    ahora = datetime.now(tz=UTC)
+    texto = "We use React, Python and LLM agents."
+    aca = _oferta(ubicacion="New York, NY", descripcion=texto, publicada=ahora.isoformat())
+    alla = _oferta(ubicacion="Berlin, Germany", descripcion=texto, publicada=ahora.isoformat())
+
+    assert puntuar(aca, CRITERIO).total > puntuar(alla, CRITERIO).total
+
+
+def test_un_presencial_que_paga_la_mudanza_a_canada_deja_de_hundirse() -> None:
+    """Un presencial en Toronto que paga la reubicación es aplicable, y se
+    hundía los mismos -45 que uno en Santiago, que no lo es. La oficina deja de
+    ser el problema si la empresa te lleva."""
+    oferta = _oferta(
+        ubicacion="Toronto, ON",
+        descripcion=(
+            "Hybrid role, 3 days a week in the office. We offer relocation "
+            "assistance and will support your work permit."
+        ),
+        publicada=datetime.now(tz=UTC).isoformat(),
+    )
+
+    puntaje = puntuar(oferta, CRITERIO)
+
+    assert "hibrido" not in puntaje.senales
+    assert "reubicacion" in puntaje.senales
+    assert puntaje.total >= CRITERIO.puntaje_minimo
+
+
+def test_el_perdon_de_la_oficina_no_se_lo_llevan_todos() -> None:
+    """Y el límite, que es la mitad del cambio: "relocation assistance
+    available" en un híbrido de Bangalore no lo vuelve tomable. Sin la
+    condición del país, el perdón se lo llevaban todos."""
+    oferta = _oferta(
+        ubicacion="Bangalore, India",
+        descripcion="Hybrid role, 3 days in the office. Relocation assistance provided.",
+        publicada=datetime.now(tz=UTC).isoformat(),
+    )
+
+    puntaje = puntuar(oferta, CRITERIO)
+
+    assert "hibrido" in puntaje.senales
+    assert puntaje.total < CRITERIO.puntaje_minimo
+
+
+def test_una_oferta_sin_ubicacion_no_se_premia_ni_se_castiga() -> None:
+    """Misma regla que la fecha: que un feed no mande el campo no es información
+    sobre la oferta. Adivinar el país convertiría "este feed es pobre" en "este
+    puesto no te sirve"."""
+    sin_lugar = _oferta(ubicacion="", descripcion="We use React and Python.")
+
+    senales = puntuar(sin_lugar, CRITERIO).senales
+
+    assert not any(s in senales for s in ("estados_unidos", "canada"))
+
+
+def test_el_pais_no_alcanza_el_minimo_junto_con_la_frescura() -> None:
+    """Lo encontró un test que ya existía, no una sospecha: con el peso del país
+    sumando siempre, «canada» (15) más «hasta_48h» (15) daban 30 contra un
+    mínimo de 25. Una ficha de Job Bank —cuatro renglones, sin descripción, cero
+    coincidencias de stack— llegaba al teléfono por estar en Canadá y ser de
+    ayer. Medido con la oferta real de Omnissa: 15 puntos pasaban a 30.
+    """
+    ficha = _oferta(
+        fuente="jobbank",
+        titulo="computer software engineer",
+        empresa="Omnissa",
+        descripcion="computer software engineer\nOmnissa\nVancouver, BC\nFull time Remote",
+        ubicacion="Vancouver, BC",
+        publicada=(datetime.now(tz=UTC) - timedelta(hours=26)).isoformat(),
+    )
+
+    puntaje = puntuar(ficha, CRITERIO)
+
+    assert "canada" in puntaje.senales
+    assert puntaje.total < CRITERIO.puntaje_minimo
+    # Y se ve POR QUÉ no sumó, en vez de desaparecer de los motivos.
+    assert any("no coincide nada del stack" in m for m in puntaje.motivos)
+
+
+def test_con_stack_el_pais_si_suma() -> None:
+    """La otra mitad: en cuanto la oferta coincide con algo tuyo, el país ordena
+    como se le pidió."""
+    ahora = datetime.now(tz=UTC).isoformat()
+    con_stack = _oferta(
+        ubicacion="Vancouver, BC", descripcion="We build LLM agents.", publicada=ahora
+    )
+    sin_pais = replace(con_stack, ubicacion="Berlin, Germany")
+
+    assert puntuar(con_stack, CRITERIO).total - puntuar(sin_pais, CRITERIO).total == 15
+
+
+def test_una_oferta_sin_nada_que_ver_no_entra_por_ser_de_hoy() -> None:
+    """El agujero más grande del criterio, y estaba en un número que parecía
+    inocente: `hasta_24h` vale 25 y `puntaje_minimo` vale 25, así que cualquier
+    oferta publicada hoy juntaba el mínimo justo con cero de todo lo demás.
+
+    Medido antes del arreglo: «Cocinero de línea — Parrilla, Madrid», publicada
+    hace una hora, daba 25 y pasaba el corte.
+    """
+    cocinero = _oferta(
+        titulo="Cocinero de línea",
+        empresa="Parrilla",
+        descripcion="Buscamos cocinero con experiencia en parrilla. Turnos rotativos.",
+        ubicacion="Madrid",
+        publicada=datetime.now(tz=UTC).isoformat(),
+    )
+
+    puntaje = puntuar(cocinero, CRITERIO)
+
+    assert puntaje.total < CRITERIO.puntaje_minimo
+    assert any("no suma nada más" in m for m in puntaje.motivos)
+
+
+def test_la_frescura_sigue_ordenando_a_las_que_si_valen_algo() -> None:
+    """Que es para lo que existe: entre dos ofertas que te sirven, la de hoy
+    va arriba. La tesis de los `+25` es sobre la cola del reclutador, y esa
+    tesis sigue entera."""
+    texto = "We use React, Python and LLM agents."
+    hoy = _oferta(descripcion=texto, publicada=datetime.now(tz=UTC).isoformat())
+    vieja = _oferta(
+        descripcion=texto, publicada=(datetime.now(tz=UTC) - timedelta(days=5)).isoformat()
+    )
+
+    assert puntuar(hoy, CRITERIO).total > puntuar(vieja, CRITERIO).total
+
+
+def test_a_una_oferta_vieja_e_inservible_la_frescura_le_sigue_restando() -> None:
+    """La penalización no se toca: hundir no admite a nadie. Sólo el premio
+    quedó condicionado."""
+    vieja = _oferta(
+        titulo="Cocinero de línea",
+        descripcion="Turnos rotativos.",
+        publicada=(datetime.now(tz=UTC) - timedelta(days=40)).isoformat(),
+    )
+
+    assert puntuar(vieja, CRITERIO).total == -10

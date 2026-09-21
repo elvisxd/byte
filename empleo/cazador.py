@@ -28,7 +28,7 @@ import api.config  # noqa: F401
 from api.logging import get_logger
 from empleo import fuentes
 from empleo.aviso import avisar
-from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
+from empleo.criterio import Criterio, Puntaje, cargar_criterio, pais_de, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
 from empleo.postulaciones import AVISABLES, Respuesta, bloque
@@ -502,6 +502,50 @@ async def probar(criterio: Criterio, consulta_upwork: str) -> str:
     return "\n".join(lineas)
 
 
+async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
+    """De qué países son las ofertas que traen las fuentes, y cuántas pasan.
+
+    Existe para poder elegir el peso de `estados_unidos` y `canada` con un
+    número en la mano y no a ojo. El TOML les da 15 razonando que casi todos los
+    puestos de las `[[empresas]]` están en EE.UU. y que 25 —el mínimo— dejaría
+    de filtrar; esto dice si ese razonamiento se corresponde con lo que llega.
+
+    No escribe nada ni avisa: se puede correr mientras una vuelta está en curso.
+    """
+    ofertas, conteo = await recolectar(criterio, consulta_upwork)
+    por_pais: dict[str, list[int]] = {}
+    for oferta in ofertas:
+        puntaje = puntuar(oferta, criterio)
+        por_pais.setdefault(pais_de(oferta) or "(sin ubicación)", []).append(puntaje.total)
+
+    lineas = [_pie_fuentes(conteo), ""]
+    if not ofertas:
+        return "\n".join([*lineas, "Ninguna fuente trajo ofertas: no hay nada que contar."])
+
+    lineas.append(f"{len(ofertas)} ofertas, por país del puesto:")
+    for pais, puntajes in sorted(por_pais.items(), key=lambda par: -len(par[1])):
+        sobre = sum(1 for p in puntajes if p >= criterio.puntaje_minimo)
+        cuota = 100 * len(puntajes) / len(ofertas)
+        mediana = sorted(puntajes)[len(puntajes) // 2]
+        lineas.append(
+            f"  {pais:18} {len(puntajes):>5} ({cuota:4.1f}%) · "
+            f"{sobre} sobre {criterio.puntaje_minimo} · mediana {mediana}"
+        )
+    # Lo que contesta la pregunta de verdad: si el peso del país está admitiendo
+    # ofertas que sin él no pasarían, o sólo ordenando las que ya pasaban.
+    sin_pais = replace(
+        criterio, preferencias={**criterio.preferencias, "estados_unidos": 0, "canada": 0}
+    )
+    con = sum(1 for o in ofertas if puntuar(o, criterio).total >= criterio.puntaje_minimo)
+    sin = sum(1 for o in ofertas if puntuar(o, sin_pais).total >= criterio.puntaje_minimo)
+    lineas += [
+        "",
+        f"Pasan el mínimo: {con} con el peso del país, {sin} sin él.",
+        f"El país admite {con - sin} que sin él no llegaban.",
+    ]
+    return "\n".join(lineas)
+
+
 async def probar_empresas(criterio: Criterio) -> str:
     """Cuáles de los tokens de `[[empresas]]` responden, y con cuántos puestos.
 
@@ -636,6 +680,11 @@ def main() -> None:
         help="Dice cuáles tokens de [[empresas]] responden y cuántos puestos traen",
     )
     parser.add_argument(
+        "--paises",
+        action="store_true",
+        help="De qué países son las ofertas que llegan, y cuántas pasan el mínimo",
+    )
+    parser.add_argument(
         "--retraso",
         action="store_true",
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
@@ -678,6 +727,10 @@ def main() -> None:
         # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
         # mientras una vuelta está corriendo.
         print(asyncio.run(medir_retraso(criterio, carpeta_de_trabajo(), args.al_telefono)))
+        return
+    if args.paises:
+        # Igual que `--probar`: sólo lee.
+        print(asyncio.run(contar_paises(criterio, args.consulta_upwork)))
         return
     if args.probar:
         # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta
