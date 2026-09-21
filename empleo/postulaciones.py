@@ -361,6 +361,46 @@ ESTADOS = (
 AVISABLES = ("entrevista", "accion", "contacto")
 
 
+# Los ATS que le dan a cada cliente su propio subdominio. Para estos, el nombre
+# de la empresa está a la IZQUIERDA del dominio y no a la derecha.
+#
+# Es un subconjunto de `ATS_CONOCIDOS` y no la lista entera a propósito:
+# Greenhouse manda desde `us.greenhouse-mail.io` y Ashby desde
+# `no-reply@ashbyhq.com` pelado, así que ahí el subdominio no es de nadie.
+ATS_CON_SUBDOMINIO = frozenset(
+    {"breezy-mail", "recruitee", "teamtailor", "workable", "bamboohr", "myworkday"}
+)
+
+# Subdominios que no nombran a ninguna empresa: región, función o el buzón.
+SUBDOMINIOS_GENERICOS = frozenset(
+    {
+        "us",
+        "eu",
+        "ca",
+        "uk",
+        "au",
+        "app",
+        "www",
+        "mail",
+        "email",
+        "smtp",
+        "notify",
+        "notifications",
+        "no-reply",
+        "noreply",
+        "ats",
+        "jobs",
+        "careers",
+        "apply",
+        "hire",
+        "recruiting",
+        "talent",
+        "hr",
+        "info",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Respuesta:
     """Un correo de una postulación, ya clasificado."""
@@ -421,7 +461,21 @@ class Respuesta:
             partes.pop()  # el TLD, cualquiera sea
         if len(partes) > 1 and partes[-1] in ("co", "com"):
             partes.pop()  # `example.co.uk`, ya sin el `uk`
-        return partes[-1] if partes else dominio
+        if not partes:
+            return dominio
+        # Los ATS que le dan un subdominio a cada cliente. Ahí el nombre de la
+        # empresa es la etiqueta de la IZQUIERDA y no la de la derecha:
+        # `no-reply@nara-health.breezy-mail.com` es Nara Health, no Breezy.
+        #
+        # Salió de un aviso real del 21/09 que llegó al teléfono diciendo
+        # «[pide algo] breezy-mail — Complete your application for Full Stack
+        # Engineer». El asunto de ese correo no nombra a nadie, así que el
+        # subdominio es lo único que queda.
+        if len(partes) > 1 and partes[-1] in ATS_CON_SUBDOMINIO:
+            candidato = partes[0]
+            if candidato not in SUBDOMINIOS_GENERICOS:
+                return candidato
+        return partes[-1]
 
 
 # --- De qué empresa es el correo, cuando el remitente no lo dice -------------
@@ -677,7 +731,10 @@ def linea(respuesta: Respuesta) -> str:
     acá sólo sale lo que el código calculó más el asunto, que es lo que te
     permite encontrarlo en el buzón."""
     marca = "entrevista" if respuesta.estado == "entrevista" else "pide algo"
-    return f"  [{marca}] {respuesta.empresa} — {respuesta.asunto[:70]}"
+    # El asunto primero: es donde el ATS sí nombra a la empresa. El dominio
+    # queda de respaldo para cuando el asunto no nombra a nadie.
+    quien = empresa_del_asunto(respuesta.asunto) or respuesta.empresa
+    return f"  [{marca}] {quien} — {respuesta.asunto[:70]}"
 
 
 def bloque(pendientes: list[Respuesta]) -> str:

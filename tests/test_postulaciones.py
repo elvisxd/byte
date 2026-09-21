@@ -17,6 +17,7 @@ from empleo.postulaciones import (
     empresa_del_asunto,
     es_probable_estafa,
     inventario,
+    linea,
     sospechas,
 )
 
@@ -543,3 +544,76 @@ def test_cuando_el_asunto_no_nombra_a_nadie_no_se_inventa(asunto: str) -> None:
     —"Full Stack Engineer", "Associate Power BI Developer"— no es una empresa.
     """
     assert empresa_del_asunto(asunto) == ""
+
+
+# --- El nombre que sale en el aviso del teléfono ----------------------------
+
+
+def test_el_aviso_nombra_a_la_empresa_y_no_al_ats() -> None:
+    """Aviso REAL que llegó al teléfono el 21/09:
+
+        [pide algo] breezy-mail — Complete your application for Full Stack Engineer
+
+    "breezy-mail" es el ATS. La empresa es Nara Health, y está en el
+    subdominio: `no-reply@nara-health.breezy-mail.com`. El asunto de ese correo
+    no nombra a nadie, así que el subdominio es lo único que queda.
+    """
+    respuesta = Respuesta(
+        "<1@x>",
+        "no-reply@nara-health.breezy-mail.com",
+        "Complete your application for Full Stack Engineer",
+        "",
+        "accion",
+        (),
+    )
+
+    assert respuesta.empresa == "nara-health"
+    assert "breezy-mail" not in linea(respuesta)
+
+
+def test_el_aviso_prefiere_el_asunto_al_dominio() -> None:
+    """Correo real de Greenhouse. El subdominio es "us" —una región, no una
+    empresa— pero el asunto sí nombra a Stripe.
+    """
+    respuesta = Respuesta(
+        "<2@x>",
+        "no-reply@us.greenhouse-mail.io",
+        "Security code for your application to Stripe",
+        "",
+        "accion",
+        (),
+    )
+
+    assert "Stripe" in linea(respuesta)
+
+
+def test_un_subdominio_de_region_no_es_una_empresa() -> None:
+    """El límite del arreglo de arriba. Greenhouse manda desde
+    `us.greenhouse-mail.io`: si el subdominio entrara siempre, el aviso diría
+    que postulaste a una empresa llamada "us".
+    """
+    respuesta = Respuesta(
+        "<3@x>", "no-reply@us.greenhouse-mail.io", "Application Update", "", "rechazo", ()
+    )
+
+    assert respuesta.empresa == "greenhouse-mail"
+
+
+def test_cuando_no_lo_nombra_nadie_se_dice_el_ats_y_no_se_inventa() -> None:
+    """Ashby manda desde el dominio pelado y este asunto no nombra a nadie. El
+    aviso dice "ashbyhq", que al menos te dice dónde buscarlo en el buzón.
+
+    El cuerpo del correo SÍ nombra a la empresa, y aun así no se usa: `linea()`
+    no mira el cuerpo a propósito —es texto de terceros— y esa decisión no se
+    cambia por comodidad.
+    """
+    respuesta = Respuesta(
+        "<4@x>",
+        "no-reply@ashbyhq.com",
+        "Application received for Senior Software Engineer",
+        "",
+        "accion",
+        (),
+    )
+
+    assert respuesta.empresa == "ashbyhq"
