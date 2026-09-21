@@ -311,6 +311,70 @@ def pais_de(oferta: Oferta) -> str:
     return "canada" if donde_ca > donde_us else "estados_unidos"
 
 
+# --- De qué oficio es el puesto ---------------------------------------------
+#
+# El canal de LMIA sirve —es la vía por la que un empleador canadiense contrata
+# a alguien de afuera— pero trae con él todo lo que se contrata por esa vía, y
+# la gastronomía es lo que más volumen tiene. Medido el 21/09/2026 con la
+# oferta real que llegó al buzón: "Line Cook (LMIA/PNP Available)" sacaba 40
+# puntos contra un mínimo de 25 y entraba al aviso.
+#
+# La aritmética de por qué entraba importa, porque no es obvia: `patrocinio`
+# suma 15, eso pone el total en positivo, y con el total en positivo se
+# desbloquean los 25 de `hasta_24h`. O sea que la señal que hace útil a Job
+# Bank es la misma que dejaba pasar al cocinero.
+#
+# No se arregla quitándole peso al patrocinio: las fichas de Job Bank no traen
+# descripción, así que el patrocinio es lo único que tienen, y gatearlo dejaría
+# esa fuente en cero. Se arregla mirando de qué OFICIO es el puesto, que es la
+# pregunta que de verdad separa un cocinero de un ingeniero.
+
+# Se mira el TÍTULO y nada más. En la descripción, "restaurant" es el cliente
+# —"we build software for restaurants"— y "kitchen" puede ser el nombre de un
+# producto. En el título es el trabajo.
+#
+# Y el oficio técnico gana siempre: "Software Engineer, Restaurant Platform" y
+# "Kitchen Display Systems Developer" son puestos de programación en empresas
+# de gastronomía, que es justo lo contrario de lo que se quiere frenar. Toast,
+# Olo y Lightspeed contratan ingenieros todo el tiempo.
+_OFICIO_TECNICO = re.compile(
+    r"\b(engineer|engineering|developer|programmer|programador|software|devops"
+    r"|data|scientist|analyst|architect|administrator|sysadmin|sre"
+    r"|full[ -]?stack|back[ -]?end|front[ -]?end|mobile|web|cloud|platform"
+    r"|machine learning|\bml\b|\bai\b|qa|tester|designer|ux|ui"
+    r"|desarrollador|ingenier[oa]|arquitect[oa]|t[eé]cnico)\b",
+    re.I,
+)
+
+# Gastronomía. La lista es corta y concreta a propósito: son los puestos que de
+# verdad aparecen en las alertas de LMIA, no una enciclopedia de oficios.
+#
+# "server" y "host" quedan AFUERA aunque sean puestos de restaurante: los dos
+# son palabras de informática —"SQL Server", "hosting"— y el riesgo de comerse
+# una oferta buena es peor que el de dejar pasar un mesero, que igual no suma
+# nada por ningún otro lado. "hostess" sí, que no es ambigua.
+_OFICIO_GASTRONOMIA = re.compile(
+    r"\b(cook|chef|sous[ -]chef|kitchen (helper|assistant|staff|porter)|dishwasher"
+    r"|food (service|preparation|counter|prep)|fast food|restaurant (manager|supervisor)"
+    r"|waiter|waitress|hostess|busser|barista|bartender|baker|butcher|meat cutter"
+    r"|cociner[oa]|ayudante de cocina|mesero|meser[ao]|camarer[oa]|pastelero|carnicero)\b",
+    re.I,
+)
+
+
+def fuera_de_oficio(oferta: Oferta) -> bool:
+    """¿El título nombra un oficio que no es el tuyo?
+
+    Devuelve `False` en cuanto el título nombra un puesto técnico, aunque
+    también nombre gastronomía: la empresa puede ser de restaurantes y el
+    puesto de programación.
+    """
+    titulo = oferta.titulo
+    if _OFICIO_TECNICO.search(titulo):
+        return False
+    return bool(_OFICIO_GASTRONOMIA.search(titulo))
+
+
 @dataclass(frozen=True, slots=True)
 class Criterio:
     """Lo que dice `perfil/busqueda.toml`, ya validado."""
@@ -376,6 +440,11 @@ DEFECTOS_PREFERENCIAS = {
     "freelance": 5,
 }
 DEFECTOS_PENALIZACIONES = {
+    # Un oficio que no es el tuyo. Pesa más que ninguna otra: un cocinero con
+    # LMIA no es un puesto peor, es otro trabajo, y la aritmética que lo dejaba
+    # entrar —patrocinio 15 más frescura 25— llega a 40. Con 60 queda en -20 y
+    # deja de competir, sin dejar de aparecer en el digest.
+    "fuera_de_oficio": 60,
     "junior": 40,
     "sin_patrocinio": 25,
     "solo_us": 0,
@@ -590,6 +659,11 @@ def detectar_senales(oferta: Oferta, aceptable_en: tuple[str, ...] = ()) -> tupl
     pais = pais_de(oferta)
     if pais:
         encontradas.append(pais)
+    # De qué oficio es el puesto. Se mira el título y va como señal para que se
+    # vea en el aviso —"[fuera_de_oficio]"— en vez de que la oferta desaparezca
+    # sin explicación.
+    if fuera_de_oficio(oferta):
+        encontradas.append("fuera_de_oficio")
     # Y si te reubican, la oficina deja de ser el problema. Un presencial en
     # Toronto que paga la mudanza es aplicable; hasta ahora se hundía los mismos
     # -45 que uno en Santiago, que no lo es.
