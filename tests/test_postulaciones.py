@@ -14,6 +14,7 @@ from empleo.postulaciones import (
     bloque,
     clasificar,
     de_un_ats,
+    empresa_del_asunto,
     es_probable_estafa,
     inventario,
     sospechas,
@@ -471,3 +472,74 @@ def test_un_dominio_parecido_no_es_un_ats() -> None:
     assert not de_un_ats('"no-reply@ashbyhq.com" <estafa@dominio-malo.com>')
     assert not de_un_ats("isabella.holmes@lensa.com")
     assert not de_un_ats("")
+
+
+# --- De qué empresa es el correo, cuando el remitente no lo dice ------------
+
+
+@pytest.mark.parametrize(
+    ("asunto", "empresa"),
+    [
+        # Todos son asuntos REALES del buzón, de 14 días.
+        ("Thanks for applying to Cohere!", "Cohere"),
+        ("Thank you for applying to NMI", "NMI"),
+        ("Thank you for applying to Sourcegraph!", "Sourcegraph"),
+        ("Thank you for applying to Onfleet", "Onfleet"),
+        ("Thanks for applying to MintMCP!", "MintMCP"),
+        ("Thanks for applying to Clera!", "Clera"),
+        ("Thank you for your application to Blackpoint!", "Blackpoint"),
+        ("Thanks for your application to Hiive", "Hiive"),
+        ("We have received your application to Ascend Partner Services", "Ascend Partner Services"),
+        ("Security code for your application to Stripe", "Stripe"),
+        ("Security code for your application to Gusto, Inc.", "Gusto"),
+        ("Thank you for your interest in StackAdapt!", "StackAdapt"),
+        ("Thank you for your interest in Morning Star", "Morning Star"),
+        ("Your application for Sr. Software Engineer, Web at Pinterest", "Pinterest"),
+        ("Application Received - Engineering Manager, Platform  at Render", "Render"),
+        ("Your application for Business Intelligence Manager at Resolver", "Resolver"),
+        ("SeedTrust - Senior Software Engineer (Remote - US Based)", "SeedTrust"),
+        ("Sticker Mule application", "Sticker Mule"),
+        ("We've Got Your Activision Blizzard King Application", "Activision Blizzard King"),
+        (
+            "Update on your Morningstar Job Application Senior Software Engineer- Applied AI",
+            "Morningstar",
+        ),
+        # El apóstrofo y la coletilla societaria se caen sin cambiar el nombre.
+        ("Thank you for applying to Cresta's Engineering Team!", "Cresta"),
+        # El bilingüe: gana lo que está antes de la barra.
+        ("Thank you for applying to Shakepay | Merci d'avoir soumis votre candidate", "Shakepay"),
+    ],
+)
+def test_la_empresa_sale_del_asunto(asunto: str, empresa: str) -> None:
+    """El remitente de un ATS no nombra a la empresa; el asunto sí.
+
+    Medido: de diez correos de postulación del buzón real, ocho no se podían
+    atar a ninguna oferta por esto.
+    """
+    assert empresa_del_asunto(asunto) == empresa
+
+
+@pytest.mark.parametrize(
+    "asunto",
+    [
+        # También reales, y en todos la respuesta correcta es "no se sabe".
+        "Application Update",
+        "Thank you for your application!",
+        "Complete your application for Full Stack Engineer",
+        "Elvis, we've received your resume",
+        "Application received for Senior Software Engineer",
+        "Your application for Senior AI Product Engineer  has been received",
+        "Your application for Associate Power BI Developer",
+        "Thank you for applying for Associate Power BI Developer",
+        "I found some career options for you",
+        "Hey Elvis - welcome to Simplify!",
+    ],
+)
+def test_cuando_el_asunto_no_nombra_a_nadie_no_se_inventa(asunto: str) -> None:
+    """Devolver "" es un resultado válido y NO un fallo.
+
+    Adivinar acá sería peor que no saber: un acuse atado a la empresa
+    equivocada dice que tenés un proceso abierto donde no lo tenés. Un puesto
+    —"Full Stack Engineer", "Associate Power BI Developer"— no es una empresa.
+    """
+    assert empresa_del_asunto(asunto) == ""

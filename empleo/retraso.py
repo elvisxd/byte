@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from empleo.postulaciones import DE_POSTULACION, Respuesta
+from empleo.postulaciones import DE_POSTULACION, Respuesta, empresa_del_asunto
 
 # El nombre del archivo que escribe `escribir_digest`: 2026-09-19-1430.md
 _NOMBRE_DIGEST = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})\.md$")
@@ -235,12 +235,23 @@ def _tokens_de(respuesta: Respuesta) -> tuple[str, ...]:
     salvo que sea un buzón genérico: `generalmotors@` nombra a alguien,
     `careers@` no, y tomarlo igual ataba acuses a cualquier empresa cuyo
     nombre empiece con esa palabra.
+
+    ⚠ Y el asunto, siempre que nombre a alguien. Es lo único que sirve cuando
+    el correo viene de un `no-reply@` de un ATS, que es de donde viene la mayor
+    parte: medido sobre el buzón real, ocho de cada diez correos de postulación
+    no se podían atar a ninguna oferta porque el único nombre disponible era el
+    del ATS. Para un intermediario el dominio NO entra como token: "ashbyhq" no
+    es el nombre de nadie y sólo puede atar mal.
     """
+    del_asunto = empresa_del_asunto(respuesta.asunto)
+    extra = (del_asunto,) if del_asunto else ()
     etiquetas = [e for e in _SEPARADORES_DE_DOMINIO.split(respuesta.empresa) if e]
     if any(e in LA_EMPRESA_VA_EN_EL_BUZON for e in etiquetas):
         buzon = respuesta.buzon
-        return () if buzon in BUZONES_GENERICOS else (buzon,)
-    return (respuesta.empresa,)
+        return (() if buzon in BUZONES_GENERICOS else (buzon,)) + extra
+    if _es_intermediario(respuesta.empresa):
+        return extra
+    return (respuesta.empresa, *extra)
 
 
 def _coincide(token: str, empresa: str) -> bool:
@@ -613,24 +624,35 @@ def seguir(avisos: list[Aviso], respuestas: list[Respuesta]) -> list[Postulacion
         # remitente cuando no. Sin eso, los tres correos de una misma empresa
         # —uno desde su dominio, dos desde su ATS— se contaban como tres
         # postulaciones distintas.
-        clave = _normalizar(aviso.empresa) if aviso else respuesta.empresa
-        if not clave or (aviso is None and _es_intermediario(respuesta.empresa)):
-            # Un `no-reply@ashbyhq.com` que no se pudo atar no nombra a nadie:
-            # agruparlo por "ashby" juntaría empresas distintas bajo un nombre
-            # que no es de ninguna. Se cuenta aparte, como ya hace `medir()`.
+        # El nombre para mostrar cuando no se pudo atar a ninguna oferta: el
+        # del asunto, que es donde el ATS sí nombra a la empresa. Sin esto, una
+        # postulación que hiciste por tu cuenta —sin que el cazador te avisara—
+        # no aparecía en ningún lado.
+        del_asunto = empresa_del_asunto(respuesta.asunto)
+        crudo = del_asunto or respuesta.empresa
+        clave = _normalizar(aviso.empresa) if aviso else _normalizar(crudo)
+        if not clave or (aviso is None and not del_asunto and _es_intermediario(respuesta.empresa)):
+            # Un `no-reply@ashbyhq.com` que no se pudo atar Y cuyo asunto no
+            # nombra a nadie —"Application Update", "Thank you for your
+            # application!"— no nombra a nadie: agruparlo por "ashbyhq"
+            # juntaría empresas distintas bajo un nombre que no es de ninguna.
+            # Se cuenta aparte, como ya hace `medir()`.
             continue
-        por_empresa.setdefault(clave, []).append((respuesta, cuando, aviso))
+        por_empresa.setdefault(clave, []).append((respuesta, cuando, aviso, crudo))
 
     salida: list[Postulacion] = []
     for clave, entradas in por_empresa.items():
-        fechas = [cuando for _, cuando, _ in entradas]
-        atado = next((a for _, _, a in entradas if a is not None), None)
+        fechas = [cuando for _, cuando, _, _ in entradas]
+        atado = next((a for _, _, a, _ in entradas if a is not None), None)
+        # El nombre tal como lo escribió el ATS —"Sticker Mule", no "sticker
+        # mule"—: la clave está normalizada para agrupar, no para mostrarse.
+        nombre = next((c for _, _, _, c in entradas if c), clave)
         salida.append(
             Postulacion(
-                empresa=atado.empresa if atado else clave,
+                empresa=atado.empresa if atado else nombre,
                 titulo=atado.titulo if atado else "",
                 url=atado.url if atado else "",
-                estado=_mas_avanzado([(c, r.estado) for r, c, _ in entradas]),
+                estado=_mas_avanzado([(c, r.estado) for r, c, _, _ in entradas]),
                 primera=min(fechas),
                 ultima=max(fechas),
                 correos=len(entradas),

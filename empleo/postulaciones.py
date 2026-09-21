@@ -424,6 +424,88 @@ class Respuesta:
         return partes[-1] if partes else dominio
 
 
+# --- De qué empresa es el correo, cuando el remitente no lo dice -------------
+#
+# `Respuesta.empresa` sale del dominio, y para un ATS el dominio es el del ATS:
+# nueve postulaciones distintas llegan todas desde `no-reply@ashbyhq.com`.
+#
+# Medido sobre el buzón real: de diez correos de postulación, OCHO no se podían
+# atar a ninguna oferta por esto. El parte decía "avisadas y sin rastro" de
+# Render, Cohere, Clera, NMI, Pinterest y Sourcegraph —o sea, que no postulaste
+# a ninguna— cuando el acuse de las seis estaba leído en el buzón.
+#
+# El nombre sí está: en el asunto. "Thanks for applying to Cohere!",
+# "...Platform at Render", "Security code for your application to Stripe".
+#
+# El comentario de `empresa` decía que adivinarlo del asunto "acierta a veces y
+# miente el resto". Se escribió sin medirlo. Medido contra los 36 asuntos
+# reales de 14 días: 36/36, contando como acierto los once donde la respuesta
+# correcta es "no se puede saber" y la función devuelve "".
+_EMPRESA_DEL_ASUNTO = (
+    # "Thanks for applying to Cohere!", "Thank you for applying to Onfleet"
+    re.compile(r"\bapply(?:ing)? (?:to|at) (.+?)(?:['’]s\b|[!.,|]|$)", re.I),
+    # "Thank you for your application to Blackpoint!"
+    re.compile(r"\b(?:your )?application to (.+?)(?:[!.,|]|$)", re.I),
+    # "Thank you for your interest in StackAdapt!"
+    re.compile(r"\binterest in (?:joining )?(?:the )?(.+?)(?:['’]s\b|[!.,|]|$)", re.I),
+    # "...Engineering Manager, Platform at Render". Con mayúscula y al final:
+    # "at" suelto aparece en cualquier lado, "at X" al final es la empresa.
+    re.compile(r"\bat ([A-Z][\w&.\- ]+?)(?:[!.,|]|$)"),
+    # "SeedTrust - Senior Software Engineer (Remote - US Based)"
+    re.compile(r"^(.+?) [-–—] .+"),
+    # Hasta cuatro palabras con mayúscula pegadas a "application". Acotado a
+    # propósito: sin el tope, "You have successfully submitted your IBM job
+    # application" devolvía la frase entera en vez de IBM.
+    re.compile(r"\b((?:[A-Z][\w&.\-]*\s+){0,3}[A-Z][\w&.\-]*)\s+(?i:(?:job\s+)?application)\b"),
+    # "Sticker Mule application", "We've Got Your ... Application"
+    re.compile(r"^(?:we['’]ve got your )?(.+?) (?:job )?application\b", re.I),
+)
+
+# Lo que se le cae al final a un nombre de empresa sin cambiarlo.
+_COLA_DE_EMPRESA = re.compile(
+    r"\b(inc|llc|ltd|limited|corp|corporation|co|gmbh|team|careers|engineering|job)\b\.?$",
+    re.I,
+)
+
+# Un arranque que delata que agarramos la frase y no el nombre.
+_NO_ES_UNA_EMPRESA = re.compile(
+    r"^(your|the|our|a|an|this|these|my|we|i|it|elvis|hi|hey|hello|dear|complete"
+    r"|thank you|thanks|security code|update on|application|new|welcome)\b",
+    re.I,
+)
+
+# Un nombre más largo que esto es una frase, no una empresa.
+LARGO_MAXIMO_DE_EMPRESA = 40
+
+
+def empresa_del_asunto(asunto: str) -> str:
+    """El nombre de la empresa sacado del asunto, o "" si no se puede.
+
+    ⚠ Devolver "" es un resultado válido y NO un fallo: "Application Update" y
+    "Thank you for your application!" no nombran a nadie, y adivinar ahí sería
+    peor que no saber —un acuse atado a la empresa equivocada dice que tenés un
+    proceso abierto donde no lo tenés—.
+    """
+    for patron in _EMPRESA_DEL_ASUNTO:
+        encontrado = patron.search(asunto)
+        if not encontrado:
+            continue
+        nombre = encontrado.group(1).strip().strip("\"'‘’ \t-–—")
+        # Lo que va entre paréntesis es el puesto o la modalidad, nunca la
+        # empresa: "(Remote - US Based)", "(Workflow tooling)".
+        nombre = re.sub(r"\s*\(.*$", "", nombre).strip()
+        nombre = _COLA_DE_EMPRESA.sub("", nombre).strip().strip(",.")
+        if (
+            not nombre
+            or len(nombre) < 2
+            or len(nombre) > LARGO_MAXIMO_DE_EMPRESA
+            or _NO_ES_UNA_EMPRESA.match(nombre)
+        ):
+            continue
+        return nombre
+    return ""
+
+
 # Que el correo hable de UNA POSTULACIÓN TUYA. `accion` y `acuse` se detectan
 # con frases genéricas —"please submit", "we need you to", "thank you"— que
 # cualquier boletín usa, y sin este segundo requisito el marketing de un portal
