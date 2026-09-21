@@ -1,0 +1,56 @@
+name: Mirar
+
+# Los comandos de sólo lectura del cazador, corridos a mano desde la pestaña
+# Actions. Existe porque en la Mac no siempre se puede, y porque el entorno
+# donde se escribe este código tiene la red de las fuentes bloqueada: sin esto,
+# la única forma de ver lo que devuelven de verdad es abrir la portátil.
+#
+# ⚠ NO ESCRIBE NADA. Ninguno de estos comandos toma el turno, anota memoria,
+# escribe digest ni manda aviso: se pueden correr con una vuelta del cron en
+# marcha sin pisarla. Eso es lo que hace seguro dejar el botón puesto.
+#
+# ⚠ Y NO REEMPLAZA A RAILWAY. Acá no está el volumen `/datos`, así que no hay
+# digests: `--seguimiento` y `--retraso` los necesitan y por eso no están en la
+# lista. Esos siguen corriéndose allá, que es donde viven los datos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      comando:
+        description: "Qué mirar"
+        required: true
+        default: paises
+        type: choice
+        options:
+          - paises
+          - probar
+          - probar-empresas
+          - correos
+
+permissions:
+  contents: read
+
+jobs:
+  mirar:
+    name: ${{ inputs.comando }}
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+      # `--correos` lee el buzón por IMAP en SOLO LECTURA. Si los secretos no
+      # están puestos en el repositorio, el comando lo dice y sale: no falla, y
+      # tampoco es obligatorio ponerlos para usar los otros tres.
+      GMAIL_USUARIO: ${{ secrets.GMAIL_USUARIO }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Instalar dependencias desde el lock
+        run: uv sync --frozen
+
+      - name: Correr el comando
+        run: uv run python -m empleo.cazador --${{ inputs.comando }}
