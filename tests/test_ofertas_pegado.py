@@ -313,3 +313,78 @@ def test_el_orden_es_de_mejor_a_peor(cliente) -> None:
     datos = _pegar(cliente, UPWORK_PANTALLA)
     puntajes = [o["puntaje"] for o in datos["ofertas"]]
     assert puntajes == sorted(puntajes, reverse=True)
+
+
+# Ofertas con la línea de restricción geográfica —"Only freelancers located in
+# the United States may apply."— que Upwork pone ENTRE la tarifa y la
+# descripción. El pie de cada tarjeta termina en el país.
+CON_RESTRICCION = """Posted yesterday
+•
+Proposals: 50+
+Senior engineer to fix an AI-built SMS agent
+Hourly: $75-$150 - Expert - Est. Time: Less than 1 month
+Only freelancers located in the United States may apply.
+I'm a non-technical founder. My product introduces two families by text message
+and coordinates a first meetup. It runs on TypeScript, Next.js and Postgres.
+Skills
+TypeScript
+Verified 
+Payment verified
+ 
+Rating is 5.0 out of 5.
+ $30K+ spent 
+  United States
+Posted yesterday
+•
+Proposals: 20 to 50
+C#/.NET Developer for Existing App
+Hourly: $85-$110 - Expert - Est. Time: 3 to 6 months
+Only freelancers located in the United States may apply.
+We have an existing internal application that manages service orders, labor and
+billing, and one bug we cannot pin down. Trace the save flow and fix the cause.
+Verified 
+Payment verified
+ 
+Rating is 0 out of 5.
+ $0 spent 
+  United States"""
+
+
+def test_el_pais_no_se_roba_el_titulo(cliente) -> None:
+    """Tres de cada cinco ofertas salían llamándose "United States".
+
+    Dos fallos encadenados, y los dos hay que entenderlos para no reintroducir
+    ninguno:
+
+    1. «$30K+ spent» es `_METADATO` —igual que una línea de tarifa—, así que al
+       subir desde el ancla «Posted …» buscando el principio de la tarjeta, el
+       corte trepaba por encima del pie de la oferta ANTERIOR y se lo llevaba.
+    2. Ya con el pie ajeno adentro, «United States» pasaba `_parece_titulo`: es
+       corto, no termina en punto y no era metadato reconocido.
+
+    El pegado anterior no lo destapó porque sus tarjetas terminaban justo en el
+    país y el corte caía bien por casualidad."""
+    datos = _pegar(cliente, CON_RESTRICCION)
+    titulos = [o["titulo"] for o in datos["ofertas"]]
+    assert titulos == [
+        "Senior engineer to fix an AI-built SMS agent",
+        "C#/.NET Developer for Existing App",
+    ]
+
+
+def test_ninguna_oferta_se_llama_como_un_pais(cliente) -> None:
+    """El caso general del test de arriba: ningún país, ni marca de pie, puede
+    terminar siendo el nombre de una oferta."""
+    datos = _pegar(cliente, CON_RESTRICCION)
+    prohibidos = {"united states", "usa", "canada", "india", "applied", "verified"}
+    for oferta in datos["ofertas"]:
+        assert oferta["titulo"].strip().lower() not in prohibidos
+
+
+def test_la_restriccion_geografica_no_es_el_titulo(cliente) -> None:
+    """ "Only freelancers located in the United States may apply." cae justo
+    donde iría el título y tiene largo de título. Termina en punto, así que
+    `_parece_titulo` ya la rechazaba — este test lo fija, porque si alguien
+    relaja esa regla el síntoma vuelve y es difícil de atribuir."""
+    datos = _pegar(cliente, CON_RESTRICCION)
+    assert not any("Only freelancers" in o["titulo"] for o in datos["ofertas"])

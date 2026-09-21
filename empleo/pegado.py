@@ -201,6 +201,32 @@ _ENCABEZADO_DE_LISTA = re.compile(r"^(skills?|skip skills|more\s?about)\b", re.I
 # título. Se listan porque son de Upwork, no porque sea una regla general.
 _PIE_DEL_CLIENTE = re.compile(r"^(verified|unverified|rating is)\b", re.I)
 
+# El país del cliente, que Upwork pone como ÚLTIMA línea de la tarjeta.
+#
+# ⚠ No es un título aunque lo parezca: es corto, no termina en punto y no es
+# metadato reconocible, así que pasaba todos los filtros de `_parece_titulo` y
+# tres de cada cinco ofertas terminaban llamándose "United States".
+#
+# La lista es de países y abreviaturas, no un patrón genérico: cualquier cosa
+# más amplia —"dos palabras capitalizadas"— se comería títulos reales.
+_PAIS = re.compile(
+    r"^\s*(united states|usa|u\.?s\.?a?\.?|america|canada|canad[aá]|united kingdom|uk"
+    r"|india|spain|espa[nñ]a|pakistan|bangladesh|philippines|ukraine|singapore|australia"
+    r"|germany|france|netherlands|ireland|israel|brazil|mexico|colombia|argentina"
+    r"|united arab emirates|uae|sau|saudi arabia|new zealand|switzerland|sweden|norway"
+    r"|poland|portugal|italy|japan|china|hong kong|south africa|nigeria|kenya|egypt"
+    r"|turkey|t[uü]rkiye|indonesia|vietnam|thailand|malaysia|romania|serbia|greece)\s*$",
+    re.I,
+)
+
+# Marcas sueltas que Upwork deja al final de la tarjeta y que tampoco son título.
+_COLA_DE_TARJETA = re.compile(r"^\s*(applied|earn up to \d+ connects?|featured)\s*$", re.I)
+
+# "$30K+ spent" como renglón entero: es el pie del cliente, no la tarifa del
+# puesto. `_METADATO` lo reconoce igual que "Hourly: $75-$150", y esa confusión
+# es la que dejaba subir el corte por encima del pie.
+_GASTADO_LINEA = re.compile(r"^\s*\$[\d.,]+\s*[km]?\+?\s*spent\s*$", re.I)
+
 
 def _parece_titulo(linea: str) -> bool:
     """Si la línea puede ser el título de una oferta y no un dato de la tarjeta."""
@@ -216,6 +242,8 @@ def _parece_titulo(linea: str) -> bool:
         and not _POSTED.match(linea)
         and not _ENCABEZADO_DE_LISTA.match(linea)
         and not _PIE_DEL_CLIENTE.match(linea)
+        and not _PAIS.match(linea)
+        and not _COLA_DE_TARJETA.match(linea)
         and not _FIN_DE_TARJETA.search(linea)
         # ⚠ Que la línea NOMBRE plata no la descalifica; que EMPIECE por plata,
         # sí. Los títulos de Upwork llevan el presupuesto adentro más seguido de
@@ -319,6 +347,16 @@ def _por_posted(texto: str) -> list[str]:
         i = ancla
         while i > piso:
             previa = lineas[i - 1].strip()
+            # ⚠ El pie de la tarjeta ANTERIOR frena el ascenso, y hay que
+            # nombrarlo explícitamente: "$30K+ spent" es `_METADATO` —igual que
+            # una línea de tarifa— así que sin este corte se sube por encima de
+            # él y se arrastra el pie ajeno al bloque nuevo. El título de esta
+            # oferta queda entonces detrás de "United States", que era la última
+            # línea de la de arriba, y la oferta pasa a llamarse así.
+            if _PAIS.match(previa) or _PIE_DEL_CLIENTE.match(previa):
+                break
+            if _COLA_DE_TARJETA.match(previa) or _GASTADO_LINEA.match(previa):
+                break
             if not previa or not (_parece_titulo(previa) or _METADATO.match(previa)):
                 break
             i -= 1
