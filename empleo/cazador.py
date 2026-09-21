@@ -591,9 +591,14 @@ async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
     """De qué países son las ofertas que traen las fuentes, y cuántas pasan.
 
     Existe para poder elegir el peso de `estados_unidos` y `canada` con un
-    número en la mano y no a ojo. El TOML les da 15 razonando que casi todos los
-    puestos de las `[[empresas]]` están en EE.UU. y que 25 —el mínimo— dejaría
-    de filtrar; esto dice si ese razonamiento se corresponde con lo que llega.
+    número en la mano y no a ojo, y la primera corrida ya corrigió el
+    razonamiento con el que se eligió: medido el 21/09/2026 sobre 4.077 ofertas
+    reales, **el 66,4% no trae ubicación ninguna**. No es que casi todas sean de
+    EE.UU. —son el 29,7%—: es que de dos de cada tres no sabemos nada.
+
+    Por eso el desglose de abajo va POR FUENTE. Una fuente que no manda la
+    ubicación deja ciego al país para todo lo que trae, y eso se arregla en el
+    adaptador; el peso del país no puede compensarlo.
 
     No escribe nada ni avisa: se puede correr mientras una vuelta está en curso.
     """
@@ -616,6 +621,22 @@ async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
             f"  {pais:18} {len(puntajes):>5} ({cuota:4.1f}%) · "
             f"{sobre} sobre {criterio.puntaje_minimo} · mediana {mediana}"
         )
+    # De dónde sale la ceguera. Con dos tercios de las ofertas sin ubicación, la
+    # pregunta que importa no es cuánto vale el país sino QUÉ FUENTE no lo
+    # manda: si es una sola y su API sí lo trae, arreglar el adaptador vale más
+    # que cualquier peso.
+    sin_lugar: dict[str, int] = {}
+    total_fuente: dict[str, int] = {}
+    for oferta in ofertas:
+        total_fuente[oferta.fuente] = total_fuente.get(oferta.fuente, 0) + 1
+        if not oferta.ubicacion.strip():
+            sin_lugar[oferta.fuente] = sin_lugar.get(oferta.fuente, 0) + 1
+    if sin_lugar:
+        lineas += ["", "Sin ubicación, por fuente:"]
+        for fuente, cuantas in sorted(sin_lugar.items(), key=lambda par: -par[1]):
+            de = total_fuente[fuente]
+            lineas.append(f"  {fuente:14} {cuantas:>5} de {de:>5} ({100 * cuantas / de:4.1f}%)")
+
     # Lo que contesta la pregunta de verdad: si el peso del país está admitiendo
     # ofertas que sin él no pasarían, o sólo ordenando las que ya pasaban.
     sin_pais = replace(
