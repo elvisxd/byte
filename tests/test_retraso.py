@@ -644,3 +644,25 @@ def test_sin_buzon_el_parte_lo_dice_en_vez_de_mostrar_cero() -> None:
     texto = parte([], medicion)
 
     assert "faltan GMAIL_USUARIO" in texto
+
+
+def test_un_rechazo_automatico_no_queda_como_esperando_respuesta() -> None:
+    """El ATS emite el acuse y el «no seguimos» en el MISMO SEGUNDO, que es
+    como manda un rechazo automático. Rompiendo el empate con el orden en que
+    se muestran los estados ganaba el acuse, y la postulación quedaba en
+    «esperando respuesta» para siempre: una empresa a la que volvés a escribir.
+    """
+    avisos = [_aviso("Cohere", 24 * 10)]
+    mismo_instante = _hace(2)
+    respuestas = [
+        _respuesta("no-reply@cohere.com", mismo_instante, "acuse"),
+        _respuesta("no-reply@cohere.com", mismo_instante, "rechazo"),
+    ]
+    # La fecha del correo va al segundo: los dos caen en el mismo instante,
+    # que es lo que hace del empate un caso real y no uno inventado.
+    assert len({r.fecha for r in respuestas}) == 1
+
+    seguidas = seguir(avisos, respuestas)
+
+    assert len(seguidas) == 1
+    assert seguidas[0].estado == "rechazo"
