@@ -2183,3 +2183,165 @@ def test_a_una_oferta_vieja_e_inservible_la_frescura_le_sigue_restando() -> None
     )
 
     assert puntuar(vieja, CRITERIO).total == -10
+# --- Una fuente caída no puede contarse como cero ---
+
+
+def test_una_fuente_que_no_contesta_llega_como_error_y_no_como_cero() -> None:
+    """El agujero que dejaba «cada adaptador atrapa sus propios errores y
+    devuelve lista vacía»: eso es lo correcto —una fuente caída no puede dejarte
+    sin el aviso de hoy— pero el pie contaba ese `[]` como CERO, y cero es lo
+    mismo que dice un día tranquilo.
+
+    Medido el 21/09/2026 con la red cortada: el pie decía «remoteok: 0 ·
+    remotive: 0 · getonbrd: 0 · hackernews: 0» con las cuatro caídas.
+    """
+
+    async def sin_red(cliente: httpx.AsyncClient) -> list[Oferta]:
+        # Por el mismo camino que la caída real: el adaptador atrapa y devuelve [].
+        await fuentes._traer(cliente, "https://no-existe.invalido/api")
+        return []
+
+    criterio = Criterio(fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"remoteok": True})
+    original = fuentes.remoteok
+    fuentes.remoteok = sin_red
+    try:
+        _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+    finally:
+        fuentes.remoteok = original
+
+    assert conteo["remoteok"] == -1
+    assert "remoteok: error" in cazador._pie_fuentes(conteo)
+
+
+def test_una_fuente_que_de_verdad_no_trajo_nada_sigue_siendo_cero() -> None:
+    """El otro lado de lo mismo, y es el que hay que no romper: un día sin
+    ofertas nuevas es un día sin ofertas nuevas, no una fuente rota. Marcar las
+    dos cosas como error volvería el pie ruido y nadie lo miraría más."""
+
+    async def tranquila(_cliente: httpx.AsyncClient) -> list[Oferta]:
+        return []
+
+    criterio = Criterio(fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"remoteok": True})
+    original = fuentes.remoteok
+    fuentes.remoteok = tranquila
+    try:
+        _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+    finally:
+        fuentes.remoteok = original
+
+    assert conteo["remoteok"] == 0
+    assert "remoteok: 0" in cazador._pie_fuentes(conteo)
+
+
+def test_una_fuente_que_trajo_algo_no_es_un_error_aunque_algo_le_fallara() -> None:
+    """Get on Board hace una consulta por término de `[stack] fuerte`: que dos
+    de diez no contesten no te dejó sin ver. El número informa, el detalle queda
+    en el log, y marcarla en rojo enseñaría a ignorar el rojo."""
+
+    async def a_medias(cliente: httpx.AsyncClient) -> list[Oferta]:
+        await fuentes._traer(cliente, "https://no-existe.invalido/api")
+        return [_oferta(fuente="remoteok")]
+
+    criterio = Criterio(fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"remoteok": True})
+    original = fuentes.remoteok
+    fuentes.remoteok = a_medias
+    try:
+        _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+    finally:
+        fuentes.remoteok = original
+
+    assert conteo["remoteok"] == 1
+
+
+def test_cada_fuente_cuenta_sus_propios_fallos_aunque_corran_a_la_vez() -> None:
+    """El registro es un `ContextVar` que se abre dentro de la tarea de cada
+    fuente. Si se abriera una sola afuera, la caída de RemoteOK marcaría en rojo
+    a Remotive —que contestó bien— por correr en la misma vuelta."""
+
+    async def rota(cliente: httpx.AsyncClient) -> list[Oferta]:
+        await fuentes._traer(cliente, "https://no-existe.invalido/api")
+        return []
+
+    async def sana(_cliente: httpx.AsyncClient) -> list[Oferta]:
+        return []
+
+    criterio = Criterio(
+        fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"remoteok": True, "remotive": True}
+    )
+    original = (fuentes.remoteok, fuentes.remotive)
+    fuentes.remoteok, fuentes.remotive = rota, sana
+    try:
+        _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+    finally:
+        fuentes.remoteok, fuentes.remotive = original
+
+    assert conteo["remoteok"] == -1
+    assert conteo["remotive"] == 0
+
+
+def test_sin_la_clave_de_gmail_el_pie_lo_dice_en_vez_de_marcar_cero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La contraseña de aplicación de Gmail vence sin avisar, y el síntoma era
+    «linkedin: 0 · jobbank: 0» durante los días que tardaras en sospechar. Son
+    las dos fuentes donde el cazador no tiene ninguna otra forma de notarlo."""
+    monkeypatch.delenv("GMAIL_USUARIO", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    criterio = Criterio(
+        fuentes=dict.fromkeys(_TODAS_LAS_FUENTES, False) | {"linkedin": True, "jobbank": True}
+    )
+
+    _, conteo = asyncio.run(cazador.recolectar(criterio, "python"))
+
+    assert conteo["linkedin"] == -1
+    assert conteo["jobbank"] == -1
+
+
+def test_el_buzon_de_postulaciones_entra_al_pie_como_una_fuente_mas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Era el único camino del cazador que no aparecía en el pie. Con la
+    contraseña vencida no llegaba ningún pendiente Y el pie se veía igual de
+    sano que siempre: la señal de que el buzón dejó de leerse era ninguna. Y es
+    la fuente donde más cuesta —una entrevista que no avisa no se nota hasta
+    que ya pasó la fecha—."""
+    monkeypatch.setenv("GMAIL_USUARIO", "yo@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+    monkeypatch.setattr(fuentes, "respuestas_por_imap", lambda *_a, **_k: [])
+    criterio = Criterio(fuentes={"postulaciones": True})
+    conteo: dict[str, int] = {}
+
+    asyncio.run(cazador._pendientes(criterio, tmp_path, conteo))
+
+    assert conteo["postulaciones"] == 0
+
+    monkeypatch.delenv("GMAIL_APP_PASSWORD")
+    conteo = {}
+    asyncio.run(cazador._pendientes(criterio, tmp_path, conteo))
+
+    assert conteo["postulaciones"] == -1
+    assert "postulaciones: error" in cazador._pie_fuentes(conteo)
+
+
+def test_los_correos_del_buzon_no_se_cuentan_como_ofertas_revisadas() -> None:
+    """Veinte acuses de recibo en la bandeja alcanzaban para que `revisadas`
+    diera veinte con las fuentes de ofertas caídas, y entonces la alerta de
+    «ninguna fuente devolvió nada, algo se rompió» —la que avisa que el cazador
+    está ciego— no salía. Son respuestas a lo que ya postulaste, no candidatas.
+    """
+    conteo = {"remoteok": -1, "remotive": -1, "postulaciones": 20}
+
+    texto = cazador.texto_para_telegram([], CRITERIO, conteo, horas_de_silencio=0.0)
+
+    assert "algo se rompió" in texto
+
+
+def test_el_buzon_solo_no_dispara_la_alerta_de_cazador_ciego() -> None:
+    """Y el otro lado: con TODAS las fuentes de ofertas apagadas en el TOML, que
+    el conteo tenga sólo el buzón no significa que nada respondió. Apagar una
+    fuente es una decisión tuya; que no conteste, no."""
+    conteo = {"postulaciones": 0}
+
+    texto = cazador.texto_para_telegram([], CRITERIO, conteo, horas_de_silencio=0.0)
+
+    assert "algo se rompió" not in texto
