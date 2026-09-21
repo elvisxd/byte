@@ -2183,6 +2183,8 @@ def test_a_una_oferta_vieja_e_inservible_la_frescura_le_sigue_restando() -> None
     )
 
     assert puntuar(vieja, CRITERIO).total == -10
+
+
 # --- Una fuente caída no puede contarse como cero ---
 
 
@@ -2345,3 +2347,32 @@ def test_el_buzon_solo_no_dispara_la_alerta_de_cazador_ciego() -> None:
     texto = cazador.texto_para_telegram([], CRITERIO, conteo, horas_de_silencio=0.0)
 
     assert "algo se rompió" not in texto
+
+
+def test_el_pie_cuenta_respuestas_de_postulaciones_y_no_la_bandeja_entera(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Defecto que ninguno de los dos PR podía ver solo: uno hizo que el buzón
+    entrara al pie, el otro que el lector devolviera TODOS los correos en vez
+    de sólo las respuestas. Juntos, el pie decía «postulaciones: 30» al lado de
+    «remoteok: 12» con cuatro acuses, veinte alertas de LinkedIn y seis
+    facturas. Leído en el teléfono, treinta respuestas que no existen.
+    """
+    from empleo.postulaciones import Respuesta
+
+    buzon = (
+        [Respuesta(f"<a{n}@x>", f"n@e{n}.com", "Thanks", "", "acuse", ()) for n in range(4)]
+        + [
+            Respuesta(f"<b{n}@x>", "jobalerts@linkedin.com", "Alert", "", "alerta", ())
+            for n in range(20)
+        ]
+        + [Respuesta(f"<c{n}@x>", "billing@do.com", "Invoice", "", "otro", ()) for n in range(6)]
+    )
+    monkeypatch.setenv("GMAIL_USUARIO", "yo@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+    monkeypatch.setattr(fuentes, "respuestas_por_imap", lambda *_a, **_k: buzon)
+    conteo: dict[str, int] = {}
+
+    asyncio.run(cazador._pendientes(Criterio(fuentes={"postulaciones": True}), tmp_path, conteo))
+
+    assert conteo["postulaciones"] == 4
