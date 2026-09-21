@@ -55,8 +55,14 @@ SENALES: dict[str, re.Pattern[str]] = {
         r"|uruguay|ecuador|costa rica)\b"
     ),
     "remoto_global": re.compile(
+        # "Remote only, Everywhere" lo escribe Wellfound como CAMPO, no como
+        # prosa: es su forma de decir "remoto sin restricción de país", que es
+        # exactamente lo que mide esta señal. Se agregó al leer su primer
+        # digest de verdad — la oferta traía la mejor noticia posible y salía
+        # con cero señales.
         r"\b(anywhere in the world|work from anywhere|worldwide|globally distributed"
-        r"|fully distributed|any time ?zone|100% remote, anywhere)\b"
+        r"|fully distributed|any time ?zone|100% remote, anywhere"
+        r"|remote only, everywhere)\b"
     ),
     # Reubicación. El patrón viejo pedía casi la frase exacta y se perdía la
     # mitad de las formas reales de decirlo: "we offer relocation", "includes

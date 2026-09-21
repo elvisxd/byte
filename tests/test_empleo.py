@@ -46,6 +46,7 @@ _TODAS_LAS_FUENTES = (
     "workday",
     "linkedin",
     "jobbank",
+    "wellfound",
     "upwork",
 )
 
@@ -2376,3 +2377,129 @@ def test_el_pie_cuenta_respuestas_de_postulaciones_y_no_la_bandeja_entera(
     asyncio.run(cazador._pendientes(Criterio(fuentes={"postulaciones": True}), tmp_path, conteo))
 
     assert conteo["postulaciones"] == 4
+
+
+# --- Wellfound ---
+
+_DIGEST_WELLFOUND = """<https://angel.co>
+
+Hi! I've found 3 new jobs that might interest you!
+
+ Ready to Interview Open to offers Closed to Offers
+
+Full Stack Engineer (Clone)
+
+Nuel / 1-10 Employees
+
+ $30–50k | Remote only, Everywhere | 5 years of exp | Contract
+
+Actively Hiring Growing fast
+
+Our Take
+
+Nuel is a San Mateo-based startup developing AI-driven supply chain management
+software using Python and React.
+
+Learn More
+<https://wellfound.com/jobs?job_listing_slug=4670364-full-stack-engineer-clone>
+
+Full Stack Engineer
+
+Turnberry Solutions / Employees
+
+ $90–130k | In office, Des Moines | 4 years of exp | Contract
+
+Actively Hiring
+
+Our Take
+
+Turnberry Solutions seeks a Full Stack Engineer focusing on scalable API and
+data pipeline development using Node.js, Python, and AWS.
+
+Learn More
+<https://wellfound.com/jobs?job_listing_slug=4681548-full-stack-engineer>
+
+Junior Full Stack Engineer
+
+Cortrucent Technologies / 11-50 Employees
+
+ $60–80k | In office, Berlin | 1 years of exp | Contract
+
+Actively Hiring
+
+Our Take
+
+Cortrucent is hiring a Junior Full Stack Engineer to develop HIPAA-compliant
+healthcare platforms using Python and JavaScript.
+
+Learn More
+<https://wellfound.com/jobs?job_listing_slug=4667035-junior-full-stack-engineer>
+
+You're receiving this notification because you're looking for jobs on Wellfound
+
+ Click here to unsubscribe
+<https://links.wellfound.com/s/u/4BGK9yuRbmiwerhh/24>
+"""
+
+
+def test_el_digest_de_wellfound_se_lee_entero() -> None:
+    """Sale del primer digest real del buzón. Cada oferta trae título,
+    empresa, salario, modalidad, lugar y años pedidos, cada uno en su lugar
+    fijo — y el enlace llega limpio, sin redirector de seguimiento."""
+    ofertas = fuentes.ofertas_de_alerta_wellfound(
+        _DIGEST_WELLFOUND, "Mon, 08 Sep 2026 02:44:19 +0000"
+    )
+
+    assert len(ofertas) == 3
+    primera = ofertas[0]
+    assert primera.titulo == "Full Stack Engineer (Clone)"
+    assert primera.empresa == "Nuel"
+    assert primera.ubicacion == "Remote only, Everywhere"
+    assert primera.salario == "$30–50k"
+    assert (
+        primera.url
+        == "https://wellfound.com/jobs?job_listing_slug=4670364-full-stack-engineer-clone"
+    )
+    assert primera.id_externo == "4670364-full-stack-engineer-clone"
+
+
+def test_el_saludo_y_el_pie_no_entran_como_ofertas() -> None:
+    """El correo abre con «I've found 3 new jobs» y cierra con el enlace de
+    baja. Leyendo hacia adelante, los dos se colaban como título de la primera
+    y de la última: por eso cada bloque se lee HACIA ATRÁS desde «Our Take»."""
+    ofertas = fuentes.ofertas_de_alerta_wellfound(_DIGEST_WELLFOUND, "")
+
+    titulos = [o.titulo for o in ofertas]
+    assert not any("found" in t or "unsubscribe" in t.lower() for t in titulos)
+    assert all("wellfound.com/jobs" in o.url for o in ofertas)
+
+
+def test_la_modalidad_de_wellfound_enciende_las_senales_que_ya_existen() -> None:
+    """«In office» y «Remote only» son CAMPOS del correo, no prosa. Entran a la
+    ubicación a propósito: es donde ya miran `presencial` y `remoto_global`, así
+    que no hizo falta inventar ninguna señal nueva.
+
+    Medido contra el digest real: de tres ofertas, dos presenciales y una
+    junior se hunden y queda arriba la única remota.
+    """
+    ofertas = fuentes.ofertas_de_alerta_wellfound(_DIGEST_WELLFOUND, "")
+    por_titulo = {o.titulo: puntuar(o, CRITERIO) for o in ofertas}
+
+    assert "remoto_global" in por_titulo["Full Stack Engineer (Clone)"].senales
+    assert "presencial" in por_titulo["Full Stack Engineer"].senales
+    assert "junior" in por_titulo["Junior Full Stack Engineer"].senales
+    assert por_titulo["Full Stack Engineer"].total < 0
+    assert por_titulo["Junior Full Stack Engineer"].total < 0
+
+
+def test_una_oferta_sin_salario_no_pierde_el_lugar() -> None:
+    """Wellfound deja el salario vacío cuando la empresa no lo publicó, y
+    entonces la línea empieza con `|`. Partiendo por posición eso corre todos
+    los campos uno a la izquierda y el lugar pasaría a ser los años."""
+    cuerpo = _DIGEST_WELLFOUND.replace(" $90–130k | In office, Des Moines", " | In office, Chicago")
+
+    ofertas = fuentes.ofertas_de_alerta_wellfound(cuerpo, "")
+
+    sin_sueldo = next(o for o in ofertas if o.empresa == "Turnberry Solutions")
+    assert sin_sueldo.ubicacion == "In office, Chicago"
+    assert sin_sueldo.salario == ""

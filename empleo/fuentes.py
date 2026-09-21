@@ -891,6 +891,159 @@ def _ofertas_jobbank_del_correo(crudo: bytes) -> list[Oferta]:
     return ofertas_de_alerta_jobbank(cuerpo, fecha) if cuerpo else []
 
 
+# --- Wellfound (ex AngelList) -----------------------------------------------
+
+REMITENTE_WELLFOUND = "team@hi.wellfound.com"
+# Manda un digest cada varios días, con entre dos y diez ofertas. Quince cubre
+# de sobra la ventana que se mira.
+TOPE_CORREOS_WELLFOUND = 15
+
+# El enlace de cada oferta, que es también el separador entre una y la
+# siguiente. Es el ancla de todo el parseo: es lo único del correo que no
+# cambia de forma según los campos que la empresa haya completado.
+#
+# Y llega LIMPIO, sin redirector ni parámetros de seguimiento —al revés que
+# Lensa, donde cada enlace pasa por `email.mg3.lensa.com/c/<base64>` y no hay
+# forma de saber a dónde lleva sin pedírselo a su rastreador—.
+_ENLACE_WELLFOUND = re.compile(r"<(https://wellfound\.com/jobs\?job_listing_slug=([\w-]+))>")
+
+# "Turnberry Solutions / Employees", "Nuel / 1-10 Employees". El tamaño puede
+# venir vacío, y por eso no se exige.
+_EMPRESA_WELLFOUND = re.compile(r"^(.+?)\s*/\s*[\w\s-]*Employees$")
+
+# Lo que Wellfound llama su resumen. Marca dónde empieza la descripción.
+_RESUMEN_WELLFOUND = "Our Take"
+
+
+def ofertas_de_alerta_wellfound(cuerpo: str, fecha: str) -> list[Oferta]:
+    """Las ofertas de un digest de Wellfound, leídas del texto plano.
+
+    El correo viene con una estructura fija por oferta —título, empresa,
+    una línea de datos, las etiquetas, "Our Take" y la descripción— y termina
+    en el enlace. Se parte por el enlace y cada trozo se lee HACIA ATRÁS desde
+    "Our Take": es la única forma de que el saludo del principio y el pie del
+    final no se cuelen como si fueran el título de la primera y la última.
+
+    Es el único de los tres portales nuevos que se puede leer sin tocar HTML,
+    y el único que manda la modalidad —"In office" o "Remote only"— como dato
+    y no como prosa. Esa palabra es la que encienden las señales `presencial` y
+    `remoto_global` sin que haya que inventar nada.
+    """
+    salida: list[Oferta] = []
+    desde = 0
+    for enlace in _ENLACE_WELLFOUND.finditer(cuerpo):
+        trozo = cuerpo[desde : enlace.start()]
+        desde = enlace.end()
+        oferta = _una_oferta_wellfound(trozo, enlace.group(1), enlace.group(2), fecha)
+        if oferta is not None:
+            salida.append(oferta)
+    return salida
+
+
+def _una_oferta_wellfound(trozo: str, url: str, slug: str, fecha: str) -> Oferta | None:
+    """Un bloque del digest, leído de atrás para adelante."""
+    lineas = [x.strip() for x in trozo.splitlines()]
+    try:
+        corte = len(lineas) - 1 - lineas[::-1].index(_RESUMEN_WELLFOUND)
+    except ValueError:
+        # Sin "Our Take" no es un bloque de oferta: es el pie del correo, o el
+        # saludo. Se descarta en silencio y a propósito.
+        return None
+
+    # Hacia atrás desde "Our Take": la línea de la empresa es la referencia,
+    # porque es la única con forma reconocible. El título es la anterior.
+    empresa = ""
+    titulo = ""
+    datos = ""
+    for i in range(corte - 1, -1, -1):
+        acierto = _EMPRESA_WELLFOUND.match(lineas[i])
+        if not acierto:
+            continue
+        empresa = acierto.group(1)
+        anteriores = [x for x in lineas[:i] if x]
+        titulo = anteriores[-1] if anteriores else ""
+        # La línea de datos va justo después de la empresa, y es la que trae
+        # los `|`: salario, modalidad y lugar, experiencia y tipo de contrato.
+        datos = next((x for x in lineas[i + 1 : corte] if "|" in x), "")
+        break
+    if not titulo:
+        return None
+
+    partes = [x.strip() for x in datos.split("|")] if datos else []
+    salario = partes[0] if partes else ""
+    # "In office, Des Moines", "Remote only, Everywhere". La modalidad entra a
+    # la ubicación a propósito: es donde ya miran `presencial` y `remoto_global`.
+    lugar = partes[1] if len(partes) > 1 else ""
+    # La experiencia pedida va con las etiquetas y no con el título: "1 years of
+    # exp" es lo que enciende la señal `junior` sin tocar ningún patrón.
+    experiencia = partes[2] if len(partes) > 2 else ""
+    contrato = partes[3] if len(partes) > 3 else ""
+
+    descripcion = "\n".join(x for x in lineas[corte + 1 :] if x)
+    return Oferta(
+        fuente="wellfound",
+        id_externo=slug,
+        titulo=titulo[:300],
+        empresa=empresa[:200],
+        url=url[:600],
+        descripcion=_texto(f"{descripcion}\n{experiencia} · {contrato}".strip(), 20_000),
+        ubicacion=lugar[:200],
+        publicada=fecha,
+        salario=salario[:200],
+    )
+
+
+def _ofertas_wellfound_del_correo(crudo: bytes) -> list[Oferta]:
+    """Saca el texto plano de un correo de Wellfound y lo pasa al parser."""
+    mensaje = email.message_from_bytes(crudo)
+    fecha = _texto(mensaje.get("Date"), 60)
+    cuerpo = _cuerpo_de(mensaje, "text/plain")
+    return ofertas_de_alerta_wellfound(cuerpo, fecha) if cuerpo else []
+
+
+def wellfound_por_imap(usuario: str, clave: str, dias: int = 5) -> list[Oferta]:
+    """Los digests de Wellfound de los últimos `dias`, leídos del buzón.
+
+    Mismo camino, misma contraseña de aplicación y el mismo **solo lectura**
+    que LinkedIn y Job Bank: no marca, no mueve, no borra.
+
+    La ventana es más ancha que la de las otras dos —cinco días contra tres—
+    porque Wellfound no manda todos los días: manda cuando junta ofertas.
+
+    Nunca lanza: sin credenciales o con Gmail caído, la vuelta sigue.
+    """
+    if not usuario or not clave:
+        logger.info("wellfound_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        _anotar_fallo("sin_credenciales")
+        return []
+
+    desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
+    try:
+        with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
+            buzon.login(usuario, clave)
+            buzon.select("INBOX", readonly=True)
+            estado, respuesta = buzon.search(
+                None, f'(FROM "{REMITENTE_WELLFOUND}" SINCE "{desde}")'
+            )
+            if estado != "OK" or not respuesta or not respuesta[0]:
+                return []
+            identificadores = respuesta[0].split()[-TOPE_CORREOS_WELLFOUND:]
+
+            ofertas: dict[str, Oferta] = {}
+            for identificador in identificadores:
+                estado, datos = buzon.fetch(identificador, "(RFC822)")
+                if estado != "OK" or not datos or not isinstance(datos[0], tuple):
+                    continue
+                for oferta in _ofertas_wellfound_del_correo(datos[0][1]):
+                    # La misma oferta vuelve en el digest siguiente: es una sola.
+                    ofertas.setdefault(oferta.id_externo, oferta)
+            return list(ofertas.values())
+    except (OSError, imaplib.IMAP4.error) as exc:
+        logger.warning("wellfound_imap_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
+        return []
+
+
 # --- Empresas, por su propio sistema de postulación ---
 
 # Las tres plataformas que usan casi todas las empresas de software para su

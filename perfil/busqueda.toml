@@ -213,6 +213,33 @@ linkedin = true
 # con el filtro de candidatos internacionales—, y el criterio de qué se busca
 # se define allá, no en este archivo.
 jobbank = true
+# Wellfound (ex AngelList), leyendo sus digests del correo. Mismo camino, misma
+# contraseña de aplicación y el mismo solo lectura que `linkedin` y `jobbank`.
+#
+# ENCENDIDA desde 2026-09-21. Se eligió entre los tres portales nuevos que
+# aparecieron en el buzón porque es el único que se puede leer SIN tocar HTML:
+# su texto plano trae título, empresa, salario, modalidad, lugar, años pedidos
+# y un resumen, cada uno en su lugar fijo. Y sus enlaces llegan limpios, sin
+# redirector de seguimiento.
+#
+# Lo que trae son startups, sobre todo por contrato. Medido contra el primer
+# digest real: de tres ofertas, dos eran presenciales y una junior, y el
+# criterio las hundió a -96, -93 y dejó arriba la única remota. Es una fuente
+# de volumen bajo y señal desigual: el filtro hace el trabajo.
+#
+# Los otros dos que llegan al buzón y NO se leen, con su razón:
+#
+# - Jobright.ai manda varias alertas por día con datos ricos —porcentaje de
+#   coincidencia, salario, lugar, etapa de la empresa— pero SÓLO en HTML: su
+#   texto plano tiene los enlaces y nada más. Necesita un parser de HTML como
+#   el de Job Bank. Vale la pena y es lo siguiente.
+# - Lensa queda afuera a propósito. Cada enlace pasa por un redirector
+#   (`email.mg3.lensa.com/c/<base64>`), así que no se sabe a dónde lleva sin
+#   pedírselo a su rastreador; los sueldos que muestra son estimaciones suyas
+#   y no de la empresa; y el mismo correo trae una sección de "GIG JOBS" con
+#   "Online Survey Participant" y "Data Entry Clerk - Part Time Panelists",
+#   que es el perfil exacto de la estafa de empleo que describe la FTC.
+wellfound = true
 # Respuestas a tus postulaciones, leídas de tu propio buzón por IMAP —el mismo
 # camino y la misma contraseña de aplicación que `linkedin`, y también en solo
 # lectura: no marca, no mueve, no borra—.
