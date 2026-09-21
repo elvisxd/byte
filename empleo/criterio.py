@@ -196,6 +196,115 @@ SENALES: dict[str, re.Pattern[str]] = {
 }
 
 
+# --- En qué país está el puesto ---------------------------------------------
+#
+# Se mira `oferta.ubicacion` y NADA MÁS, y ésa es la decisión importante de todo
+# este bloque. Buscar el país en el texto entero es el error que ya costó caro
+# una vez: «some of our engineers are based in India and Spain» lo escribe una
+# empresa de EE.UU. contratando afuera —o sea lo contrario de lo que parece— y
+# «we serve customers across Canada» no vuelve canadiense a un puesto de Berlín.
+# El campo de ubicación es el único lugar donde el país es un dato y no prosa.
+#
+# Sin ubicación no se adivina: el puesto queda sin país y no suma ni resta, por
+# la misma razón por la que una oferta sin fecha no se castiga. Que un feed no
+# mande el campo no es información sobre la oferta.
+
+# Los códigos de dos letras se buscan EN MAYÚSCULAS y detrás de una coma:
+# "Toronto, ON" es una provincia y "hands on" no. Sin esas dos condiciones, ON,
+# IN, OR, OK, ME, DE, HI, LA, MS, PA y CO son palabras inglesas comunes.
+_PROVINCIAS_CA = "ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU"
+_ESTADOS_US = (
+    "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO"
+    "|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC"
+)
+
+# El nombre del PAÍS. "USA", "US" y "U.S." van en mayúsculas a propósito: en
+# minúsculas "us" es el pronombre —"join us", "work with us"— y hay feeds que
+# meten media frase en el campo de ubicación.
+_PAIS_CANADA = (re.compile(r"\bcanad[aá]\b", re.I),)
+# El nombre largo no distingue mayúsculas; la sigla SÍ, y por eso van separados:
+# "united states" escrito como sea es el país, pero "us" en minúscula es el
+# pronombre y "Remote US" es el país.
+_PAIS_EEUU = (re.compile(r"\bunited states\b", re.I), re.compile(r"\bU\.?S\.?A?\b"))
+
+# La provincia o el estado. Son pistas más débiles que el nombre del país, y por
+# eso se resuelven aparte: ver `pais_de`.
+_PROVINCIA = re.compile(
+    r"\b(ontario|quebec|qu[eé]bec|british columbia|alberta|manitoba|saskatchewan"
+    r"|nova scotia|new brunswick|newfoundland|prince edward island"
+    r"|yukon|northwest territories|nunavut)\b",
+    re.I,
+)
+_PROVINCIA_CODIGO = re.compile(rf",\s*({_PROVINCIAS_CA})\b")
+_ESTADO = re.compile(
+    r"\b(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware"
+    r"|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana"
+    r"|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana"
+    r"|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina"
+    r"|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina"
+    r"|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia"
+    r"|wisconsin|wyoming|district of columbia)\b",
+    re.I,
+)
+_ESTADO_CODIGO = re.compile(rf",\s*({_ESTADOS_US})\b")
+
+NORTEAMERICA = ("estados_unidos", "canada")
+
+
+def _primera(texto: str, patrones: tuple[re.Pattern[str], ...]) -> int:
+    """Dónde empieza el PRIMER acierto de cualquiera de los patrones, o -1."""
+    posiciones = [m.start() for p in patrones if (m := p.search(texto))]
+    return min(posiciones) if posiciones else -1
+
+
+def _ultima(texto: str, patrones: tuple[re.Pattern[str], ...]) -> int:
+    """Dónde empieza el ÚLTIMO acierto de cualquiera de los patrones, o -1."""
+    posiciones = [m.start() for p in patrones for m in p.finditer(texto)]
+    return max(posiciones) if posiciones else -1
+
+
+def pais_de(oferta: Oferta) -> str:
+    """`"estados_unidos"`, `"canada"` o `""` si la ubicación no lo dice.
+
+    Se resuelve en dos pasos porque los dos países comparten nombres de
+    subdivisión y eso produce errores en las dos direcciones:
+
+    1. **El nombre del país gana.** "Toronto, ON, Canada" es Canadá aunque ON
+       aparezca antes.
+    2. **Si no hay país, gana la subdivisión que se nombra ÚLTIMA.** Las
+       direcciones van de lo chico a lo grande —ciudad, estado, país— así que
+       la última es la más amplia. Sin esta regla, "Ontario, California" —una
+       ciudad real de EE.UU.— se leía como Canadá.
+
+    ⚠ Queda un caso que se decide a favor de EE.UU. y no se puede resolver con
+    la ubicación sola: "Georgia" es un estado y también un país. Un puesto en
+    Tbilisi va a contarse como estadounidense. Se acepta a ojos abiertos: el
+    estado aparece en los feeds cientos de veces más que el país, y el error
+    cuesta un puesto mal etiquetado, no uno perdido.
+    """
+    lugar = oferta.ubicacion.strip()
+    if not lugar:
+        return ""
+
+    # El nombre del país gana, y entre dos nombres gana el que aparece primero:
+    # "Remote — Canada / United States" es una oferta que sirve por los dos lados.
+    pais_ca = _primera(lugar, _PAIS_CANADA)
+    pais_us = _primera(lugar, _PAIS_EEUU)
+    if pais_ca >= 0 or pais_us >= 0:
+        if pais_ca < 0:
+            return "estados_unidos"
+        if pais_us < 0:
+            return "canada"
+        return "canada" if pais_ca < pais_us else "estados_unidos"
+
+    # Sin país, gana la subdivisión nombrada última: la más amplia.
+    donde_ca = _ultima(lugar, (_PROVINCIA, _PROVINCIA_CODIGO))
+    donde_us = _ultima(lugar, (_ESTADO, _ESTADO_CODIGO))
+    if donde_ca < 0 and donde_us < 0:
+        return ""
+    return "canada" if donde_ca > donde_us else "estados_unidos"
+
+
 @dataclass(frozen=True, slots=True)
 class Criterio:
     """Lo que dice `perfil/busqueda.toml`, ya validado."""
@@ -239,6 +348,10 @@ class Criterio:
 PESOS = {"fuerte": 12, "medio": 6, "leve": 2}
 
 DEFECTOS_PREFERENCIAS = {
+    # Dónde está el PUESTO. Distinto de `cliente_norteamerica`, que es de dónde
+    # es quien publica en Upwork: una cosa es el trabajo y la otra el que paga.
+    "estados_unidos": 15,
+    "canada": 15,
     "cliente_norteamerica": 15,
     # Menos que `largo_plazo` (20) a propósito: son la misma idea medida dos
     # veces, y sumar los dos pesos completos le daría 40 a una oferta que sólo
@@ -464,6 +577,22 @@ def detectar_senales(oferta: Oferta, aceptable_en: tuple[str, ...] = ()) -> tupl
     # no, y sin esto los dos se hundían igual.
     elif aceptable_en and any(pais in texto for pais in aceptable_en):
         encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
+    # El país del puesto entra como una señal más, con el nombre del país y no
+    # con un "norteamerica" genérico: en el aviso se lee "[canada]", que dice
+    # algo, y cada uno tiene su peso en el TOML por si alguna vez dejan de valer
+    # lo mismo.
+    pais = pais_de(oferta)
+    if pais:
+        encontradas.append(pais)
+    # Y si te reubican, la oficina deja de ser el problema. Un presencial en
+    # Toronto que paga la mudanza es aplicable; hasta ahora se hundía los mismos
+    # -45 que uno en Santiago, que no lo es.
+    #
+    # Sólo vale en los países que buscás, y eso es deliberado: "relocation
+    # assistance available" en un híbrido de Bangalore no lo vuelve tomable, y
+    # sin esta condición el perdón se lo llevaban todos.
+    if pais in NORTEAMERICA and "reubicacion" in encontradas:
+        encontradas = [s for s in encontradas if s not in ("hibrido", "presencial")]
     # Upwork es freelance por definición: el texto de la oferta no tiene por qué
     # decirlo y perderíamos la señal.
     if oferta.fuente == "upwork" and "freelance" not in encontradas:
@@ -501,6 +630,18 @@ def puntuar(oferta: Oferta, criterio: Criterio, ahora: datetime | None = None) -
 
     for senal in senales:
         puntos = criterio.preferencias.get(senal, 0)
+        # El país ORDENA, no ADMITE: sólo cuenta si la oferta ya sumó algo por
+        # el stack. Sin esta condición, "canada" (15) más "hasta_48h" (15)
+        # llegaban a los 25 del mínimo con CERO coincidencias de stack, y las
+        # fichas de Job Bank —que no traen descripción, son cuatro renglones—
+        # aterrizaban en el teléfono por estar en Canadá y ser de ayer. Medido
+        # con la oferta real de Omnissa: pasaba de 15 puntos a 30.
+        #
+        # Es el reverso de la regla que gobierna las penalizaciones. Ninguna
+        # señal descarta sola; ninguna señal admite sola tampoco.
+        if senal in NORTEAMERICA and not del_stack:
+            motivos.append(f"+0 {senal} (no coincide nada del stack)")
+            continue
         if puntos:
             total += puntos
             motivos.append(f"+{puntos} {senal}")
@@ -522,7 +663,19 @@ def puntuar(oferta: Oferta, criterio: Criterio, ahora: datetime | None = None) -
     tramo = tramo_de_frescura(horas)
     if tramo is not None:
         puntos = criterio.frescura.get(tramo, 0)
-        if puntos:
+        # La frescura también ORDENA y no ADMITE, por la misma razón que el país
+        # y con un agujero bastante más grande: `hasta_24h` vale 25 y el mínimo
+        # del aviso es 25, así que CUALQUIER oferta publicada hoy pasaba el
+        # corte con cero de todo lo demás. Medido: "Cocinero de línea —
+        # Parrilla, Madrid", publicada hace una hora, juntaba los 25 justos y
+        # entraba al teléfono.
+        #
+        # Llegar temprano vale sobre una oferta que ya vale algo. Sobre una que
+        # no vale nada, no vale nada. La penalización de `mas_vieja` sí se
+        # aplica siempre: eso no admite a nadie, sólo hunde.
+        if puntos > 0 and total <= 0:
+            motivos.append(f"+0 {tramo} ({horas:.0f} h; no suma nada más)")
+        elif puntos:
             total += puntos
             motivos.append(f"{puntos:+d} {tramo} ({horas:.0f} h)")
     else:
