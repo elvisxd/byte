@@ -50,6 +50,19 @@ def carpeta_de_trabajo() -> Path:
     return Path(os.environ.get("BYTE_EMPLEO_DIR", Path.home() / ".byte" / "empleo"))
 
 
+async def _con_registro(
+    adaptador: Callable[[httpx.AsyncClient], Awaitable[list[Oferta]]], cliente: httpx.AsyncClient
+) -> tuple[list[Oferta], list[str]]:
+    """Corre una fuente contando lo que no le contestó.
+
+    El registro se abre ACÁ ADENTRO y no afuera: `asyncio.gather` envuelve cada
+    corrutina en su propia `Task`, y cada `Task` copia el contexto, así que cada
+    fuente cuenta los suyos aunque corran las once a la vez.
+    """
+    fallos = fuentes.contar_fallos()
+    return await adaptador(cliente), fallos
+
+
 async def recolectar(
     criterio: Criterio, consulta_upwork: str
 ) -> tuple[list[Oferta], dict[str, int]]:
@@ -111,7 +124,7 @@ async def recolectar(
 
     async with fuentes.cliente_http() as cliente:
         resultados = await asyncio.gather(
-            *(adaptador(cliente) for adaptador in activas.values()),
+            *(_con_registro(adaptador, cliente) for adaptador in activas.values()),
             return_exceptions=True,
         )
 
@@ -122,8 +135,16 @@ async def recolectar(
             logger.warning("fuente_excepcion", fuente=nombre, error_type=type(resultado).__name__)
             conteo[nombre] = -1
             continue
-        conteo[nombre] = len(resultado)
-        ofertas.extend(resultado)
+        traidas, fallos = resultado
+        # Sin ofertas Y con algo que no contestó es una fuente ciega, no un día
+        # tranquilo: va como error. Con ofertas se informa el número aunque algo
+        # haya fallado, porque no te dejó sin ver —el detalle queda en el log—.
+        if not traidas and fallos:
+            logger.warning("fuente_ciega", fuente=nombre, fallos=len(fallos), motivos=fallos[:3])
+            conteo[nombre] = -1
+            continue
+        conteo[nombre] = len(traidas)
+        ofertas.extend(traidas)
     # Cada empresa muda entra al conteo con su propio nombre y en -1, que es el
     # mismo "error" que ya usa el pie del aviso para una fuente caída. Así el
     # token roto se lee en el teléfono —"empresa Shopify: error"— en vez de
@@ -206,7 +227,7 @@ def armar_aviso(
     dignas = _dignas(seleccion, criterio)
     cabecera = f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}"
     if not dignas:
-        revisadas = sum(n for n in conteo.values() if n > 0)
+        revisadas = _revisadas(conteo)
         return (
             f"{cabecera}\nNada sobre {criterio.puntaje_minimo} puntos "
             f"entre {revisadas} ofertas nuevas.\n{_pie_fuentes(conteo)}"
@@ -296,8 +317,8 @@ def texto_para_telegram(
     if pendientes:
         return f"{pendientes}\n\n{_pie_fuentes(conteo)}"
 
-    revisadas = sum(n for n in conteo.values() if n > 0)
-    if conteo and not revisadas:
+    revisadas = _revisadas(conteo)
+    if _hubo_fuentes_de_ofertas(conteo) and not revisadas:
         return (
             f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}\n"
             f"Ninguna fuente devolvió nada. No es que no haya ofertas: "
@@ -367,6 +388,27 @@ def _repartir(
     return dentro + fuera
 
 
+# Entradas del conteo que NO son ofertas revisadas. Hoy sólo el buzón de
+# postulaciones: entra al pie para que se vea que Gmail se leyó, pero sus
+# correos son respuestas a lo que ya postulaste, no candidatas de hoy.
+#
+# Sin esta lista, veinte acuses de recibo en la bandeja alcanzaban para que
+# `revisadas` diera veinte con las once fuentes de ofertas caídas, y entonces la
+# alerta de "ninguna fuente devolvió nada, algo se rompió" —que es la que avisa
+# que el cazador está ciego— no salía.
+NO_SON_OFERTAS = frozenset({"postulaciones"})
+
+
+def _revisadas(conteo: dict[str, int]) -> int:
+    """Cuántas ofertas se miraron en esta vuelta, sin contar lo que no lo es."""
+    return sum(n for nombre, n in conteo.items() if n > 0 and nombre not in NO_SON_OFERTAS)
+
+
+def _hubo_fuentes_de_ofertas(conteo: dict[str, int]) -> bool:
+    """¿Se consultó alguna fuente de ofertas? Con sólo el buzón, no."""
+    return any(nombre not in NO_SON_OFERTAS for nombre in conteo)
+
+
 def _pie_fuentes(conteo: dict[str, int]) -> str:
     partes = [f"{n}: {'error' if c < 0 else c}" for n, c in sorted(conteo.items())]
     return "fuentes → " + " · ".join(partes)
@@ -412,7 +454,9 @@ def escribir_digest(
     return destino
 
 
-async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
+async def _pendientes(
+    criterio: Criterio, carpeta: Path, conteo: dict[str, int] | None = None
+) -> list[Respuesta]:
     """Lo que tus postulaciones piden y todavía no te avisé.
 
     Memoria aparte de la de las ofertas: son cosas distintas con vidas distintas,
@@ -421,15 +465,36 @@ async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
 
     `imaplib` es síncrona, así que va a un hilo igual que la fuente de LinkedIn:
     una conexión IMAP en el bucle deja esperando a todo lo demás.
+
+    Entra al `conteo` como una fuente más, y ésa es la novedad: era el único
+    camino del cazador que no aparecía en el pie del aviso. Con la contraseña de
+    Gmail vencida no llegaba ningún pendiente Y el pie se veía igual de sano que
+    siempre, así que la señal de que el buzón dejó de leerse era... ninguna. Es
+    justo la fuente donde eso cuesta más caro: una entrevista que no avisa no se
+    nota hasta que ya pasó la fecha.
     """
+    if conteo is not None:
+        # Apagada en el TOML es distinto de rota: se informa y no se cuenta como
+        # error. Apagar una fuente es una decisión tuya; que no conteste, no.
+        conteo["postulaciones"] = 0
     if not criterio.fuentes.get("postulaciones", True):
+        if conteo is not None:
+            del conteo["postulaciones"]
         return []
     usuario = os.environ.get("GMAIL_USUARIO", "")
     clave = os.environ.get("GMAIL_APP_PASSWORD", "")
     if not usuario or not clave:
+        logger.warning("postulaciones_sin_credenciales", detail="falta GMAIL_APP_PASSWORD")
+        if conteo is not None:
+            conteo["postulaciones"] = -1
         return []
 
+    fallos = fuentes.contar_fallos()
     respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave)
+    if conteo is not None:
+        # El número es cuántas respuestas se leyeron del buzón, no cuántas
+        # interrumpen: lo que se está contestando acá es "¿se pudo leer Gmail?".
+        conteo["postulaciones"] = -1 if (fallos and not respuestas) else len(respuestas)
     memoria = Memoria(carpeta / "postulaciones.json")
     nuevas = [r for r in respuestas if r.estado in AVISABLES and not memoria.conoce(r.id_mensaje)]
     # Se anota acá y no después de avisar, al revés que las ofertas: un pendiente
@@ -449,12 +514,15 @@ async def una_vuelta(
     ofertas, conteo = await recolectar(criterio, consulta_upwork)
     memoria = Memoria(carpeta / "vistas.json")
     seleccion = seleccionar(ofertas, criterio, memoria)
+    # El buzón se lee ANTES de armar los textos porque también entra al conteo:
+    # armándolos primero, el pie del aviso salía sin la línea de postulaciones y
+    # el digest quedaba con un conteo distinto al del teléfono.
+    pendientes = bloque(await _pendientes(criterio, carpeta, conteo))
     destino = escribir_digest(carpeta, seleccion, conteo)
     # Dos textos distintos a propósito: el de la consola cuenta siempre qué pasó
     # —corrés el comando, querés ver el resultado— y el del teléfono sólo
     # interrumpe cuando hay algo que decir.
     texto = armar_aviso(seleccion, criterio, conteo)
-    pendientes = bloque(await _pendientes(criterio, carpeta))
     al_telefono = texto_para_telegram(
         seleccion, criterio, conteo, _horas_de_silencio(carpeta), pendientes
     )
