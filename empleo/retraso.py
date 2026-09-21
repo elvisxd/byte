@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from empleo.postulaciones import Respuesta
+from empleo.postulaciones import DE_POSTULACION, Respuesta
 
 # El nombre del archivo que escribe `escribir_digest`: 2026-09-19-1430.md
 _NOMBRE_DIGEST = re.compile(r"^(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})\.md$")
@@ -359,7 +359,15 @@ def medir(
     horas_a_tiempo: float,
     sin_buzon: str = "",
 ) -> Medicion:
-    """Las cuentas, una sola vez. El informe largo y el resumen las comparten."""
+    """Las cuentas, una sola vez. El informe largo y el resumen las comparten.
+
+    `respuestas` puede traer el buzón entero —alertas, correo frío, lo que no se
+    reconoció— porque desde que nada se descarta en silencio el lector devuelve
+    todo. Acá se mira sólo lo que es respuesta a una postulación tuya: contar
+    las alertas de LinkedIn como "respuestas" inflaría el denominador de todo
+    lo que sigue.
+    """
+    respuestas = [r for r in respuestas if r.estado in DE_POSTULACION]
     atados, por_ats, sueltos = emparejar(avisos, respuestas)
     postuladas = {aviso.url for aviso, _, _ in atados}
     ahora = datetime.now(tz=UTC)
@@ -576,6 +584,11 @@ def seguir(avisos: list[Aviso], respuestas: list[Respuesta]) -> list[Postulacion
     """
     por_empresa: dict[str, list[tuple[Respuesta, datetime, Aviso | None]]] = {}
     for respuesta in respuestas:
+        # Sólo lo que prueba que hay una postulación. Un correo frío de un
+        # reclutador no es un proceso abierto, y sin esto el parte diría que
+        # tenés el doble de conversaciones vivas de las que tenés.
+        if respuesta.estado not in DE_POSTULACION:
+            continue
         cuando = _fecha_de(respuesta)
         if cuando is None:
             continue

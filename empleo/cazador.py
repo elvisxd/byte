@@ -31,7 +31,7 @@ from empleo.aviso import avisar
 from empleo.criterio import Criterio, Puntaje, cargar_criterio, pais_de, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
-from empleo.postulaciones import AVISABLES, Respuesta, bloque
+from empleo.postulaciones import DE_POSTULACION, Respuesta, bloque, inventario
 from empleo.retraso import informe, leer_avisos, medir, parte, resumen, seguir
 
 logger = get_logger("empleo.cazador")
@@ -497,11 +497,23 @@ async def _pendientes(
     fallos = fuentes.contar_fallos()
     respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave)
     if conteo is not None:
-        # El número es cuántas respuestas se leyeron del buzón, no cuántas
-        # interrumpen: lo que se está contestando acá es "¿se pudo leer Gmail?".
-        conteo["postulaciones"] = -1 if (fallos and not respuestas) else len(respuestas)
+        # Cuántas RESPUESTAS A POSTULACIONES TUYAS trajo el buzón, no cuántos
+        # correos se leyeron. Desde que nada se descarta en silencio, el lector
+        # devuelve la bandeja entera: con cuatro acuses, veinte alertas de
+        # LinkedIn y seis facturas, el pie decía «postulaciones: 30» al lado de
+        # «remoteok: 12», y leído en el teléfono eso son treinta respuestas a
+        # postulaciones que no existen.
+        #
+        # Un cero con credenciales puestas sigue queriendo decir "Gmail
+        # contestó y no había nada", que es distinto del `error` de abajo.
+        de_postulaciones = [r for r in respuestas if r.estado in DE_POSTULACION]
+        conteo["postulaciones"] = -1 if (fallos and not respuestas) else len(de_postulaciones)
     memoria = Memoria(carpeta / "postulaciones.json")
-    nuevas = [r for r in respuestas if r.estado in AVISABLES and not memoria.conoce(r.id_mensaje)]
+    # `interrumpe` y no `estado in AVISABLES`: un contacto con señales de estafa
+    # sigue apareciendo en `--correos`, con las señales a la vista, pero no te
+    # despierta el teléfono. Un canal que te interrumpe con fraude es un canal
+    # que dejás de abrir.
+    nuevas = [r for r in respuestas if r.interrumpe and not memoria.conoce(r.id_mensaje)]
     # Se anota acá y no después de avisar, al revés que las ofertas: un pendiente
     # repetido cinco veces por día es peor que uno perdido, porque el correo
     # sigue en tu bandeja mientras que la oferta caduca.
@@ -769,6 +781,25 @@ async def ver_seguimiento(criterio: Criterio, carpeta: Path, al_telefono: bool) 
     return texto
 
 
+async def ver_correos(criterio: Criterio) -> str:
+    """Qué hay en el buzón, por tipo. Sólo lee.
+
+    Es la herramienta que hacía falta para poder decir "no se descarta
+    ninguno": antes, lo que el clasificador no reconocía desaparecía sin
+    contarse, y no había forma de saber cuánto era ni de qué.
+    """
+    if not criterio.fuentes.get("postulaciones", True):
+        return "La fuente `postulaciones` está apagada en el TOML."
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not usuario or not clave:
+        return "Faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD: sin buzón no hay nada que mirar."
+    respuestas = await asyncio.to_thread(
+        fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
+    )
+    return inventario(respuestas)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
@@ -794,6 +825,11 @@ def main() -> None:
         "--retraso",
         action="store_true",
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
+    )
+    parser.add_argument(
+        "--correos",
+        action="store_true",
+        help="Qué hay en el buzón por tipo, incluido lo que no se reconoció",
     )
     parser.add_argument(
         "--seguimiento",
@@ -834,6 +870,10 @@ def main() -> None:
         # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
         # tipea esperando el informe recibía otra cosa, y encima con efectos.
         parser.error("--al-telefono necesita --retraso o --seguimiento")
+    if args.correos:
+        # Sólo lectura, igual que --retraso y --seguimiento.
+        print(asyncio.run(ver_correos(criterio)))
+        return
     if args.seguimiento:
         # Sólo lectura, igual que --retraso: se puede mirar con una vuelta en curso.
         print(asyncio.run(ver_seguimiento(criterio, carpeta_de_trabajo(), args.al_telefono)))
