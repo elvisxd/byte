@@ -595,14 +595,19 @@ async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
     """De qué países son las ofertas que traen las fuentes, y cuántas pasan.
 
     Existe para poder elegir el peso de `estados_unidos` y `canada` con un
-    número en la mano y no a ojo, y la primera corrida ya corrigió el
-    razonamiento con el que se eligió: medido el 21/09/2026 sobre 4.077 ofertas
-    reales, **el 66,4% no trae ubicación ninguna**. No es que casi todas sean de
-    EE.UU. —son el 29,7%—: es que de dos de cada tres no sabemos nada.
+    número en la mano y no a ojo. Medido el 21/09/2026 sobre 3.623 ofertas
+    reales: 27,4% en EE.UU., 4,4% en Canadá, 8,0% sin ubicación ninguna, y el
+    60,1% restante en algún otro país.
 
-    Por eso el desglose de abajo va POR FUENTE. Una fuente que no manda la
-    ubicación deja ciego al país para todo lo que trae, y eso se arregla en el
-    adaptador; el peso del país no puede compensarlo.
+    ⚠ Los dos últimos se cuentan APARTE, y es lo único delicado de este
+    comando. `pais_de()` devuelve "" en dos casos que no se parecen en nada:
+    cuando la oferta no trae ubicación, y cuando la trae pero no es de EE.UU.
+    ni de Canadá —que es todo lo demás, porque el detector sólo conoce esos
+    dos—. Juntarlos bajo "(sin ubicación)" decía que del 68% no sabíamos nada,
+    cuando de casi todas sí sabemos: están en otro lado.
+
+    Se vio con el desglose por fuente, que sumaba 291 y no 2.469. El desglose
+    sigue abajo porque contesta la otra pregunta: qué fuente no manda el campo.
 
     No escribe nada ni avisa: se puede correr mientras una vuelta está en curso.
     """
@@ -610,7 +615,12 @@ async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
     por_pais: dict[str, list[int]] = {}
     for oferta in ofertas:
         puntaje = puntuar(oferta, criterio)
-        por_pais.setdefault(pais_de(oferta) or "(sin ubicación)", []).append(puntaje.total)
+        # "No sabemos dónde está" y "está en otro lado" son cosas distintas y
+        # se cuentan distinto: ver el aviso del docstring.
+        pais = pais_de(oferta)
+        if not pais:
+            pais = "(otro país)" if oferta.ubicacion.strip() else "(sin ubicación)"
+        por_pais.setdefault(pais, []).append(puntaje.total)
 
     lineas = [_pie_fuentes(conteo), ""]
     if not ofertas:
@@ -625,10 +635,11 @@ async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
             f"  {pais:18} {len(puntajes):>5} ({cuota:4.1f}%) · "
             f"{sobre} sobre {criterio.puntaje_minimo} · mediana {mediana}"
         )
-    # De dónde sale la ceguera. Con dos tercios de las ofertas sin ubicación, la
-    # pregunta que importa no es cuánto vale el país sino QUÉ FUENTE no lo
-    # manda: si es una sola y su API sí lo trae, arreglar el adaptador vale más
-    # que cualquier peso.
+    # Qué fuente no manda el campo. Medido: Hacker News el 100% —la empresa sale
+    # de la primera línea de un comentario, así que no hay campo que mandar— y
+    # RemoteOK un tercio. Las dos son esperables y no hay adaptador que
+    # arreglar; lo que hace falta es que el número no se confunda con el de las
+    # ofertas que sí traen ubicación pero no son de EE.UU. ni de Canadá.
     sin_lugar: dict[str, int] = {}
     total_fuente: dict[str, int] = {}
     for oferta in ofertas:
