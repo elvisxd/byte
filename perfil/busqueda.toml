@@ -47,6 +47,23 @@ leve = [
 latam = 30
 # Remoto en cualquier parte del mundo.
 remoto_global = 20
+# El PUESTO está en Estados Unidos o en Canadá. Sale del campo de ubicación de
+# la oferta —no del texto entero: "we serve customers across Canada" no vuelve
+# canadiense a un puesto de Berlín—, y las ofertas sin ubicación quedan sin país
+# y no suman ni restan, igual que las que no traen fecha.
+#
+# Ojo, no es lo mismo que `cliente_norteamerica`, que es de dónde es QUIEN
+# PUBLICA en Upwork. Una cosa es dónde está el trabajo y otra quién paga.
+#
+# 15 y no 25 a propósito, y el número importa: con 25 —el mínimo del aviso— una
+# oferta llegaría al teléfono por estar en EE.UU. y nada más. Y casi todos los
+# 1.700 puestos que traen las `[[empresas]]` están en EE.UU., así que el mínimo
+# dejaría de filtrar justo el día que más hace falta. Con 15 el país ORDENA:
+# empuja hacia arriba a las que además coinciden con tu stack, y no admite sola
+# a ninguna. Es el mismo principio de las penalizaciones, del otro lado:
+# ninguna señal descarta sola, ninguna señal admite sola.
+estados_unidos = 15
+canada = 15
 # Reubicación: la pagan, o al menos se comprometen. Pesa igual que el remoto
 # global porque son dos caminos igual de válidos para el mismo objetivo —
 # trabajar desde donde estés—, no uno bueno y uno de consuelo.
@@ -228,6 +245,13 @@ upwork = false
 #
 # Una oferta sin fecha no suma ni resta: que un feed no la mande no la vuelve
 # vieja.
+#
+# ⚠ Y el premio sólo cuenta sobre una oferta que YA sumó algo. `hasta_24h` vale
+# lo mismo que `puntaje_minimo`, así que sin esa condición cualquier oferta
+# publicada hoy pasaba el corte con cero de todo lo demás: medido, «Cocinero de
+# línea — Parrilla, Madrid» juntaba los 25 justos y llegaba al teléfono. Llegar
+# temprano vale sobre algo que ya vale; sobre nada, no vale nada. `mas_vieja`
+# sigue restando siempre: hundir no admite a nadie.
 hasta_24h = 25
 hasta_48h = 15
 hasta_96h = 8
