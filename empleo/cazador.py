@@ -123,6 +123,10 @@ async def recolectar(
     if criterio.fuentes.get("jobbank", False):
         # Misma razón que arriba para el hilo: es otra conexión IMAP.
         activas["jobbank"] = lambda _c: asyncio.to_thread(fuentes.jobbank_por_imap, usuario, clave)
+    if criterio.fuentes.get("wellfound", False):
+        activas["wellfound"] = lambda _c: asyncio.to_thread(
+            fuentes.wellfound_por_imap, usuario, clave
+        )
     if criterio.fuentes.get("upwork", False):
         token = os.environ.get("UPWORK_TOKEN", "")
         activas["upwork"] = lambda c: fuentes.upwork(c, token, consulta_upwork)
