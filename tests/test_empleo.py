@@ -2647,3 +2647,176 @@ def test_correos_sin_al_telefono_no_manda_nada(monkeypatch: pytest.MonkeyPatch) 
     asyncio.run(cazador.ver_correos(Criterio(fuentes={"postulaciones": True})))
 
     assert mandados == []
+
+
+# --- El buzón entero, no sólo el último día ---------------------------------
+
+
+class _BuzonFalso:
+    """Un IMAP de mentira que anota la búsqueda que le pidieron."""
+
+    def __init__(self, cuantos: int, acepta_gmail_raw: bool = True) -> None:
+        self.cuantos = cuantos
+        self.acepta_gmail_raw = acepta_gmail_raw
+        self.busqueda = ""
+        self.busquedas: list[str] = []
+
+    def __enter__(self) -> "_BuzonFalso":
+        return self
+
+    def __exit__(self, *_a: object) -> None:
+        return None
+
+    def login(self, *_a: object) -> None:
+        return None
+
+    def select(self, *_a: object, **_k: object) -> None:
+        return None
+
+    def search(self, _charset: object, criterio: str) -> tuple[str, list[bytes]]:
+        self.busqueda = criterio
+        self.busquedas.append(criterio)
+        if "X-GM-RAW" in criterio and not self.acepta_gmail_raw:
+            return "NO", [b""]
+        return "OK", [b" ".join(str(n).encode() for n in range(1, self.cuantos + 1))]
+
+    def fetch(self, identificador: bytes, _partes: str) -> tuple[str, list[object]]:
+        crudo = (
+            b"From: no-reply@ashbyhq.com\r\n"
+            b"Subject: Thanks for applying to Cohere!\r\n"
+            b"Message-ID: <" + identificador + b"@ashbyhq.com>\r\n"
+            b"Date: Sun, 20 Sep 2026 14:28:53 +0000\r\n"
+            b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+            b"Hi Elvis, Thank you for applying to the Applied AI Engineer role at Cohere!\r\n"
+        )
+        return "OK", [(b"1 (RFC822 {...}", crudo)]
+
+
+def test_no_se_piden_los_correos_que_ya_se_leen_por_otra_fuente(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedIn, Job Bank y Wellfound tienen cada uno su propio parser. Pedirlos
+    otra vez acá es bajarlos dos veces y, sobre todo, gastar el tope en correos
+    ya leídos: entre los tres son la mitad del buzón.
+    """
+    buzon = _BuzonFalso(cuantos=3)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+
+    fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert 'NOT FROM "jobalerts-noreply@linkedin.com"' in buzon.busqueda
+    assert 'NOT FROM "no-reply-jobalert@hrsdc-rhdcc.gc.ca"' in buzon.busqueda
+    assert 'NOT FROM "team@hi.wellfound.com"' in buzon.busqueda
+    assert 'NOT FROM "notifications@github.com"' in buzon.busqueda
+    assert "SINCE" in buzon.busqueda
+
+
+def test_lo_que_el_tope_deja_afuera_se_dice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El recorte era un `[-60:]` mudo, y ahí estaba el agujero: medido sobre el
+    buzón real, 201 hilos en 14 días y 50 en las últimas 19 horas. El tope se
+    gastaba en un día y lo anterior quedaba invisible sin que nadie se enterara
+    —incluido el "falta el video" de hace once días—.
+
+    Ahora, si algo quedó sin mirar, sale en el pie del aviso.
+    """
+    buzon = _BuzonFalso(cuantos=fuentes.TOPE_CORREOS_POSTULACIONES + 7)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+    fallos = fuentes.contar_fallos()
+
+    leidas = fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert len(leidas) == fuentes.TOPE_CORREOS_POSTULACIONES
+    assert "correos_sin_mirar:7" in fallos
+
+
+def test_un_buzon_que_entra_entero_no_avisa_de_nada(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El reverso: si no se recortó nada, el pie no tiene por qué decir nada.
+    Un aviso que grita siempre deja de querer decir algo.
+    """
+    buzon = _BuzonFalso(cuantos=fuentes.TOPE_CORREOS_POSTULACIONES)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+    fallos = fuentes.contar_fallos()
+
+    fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert fallos == []
+
+
+def test_el_remitente_llega_al_clasificador(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_respuesta_del_correo` tiene el `From` y ahora se lo pasa: sin eso, la
+    mitad de los acuses de JazzHR se quedaban en `otro`.
+    """
+    buzon = _BuzonFalso(cuantos=1)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+
+    leidas = fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert len(leidas) == 1
+    assert leidas[0].remitente == "no-reply@ashbyhq.com"
+    assert leidas[0].estado == "acuse"
+
+
+def test_las_promociones_no_entran(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gmail ya separó los boletines en Promociones y son una cuarta parte de lo
+    que llega. Medido antes de ponerlo: de los 35 correos de ATS de 14 días,
+    ninguno cae en esa categoría, así que sacarla no pierde nada.
+    """
+    buzon = _BuzonFalso(cuantos=3)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+
+    fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert 'X-GM-RAW "-category:promotions"' in buzon.busqueda
+
+
+def test_un_servidor_sin_la_extension_de_gmail_no_se_queda_sin_correos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`X-GM-RAW` es de Gmail y de nadie más. Si el servidor la rechaza, la
+    búsqueda devuelve algo que no es OK y el lector salía con CERO correos: el
+    buzón entero desaparecía en silencio por una extensión.
+
+    Se vuelve a preguntar sin ella. Menos limpio, pero nunca cero.
+    """
+    buzon = _BuzonFalso(cuantos=4, acepta_gmail_raw=False)
+    monkeypatch.setattr(fuentes.imaplib, "IMAP4_SSL", lambda *_a, **_k: buzon)
+
+    leidas = fuentes.respuestas_por_imap("alguien@gmail.com", "clave")
+
+    assert len(leidas) == 4
+    assert len(buzon.busquedas) == 2
+    assert "X-GM-RAW" in buzon.busquedas[0]
+    assert "X-GM-RAW" not in buzon.busquedas[1]
+    assert "SINCE" in buzon.busquedas[1]
+
+
+def test_el_recorte_del_buzon_llega_al_pie_del_aviso(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """De punta a punta: si el tope dejó correos sin leer, el pie lo dice.
+
+    Se prueba entero y no sólo la anotación porque el defecto vivía justo en la
+    juntura: `fuentes` anotaba el recorte en el registro de fallos, y ese
+    registro sólo se usaba para decidir `error` contra número. Con una sola
+    respuesta leída el aviso se veía impecable aunque el buzón tuviera el
+    triple sin mirar.
+    """
+
+    def buzon_recortado(*_a: object, **_k: object) -> list[fuentes.Respuesta]:
+        fuentes._anotar_fallo("correos_sin_mirar:143")
+        return [
+            fuentes.Respuesta(
+                "<1@x>", "no-reply@ashbyhq.com", "Thanks for applying", "", "acuse", ()
+            )
+        ]
+
+    monkeypatch.setattr(fuentes, "respuestas_por_imap", buzon_recortado)
+    monkeypatch.setenv("GMAIL_USUARIO", "alguien@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "clave")
+    conteo: dict[str, int] = {}
+
+    asyncio.run(cazador._pendientes(Criterio(fuentes={"postulaciones": True}), tmp_path, conteo))
+
+    assert conteo["buzón_sin_mirar"] == 143
+    assert conteo["postulaciones"] == 1
+    assert "buzón_sin_mirar: 143" in cazador._pie_fuentes(conteo)

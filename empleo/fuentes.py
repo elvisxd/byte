@@ -1496,9 +1496,37 @@ def cliente_http() -> httpx.AsyncClient:
 
 # --- Respuestas a tus postulaciones ---
 
-# Cuántos correos se miran por vuelta. El buzón trae de todo; lo que importa son
-# los últimos días, y pedir más es tiempo de IMAP por correos ya clasificados.
-TOPE_CORREOS_POSTULACIONES = 60
+# Cuántos correos se miran por vuelta.
+#
+# Eran 60, y con 60 la ventana de 14 días era mentira. Medido sobre el buzón de
+# verdad el 21/09: 201 hilos en esos 14 días, y 50 de ellos en las últimas 19
+# HORAS. O sea que el tope se gastaba en un día y todo lo anterior quedaba
+# invisible —incluido el "falta el video" de hace once días, que es el caso que
+# originó todo esto—. Y no se notaba: el recorte era un `[-60:]` mudo.
+#
+# 200 cubre los 14 días con aire de sobra una vez descontado lo de abajo. El
+# costo es tiempo de IMAP y se paga una vez por vuelta.
+TOPE_CORREOS_POSTULACIONES = 200
+
+# Lo que NO se pide por esta vía, porque ya se lee por otra.
+#
+# LinkedIn, Job Bank y Wellfound tienen cada uno su propia fuente, con su propio
+# parser: pedirlos acá es bajarlos dos veces y, sobre todo, gastar el tope en
+# correos que ya están leídos. Entre los tres son la mitad del buzón.
+#
+# GitHub es ruido de este mismo repo: 11 de los 50 últimos hilos son avisos de
+# CI. No es correo de trabajo y no tiene por qué comerse un lugar.
+#
+# ⚠ Esto NO es descartar: son remitentes que YA se leen. Todo lo demás —las
+# alertas de Jobright, de Lensa, los boletines, las facturas— sigue entrando y
+# sigue saliendo en `--correos` con su tipo, que es lo que hace que se pueda
+# decir "no se descarta ninguno".
+YA_SE_LEEN_APARTE = (
+    REMITENTE_LINKEDIN,
+    REMITENTE_JOBBANK,
+    REMITENTE_WELLFOUND,
+    "notifications@github.com",
+)
 
 
 def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respuesta]:
@@ -1523,10 +1551,35 @@ def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respue
         with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
             buzon.login(usuario, clave)
             buzon.select("INBOX", readonly=True)
-            estado, respuesta = buzon.search(None, f'(SINCE "{desde}")')
+            excluidos = "".join(f' NOT FROM "{quien}"' for quien in YA_SE_LEEN_APARTE)
+            base = f'SINCE "{desde}"{excluidos}'
+            # `X-GM-RAW` es la extensión de Gmail que acepta su propia sintaxis
+            # de búsqueda. Sirve para sacar Promociones, que es donde Gmail ya
+            # puso los boletines —Walmart, Pinterest, SeaWorld, Netflix— y que
+            # en el buzón real son una cuarta parte de lo que llega.
+            #
+            # ⚠ Medido antes de ponerlo: de los 35 correos de ATS de estos 14
+            # días, CERO están en Promociones. Si alguno cayera ahí lo estaríamos
+            # perdiendo, y eso sería peor que el ruido.
+            estado, respuesta = buzon.search(None, f'({base} X-GM-RAW "-category:promotions")')
+            if estado != "OK":
+                # Un servidor sin la extensión, o Gmail cambiándole el nombre.
+                # Se vuelve a pedir sin ella: menos limpio, pero nunca cero.
+                logger.info("postulaciones_sin_gmail_raw", detail="se busca sin la categoría")
+                estado, respuesta = buzon.search(None, f"({base})")
             if estado != "OK" or not respuesta or not respuesta[0]:
                 return []
-            identificadores = respuesta[0].split()[-TOPE_CORREOS_POSTULACIONES:]
+            todos = respuesta[0].split()
+            identificadores = todos[-TOPE_CORREOS_POSTULACIONES:]
+            # Que el recorte se vea. Antes era un `[-60:]` mudo: el buzón podía
+            # tener el triple y nadie se enteraba. Ahora sale en el pie del
+            # aviso, junto a las fuentes que se cayeron.
+            if len(todos) > len(identificadores):
+                sobran = len(todos) - len(identificadores)
+                logger.warning(
+                    "postulaciones_recortadas", vistos=len(identificadores), sin_mirar=sobran
+                )
+                _anotar_fallo(f"correos_sin_mirar:{sobran}")
 
             encontradas: list[Respuesta] = []
             for identificador in identificadores:
@@ -1569,7 +1622,7 @@ def _respuesta_del_correo(crudo: bytes) -> Respuesta:
         remitente=remitente,
         asunto=asunto,
         fecha=_texto(mensaje.get("Date"), 60),
-        estado=clasificar(asunto, recorte),
+        estado=clasificar(asunto, recorte, remitente),
         # `Authentication-Results` lo escribe Gmail al recibir: ya verificó SPF,
         # DKIM y DMARC, y tirar esa cabecera sería repetir a mano un trabajo que
         # ya está hecho. Puede haber varias; se miran todas.

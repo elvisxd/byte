@@ -13,6 +13,7 @@ from empleo.postulaciones import (
     Respuesta,
     bloque,
     clasificar,
+    de_un_ats,
     es_probable_estafa,
     inventario,
     sospechas,
@@ -391,3 +392,82 @@ def test_el_cajon_cuenta_bien_lo_que_no_muestra() -> None:
     assert "sin reconocer (12)" in texto
     assert "(+2 más)" in texto
     assert sum(1 for linea in texto.splitlines() if linea.startswith("  d")) == 10
+
+
+# --- Los acuses que nunca dicen "application" ------------------------------
+
+
+def test_un_acuse_que_habla_de_tu_curriculo_y_no_de_tu_postulacion() -> None:
+    """Correo real del 19/09. La compuerta `HABLA_DE_POSTULACION` pedía la
+    palabra "application" y esta plantilla de JazzHR no la dice nunca: dice
+    "received your resume" en el asunto e "interest in employment" en el cuerpo.
+
+    Caía en `otro`, o sea que la postulación a SeedTrust quedaba sin rastro y
+    el seguimiento la contaba como una empresa a la que NO postulaste. Que es
+    lo contrario de lo que pasó.
+    """
+    asunto = "Elvis, we've received your resume"
+    cuerpo = (
+        "Hello Elvis, Thank you for your interest in employment at SeedTrust. "
+        "If your qualifications match our needs, we will contact you to learn "
+        "more about your fit in this position."
+    )
+
+    assert clasificar(asunto, cuerpo) == "acuse"
+
+
+def test_el_acuse_que_no_nombra_ni_la_postulacion_ni_el_curriculo() -> None:
+    """Correo real del 08/09, la misma plantilla con otras palabras. Acá no hay
+    nada que agarrar en el texto: ni "application", ni "resume", ni "applying".
+    Sólo "explore opportunities with", que lo escribe cualquier boletín.
+
+    Este es el que necesita el remitente, y es la razón de `de_un_ats()`: a
+    `noreply@applytojob.com` no le escribe nadie que no sea un ATS.
+    """
+    asunto = "Thank you for your interest in Morning Star"
+    cuerpo = (
+        "Dear Elvis, Thank you for investing your time to explore opportunities "
+        "with Morning Star. This is an automated message to let you know we got it."
+    )
+
+    assert clasificar(asunto, cuerpo) == "otro"
+    assert clasificar(asunto, cuerpo, "noreply@applytojob.com") == "acuse"
+
+
+def test_el_marketing_que_agradece_tu_interes_sigue_sin_ser_un_acuse() -> None:
+    """El reverso, y es el que importa: "thank you for your interest" lo escribe
+    cualquiera. Correos reales de Walmart y Pinterest del 20/09.
+
+    Si el remitente no es un ATS, la compuerta sigue en pie y el correo NO entra
+    como respuesta a una postulación tuya. Lo que abre la puerta es quién lo
+    manda, no la frase.
+    """
+    cuerpo = "Thank you for your interest in our weekly savings! Shop now."
+
+    assert clasificar("Your weekly Walmart deals", cuerpo, "newsletters@em.walmart.com") != "acuse"
+    assert clasificar("Ideas for you", cuerpo, "recommendations@discover.pinterest.com") != "acuse"
+
+
+def test_los_ats_mandan_desde_un_subdominio_por_cliente() -> None:
+    """El dominio se mira por sufijo porque el ATS le da a cada cliente el suyo.
+    Los tres primeros son remitentes reales del buzón.
+    """
+    assert de_un_ats("no-reply@nara-health.breezy-mail.com")
+    assert de_un_ats("activision@myworkday.com")
+    assert de_un_ats("no-reply@us.greenhouse-mail.io")
+    assert de_un_ats("recruiting+438383378-751d7eb6@applytojob.com")
+
+
+def test_un_dominio_parecido_no_es_un_ats() -> None:
+    """La comparación es por sufijo de dominio con el punto puesto: si fuera un
+    `endswith` pelado, cualquiera que registre `malicioso-lever.co` entraría
+    como plataforma de reclutamiento y se saltaría la compuerta.
+    """
+    assert not de_un_ats("alguien@malicioso-lever.co")
+    assert not de_un_ats("alguien@greenhouse-mail.io.estafa.com")
+    assert not de_un_ats("talent@ibm.com")
+    # Y el nombre para mostrar no decide nada: lo que cuenta es lo que hay
+    # después de la ÚLTIMA arroba, que es la dirección de verdad.
+    assert not de_un_ats('"no-reply@ashbyhq.com" <estafa@dominio-malo.com>')
+    assert not de_un_ats("isabella.holmes@lensa.com")
+    assert not de_un_ats("")
