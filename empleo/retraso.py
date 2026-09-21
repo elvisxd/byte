@@ -21,6 +21,11 @@ Los dos extremos ya estaban guardados, en dos lugares que no se hablaban:
 
 Esto los resta. **No cambia ningún peso**: primero se mide, después se decide,
 que es como se justificó cada número del TOML.
+
+Y del mismo cruce sale la otra mitad, que es el seguimiento: en qué quedó cada
+postulación —entrevista, piden algo, esperando, cerrada—, hace cuánto que no
+pasa nada, y cuáles quedaron sin ningún rastro. Ver `seguir()` y `parte()` al
+final del archivo.
 """
 
 import re
@@ -488,4 +493,186 @@ def informe(medicion: Medicion) -> str:
     if medicion.sin_buzon:
         lineas.append("Y esta vez ni eso: falta la credencial, así que la lista de arriba")
         lineas.append("es todo lo avisado, no lo que quedó sin postular.")
+    return "\n".join(lineas)
+
+
+# --- En qué quedó cada postulación ------------------------------------------
+#
+# `medir()` contesta "cuánto tardás". Esto contesta la otra mitad, que es la que
+# faltaba: **en qué estado está cada una**. Sale del mismo cruce —los digests
+# contra el buzón— porque los datos ya estaban; lo que no había era la vista.
+#
+# ⚠ Lo que esto NO puede saber, y conviene tenerlo escrito. El sistema deduce
+# que postulaste cuando llega un correo de la empresa. Una que nunca acusa
+# recibo es indistinguible de una a la que no postulaste: las dos aparecen como
+# "sin rastro". No se inventa la diferencia — se dice cuál es.
+
+# El orden en que se muestran, que es el orden en que importan. `entrevista`
+# primero porque es lo único que cambia tu día; `rechazo` último porque es lo
+# único que ya no se puede mover.
+ORDEN_DE_ESTADOS = ("entrevista", "accion", "acuse", "rechazo")
+
+# Después de cuántos días un acuse sin novedades deja de ser "esperando" y pasa
+# a ser "insistí o soltalo". Dos semanas es lo que tarda un proceso normal en
+# dar señales; más que eso, el silencio ya dijo algo.
+DIAS_PARA_INSISTIR = 14
+
+
+@dataclass(frozen=True, slots=True)
+class Postulacion:
+    """Una empresa con la que hay conversación, y en qué quedó."""
+
+    empresa: str
+    titulo: str
+    url: str
+    estado: str
+    # Cuándo llegó el primer correo de esta empresa y cuándo el último. El
+    # primero es, con buena aproximación, cuándo postulaste; el último es hace
+    # cuánto que no pasa nada.
+    primera: datetime
+    ultima: datetime
+    correos: int
+    # Cuándo te avisó el cazador, si se pudo atar a un digest.
+    avisada: datetime | None
+
+    @property
+    def dias_sin_novedades(self) -> float:
+        return (datetime.now(tz=UTC) - self.ultima).total_seconds() / 86400
+
+
+def _mas_avanzado(estados: list[tuple[datetime, str]]) -> str:
+    """El estado que manda: el más reciente, y ante empate el que más pesa.
+
+    Por fecha y no por prioridad: un rechazo después de una entrevista quiere
+    decir que te rechazaron, y una prioridad fija diría lo contrario para
+    siempre. El empate se rompe con el orden de arriba porque dos correos del
+    mismo día son lo mismo que un correo.
+    """
+    ultimo = max(fecha for fecha, _ in estados)
+    del_dia = [e for fecha, e in estados if fecha == ultimo]
+    return min(del_dia, key=lambda e: ORDEN_DE_ESTADOS.index(e) if e in ORDEN_DE_ESTADOS else 99)
+
+
+def seguir(avisos: list[Aviso], respuestas: list[Respuesta]) -> list[Postulacion]:
+    """Agrupa el buzón por empresa y dice en qué quedó cada una.
+
+    A diferencia de `emparejar()`, que sólo mira los acuses porque mide un
+    tiempo, acá entran los cuatro estados: lo que se está armando es la historia
+    de cada postulación, y un rechazo es parte de la historia.
+    """
+    por_empresa: dict[str, list[tuple[Respuesta, datetime, Aviso | None]]] = {}
+    for respuesta in respuestas:
+        cuando = _fecha_de(respuesta)
+        if cuando is None:
+            continue
+        tokens = _tokens_de(respuesta)
+        candidatos = [
+            a for a in avisos if a.cuando <= cuando and any(_coincide(t, a.empresa) for t in tokens)
+        ]
+        aviso = max(candidatos, key=lambda a: a.cuando) if candidatos else None
+        # La clave es el nombre de la oferta cuando se pudo atar, y el del
+        # remitente cuando no. Sin eso, los tres correos de una misma empresa
+        # —uno desde su dominio, dos desde su ATS— se contaban como tres
+        # postulaciones distintas.
+        clave = _normalizar(aviso.empresa) if aviso else respuesta.empresa
+        if not clave or (aviso is None and _es_intermediario(respuesta.empresa)):
+            # Un `no-reply@ashbyhq.com` que no se pudo atar no nombra a nadie:
+            # agruparlo por "ashby" juntaría empresas distintas bajo un nombre
+            # que no es de ninguna. Se cuenta aparte, como ya hace `medir()`.
+            continue
+        por_empresa.setdefault(clave, []).append((respuesta, cuando, aviso))
+
+    salida: list[Postulacion] = []
+    for clave, entradas in por_empresa.items():
+        fechas = [cuando for _, cuando, _ in entradas]
+        atado = next((a for _, _, a in entradas if a is not None), None)
+        salida.append(
+            Postulacion(
+                empresa=atado.empresa if atado else clave,
+                titulo=atado.titulo if atado else "",
+                url=atado.url if atado else "",
+                estado=_mas_avanzado([(c, r.estado) for r, c, _ in entradas]),
+                primera=min(fechas),
+                ultima=max(fechas),
+                correos=len(entradas),
+                avisada=atado.cuando if atado else None,
+            )
+        )
+    return salida
+
+
+def _dias(desde: datetime) -> str:
+    dias = (datetime.now(tz=UTC) - desde).total_seconds() / 86400
+    return "hoy" if dias < 1 else f"hace {dias:.0f} d"
+
+
+def parte(
+    postulaciones: list[Postulacion],
+    medicion: Medicion,
+    dias_para_insistir: int = DIAS_PARA_INSISTIR,
+) -> str:
+    """El seguimiento, escrito para leerse en el teléfono.
+
+    Va por estado y no por fecha: lo primero que querés saber no es qué pasó
+    último, es si hay algo que hacer hoy.
+    """
+    if not postulaciones and not medicion.huerfanas:
+        if medicion.sin_buzon:
+            return f"Seguimiento — {medicion.sin_buzon}"
+        return "Seguimiento — todavía no hay ninguna postulación con rastro."
+
+    por_estado: dict[str, list[Postulacion]] = {}
+    for p in postulaciones:
+        por_estado.setdefault(p.estado, []).append(p)
+
+    lineas = [f"Seguimiento — {datetime.now().strftime('%d/%m')}"]
+    vivas = sum(len(por_estado.get(e, [])) for e in ("entrevista", "accion", "acuse"))
+    lineas.append(f"{len(postulaciones)} con rastro · {vivas} sin cerrar")
+
+    etiquetas = {
+        "entrevista": "Entrevista",
+        "accion": "Piden algo tuyo",
+        "acuse": "Esperando respuesta",
+        "rechazo": "Cerradas",
+    }
+    for estado in ORDEN_DE_ESTADOS:
+        grupo = sorted(por_estado.get(estado, []), key=lambda p: p.ultima, reverse=True)
+        if not grupo:
+            continue
+        lineas.append("")
+        lineas.append(f"{etiquetas[estado]} ({len(grupo)})")
+        # Las cerradas no necesitan una línea cada una: son los nombres a los
+        # que no volver a escribir, no trabajo pendiente.
+        if estado == "rechazo":
+            lineas.append("  " + ", ".join(sorted({p.empresa for p in grupo})))
+            continue
+        for p in grupo:
+            titulo = f" — {p.titulo}" if p.titulo else ""
+            insistir = (
+                "  ⚠ insistí o soltalo"
+                if estado == "acuse" and p.dias_sin_novedades >= dias_para_insistir
+                else ""
+            )
+            lineas.append(f"  {p.empresa}{titulo} · {_dias(p.ultima)}{insistir}")
+            if p.url:
+                lineas.append(f"    {p.url}")
+
+    if medicion.huerfanas:
+        lineas += [
+            "",
+            f"Avisadas y sin rastro: {len(medicion.huerfanas)} "
+            f"de {medicion.sobre_el_minimo} que pasaban el corte.",
+            # La línea más importante del parte, porque es la que dice qué NO
+            # sabe el sistema. Sin ella, "sin rastro" se lee como "no postulé",
+            # y una empresa que simplemente no acusa recibo queda contada como
+            # pereza tuya para siempre.
+            "  O no postulaste, o no acusaron recibo: esto no los distingue.",
+        ]
+    if medicion.por_ats:
+        cuantos = len(medicion.por_ats)
+        lineas += [
+            "",
+            f"{cuantos} correo{'s' if cuantos != 1 else ''} desde un ATS que no nombra a la "
+            f"empresa: no se {'pueden' if cuantos != 1 else 'puede'} atar a ninguna oferta.",
+        ]
     return "\n".join(lineas)
