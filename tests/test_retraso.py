@@ -609,31 +609,57 @@ def test_el_parte_dice_que_no_puede_distinguir_las_sin_rastro() -> None:
 
 def test_el_parte_ordena_por_lo_que_hay_que_hacer_y_no_por_fecha() -> None:
     """Lo primero que querés saber no es qué pasó último: es si hay algo que
-    hacer hoy. La entrevista va arriba aunque el rechazo sea más reciente."""
+    hacer hoy. La entrevista va arriba aunque el acuse sea más reciente."""
     avisos = [_aviso("Cohere", 24 * 30), _aviso("Stripe", 24 * 30)]
     respuestas = [
         _respuesta("talent@cohere.com", _hace(9), "entrevista"),
-        _respuesta("no-reply@stripe.com", _hace(1), "rechazo"),
+        _respuesta("no-reply@stripe.com", _hace(1), "acuse"),
     ]
     medicion = medir(avisos, respuestas, 25, 96)
 
     texto = parte(seguir(avisos, respuestas), medicion)
 
-    assert texto.index("Entrevista") < texto.index("Cerradas")
+    assert texto.index("Entrevista") < texto.index("Esperando respuesta")
 
 
-def test_las_cerradas_van_en_una_linea_y_no_una_por_empresa() -> None:
-    """Son los nombres a los que no volver a escribir, no trabajo pendiente.
-    Una línea por rechazo llena el mensaje con lo único que ya no se puede
-    mover."""
+def test_los_rechazos_no_entran_al_parte() -> None:
+    """Elvis lo pidió el 21/09: un "we have decided not to move forward" no es
+    trabajo pendiente ni cambia lo que hacés hoy, y el parte es la única
+    pantalla donde se decide a qué dedicarle la mañana.
+
+    Antes iban en un bloque "Cerradas" con los nombres. Ya no van.
+    """
     avisos = [_aviso(f"Empresa{n}", 24 * 30) for n in range(6)]
     respuestas = [_respuesta(f"no-reply@empresa{n}.com", _hace(n + 1), "rechazo") for n in range(6)]
     medicion = medir(avisos, respuestas, 25, 96)
 
     texto = parte(seguir(avisos, respuestas), medicion)
 
-    assert "Cerradas (6)" in texto
-    assert texto.count("Empresa0") == 1
+    assert "Cerradas" not in texto
+    assert "Empresa0" not in texto
+
+
+def test_los_rechazos_no_desaparecen_en_silencio() -> None:
+    """No se muestran, pero tampoco se hacen los tontos: la cabecera cuenta
+    cuántas hay con rastro y cuántas siguen sin cerrar, y la resta es lo que
+    se cerró. Un parte que dijera "2 con rastro · 2 sin cerrar" teniendo cuatro
+    postulaciones estaría mintiendo, que es peor que mostrar un rechazo.
+
+    `seguir()` sigue devolviéndolas enteras: lo que cambia es sólo el mensaje.
+    """
+    avisos = [_aviso("Cohere", 24 * 30), _aviso("Stripe", 24 * 30)]
+    respuestas = [
+        _respuesta("talent@cohere.com", _hace(9), "entrevista"),
+        _respuesta("no-reply@stripe.com", _hace(1), "rechazo"),
+    ]
+    postulaciones = seguir(avisos, respuestas)
+    medicion = medir(avisos, respuestas, 25, 96)
+
+    texto = parte(postulaciones, medicion)
+
+    assert len(postulaciones) == 2
+    assert {p.estado for p in postulaciones} == {"entrevista", "rechazo"}
+    assert "2 con rastro · 1 sin cerrar" in texto
 
 
 def test_sin_buzon_el_parte_lo_dice_en_vez_de_mostrar_cero() -> None:
