@@ -127,6 +127,14 @@ largo_plazo = 20
 # se edita `_OFICIO_GASTRONOMIA` en `empleo/criterio.py`. Están fuera por ahora
 # porque todavía no aparecieron en el buzón: la lista se agranda con lo que
 # llega, no con lo que uno se imagina.
+#
+# ⚠ EL MISMO PESO FRENA LOS PUESTOS COMERCIALES, y esos llegan por otra vía.
+# «Sales Development Representative | France | Remote — Grafana Labs» sacó 57
+# el 21/09 y salió TERCERA de 101. No vino del canal de LMIA: vino de la lista
+# de `[[empresas]]` de acá abajo, porque el cazador se baja el board entero de
+# cada una —3.606 puestos esa vuelta— y un board entero trae ventas, marketing,
+# finanzas y recursos humanos. Es la misma fuente buena, con el departamento
+# equivocado. Ver `_OFICIO_COMERCIAL`.
 fuera_de_oficio = 60
 # Junior / entry level: a los diez años es tiempo perdido.
 junior = 40
@@ -457,12 +465,32 @@ ats = "ashby"
 token = "1password"
 
 [aviso]
-# Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
-# además no entra: el panel que reenvía a Telegram rechaza los textos de más de
-# 1000 caracteres, así que un aviso más largo llega cortado. Medido el
-# 17/09/2026: cuatro ofertas ocupan 820 caracteres y cinco ya se pasan. Las que
-# no entran siguen en el digest del disco.
-tope_por_aviso = 4
+# Cuántas ofertas entran en el aviso de Telegram.
+#
+# Eran 4, y el motivo escrito acá era que «el panel rechaza los textos de más
+# de 1000 caracteres, así que un aviso más largo llega cortado». Ese límite YA
+# NO EXISTE: el panel valida contra los 4096 de `sendMessage`, y desde
+# entonces `avisar()` parte el aviso en varios mensajes cortando entre ofertas.
+# O sea que el 4 sobrevivió a la razón por la que se eligió.
+#
+# Lo que costaba: la vuelta del 21/09 a las 09:12 trajo 101 ofertas sobre el
+# mínimo y el mensaje decía «(+97 más en el digest)». El digest vive en el
+# volumen de Railway, así que esas 97 no se veían desde el teléfono.
+#
+# 25 está medido con las líneas REALES de ese mensaje —204 caracteres de
+# promedio por oferta, 279 la peor—:
+#
+#     tope   caracteres   mensajes
+#        4        1.049          1
+#       15        3.384          1
+#       25        5.403          2   <- acá
+#       40        8.483          3
+#      101       21.097          6   ya recorta
+#
+# Dos mensajes es exactamente para lo que existe el partidor. Y el número
+# grande es de la PRIMERA vuelta del día, que acumula la noche entera: las
+# otras cuatro traen bastante menos y entran en uno solo.
+tope_por_aviso = 25
 # Cuántas de la MISMA empresa pueden entrar. Los marketplaces de talento
 # —Lemon.io, Toptal— republican su catálogo entero todo el tiempo y con buen
 # puntaje: sin tope se llevan casi todos los lugares y las ofertas frescas del
