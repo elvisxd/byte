@@ -2183,6 +2183,8 @@ def test_a_una_oferta_vieja_e_inservible_la_frescura_le_sigue_restando() -> None
     )
 
     assert puntuar(vieja, CRITERIO).total == -10
+
+
 # --- Una fuente caída no puede contarse como cero ---
 
 
