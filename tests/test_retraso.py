@@ -666,3 +666,116 @@ def test_un_rechazo_automatico_no_queda_como_esperando_respuesta() -> None:
 
     assert len(seguidas) == 1
     assert seguidas[0].estado == "rechazo"
+
+
+# --- El ATS no nombra a la empresa; el asunto sí ----------------------------
+
+
+def _del_ats(remitente: str, asunto: str, cuando: datetime, estado: str = "acuse") -> Respuesta:
+    return Respuesta(
+        id_mensaje=f"<{asunto}-{cuando.isoformat()}>",
+        remitente=remitente,
+        asunto=asunto,
+        fecha=cuando.strftime("%a, %d %b %Y %H:%M:%S %z"),
+        estado=estado,
+    )
+
+
+def test_cuatro_acuses_del_mismo_ats_son_cuatro_postulaciones() -> None:
+    """Remitentes y asuntos REALES del buzón. Los cuatro llegan desde
+    `no-reply@ashbyhq.com`, así que por dominio los cuatro se llamaban
+    "ashbyhq" y ninguno se podía atar a su oferta: el parte decía "avisadas y
+    sin rastro" de Render, Cohere y Clera —o sea, que no postulaste— con el
+    acuse de las tres leído en el buzón.
+    """
+    avisos = [_aviso(e, 24 * 10) for e in ("Render", "Cohere", "Clera", "MintMCP")]
+    respuestas = [
+        _del_ats("no-reply@ashbyhq.com", "Application Received - EM, Platform at Render", _hace(1)),
+        _del_ats("no-reply@ashbyhq.com", "Thanks for applying to Cohere!", _hace(2)),
+        _del_ats("no-reply@ashbyhq.com", "Thanks for applying to Clera!", _hace(3)),
+        _del_ats("no-reply@ashbyhq.com", "Thanks for applying to MintMCP!", _hace(4)),
+    ]
+
+    postulaciones = seguir(avisos, respuestas)
+
+    assert {p.empresa for p in postulaciones} == {"Render", "Cohere", "Clera", "MintMCP"}
+    assert all(p.correos == 1 for p in postulaciones)
+
+
+def test_un_security_code_de_greenhouse_llega_como_trabajo_pendiente() -> None:
+    """Correo real del 19/09. Un "resubmit your application" es una postulación
+    FRENADA: hasta que pongas el código no entró. Se perdía entero, porque
+    venía de `no-reply@us.greenhouse-mail.io` y no se ataba a nada.
+    """
+    avisos = [_aviso("Stripe", 24 * 10)]
+    respuestas = [
+        _del_ats(
+            "no-reply@us.greenhouse-mail.io",
+            "Security code for your application to Stripe",
+            _hace(1),
+            "accion",
+        )
+    ]
+
+    postulaciones = seguir(avisos, respuestas)
+
+    assert len(postulaciones) == 1
+    assert postulaciones[0].empresa == "Stripe"
+    assert postulaciones[0].estado == "accion"
+
+
+def test_una_postulacion_sin_aviso_previo_igual_aparece() -> None:
+    """Las que encontrás vos, sin que el cazador te avise. Antes no existían
+    para el parte: sin oferta con la que emparejar, el único nombre era el del
+    ATS y se descartaban.
+    """
+    respuestas = [
+        _del_ats("no-reply@ashbyhq.com", "Thanks for applying to Sticker Mule!", _hace(2))
+    ]
+
+    postulaciones = seguir([], respuestas)
+
+    assert len(postulaciones) == 1
+    assert postulaciones[0].empresa == "Sticker Mule"
+    assert postulaciones[0].titulo == ""
+
+
+def test_dos_asuntos_de_la_misma_empresa_son_una_sola_postulacion() -> None:
+    """El acuse y el rechazo de la misma empresa, escritos distinto y llegando
+    por ATS distintos. Si no se agruparan, el parte diría que tenés el doble de
+    procesos de los que tenés — que es el defecto que el agrupado vino a
+    arreglar, y no se puede reintroducir por la puerta del asunto.
+    """
+    respuestas = [
+        _del_ats("morningstar@myworkday.com", "Thank you for applying to Morningstar", _hace(3)),
+        _del_ats(
+            "morningstar@myworkday.com",
+            "Update on your Morningstar Job Application Senior Software Engineer",
+            _hace(1),
+            "rechazo",
+        ),
+    ]
+
+    postulaciones = seguir([], respuestas)
+
+    assert len(postulaciones) == 1
+    assert postulaciones[0].correos == 2
+    assert postulaciones[0].estado == "rechazo"
+
+
+def test_un_asunto_que_no_nombra_a_nadie_sigue_sin_agruparse_por_el_ats() -> None:
+    """El límite, y es el que protege todo lo anterior. "Application Update" y
+    "Thank you for your application!" no nombran a nadie: son de empresas
+    DISTINTAS y las dos llegan desde `no-reply@ashbyhq.com`.
+
+    Sin la condición, se juntarían bajo "ashbyhq" y el parte mostraría una
+    postulación con dos correos a una empresa que no existe.
+    """
+    respuestas = [
+        _del_ats("no-reply@ashbyhq.com", "Application Update", _hace(1), "rechazo"),
+        _del_ats("no-reply@ashbyhq.com", "Thank you for your application!", _hace(2)),
+    ]
+
+    postulaciones = seguir([], respuestas)
+
+    assert postulaciones == []
