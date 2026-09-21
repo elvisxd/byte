@@ -300,3 +300,53 @@ una petición **cobrada** sin que falle nada: el mismo id sin sufijo existe y
 contesta 200. Hasta hoy la regla solo la comprobaba el sondeo del dashboard.
 Ahora el brazo se niega a llamarlo, y si eran todos, se niega a arrancar: un brazo
 muerto se ve en el log y una factura no.
+
+## 2026-09-21: el 413 de Groq se resuelve recortando la vuelta, y eso es un régimen declarado
+
+La corrección del 18 se quedó corta, y hay que decirlo con las cifras que la
+refutan. Dije que el 413 era el reloj y que «esperar sí lo arregla». Con el log
+ampliado (byte#126) se ve lo que de verdad cuenta Groq:
+
+```
+12:18:39  120b  contesta   7187 de entrada / 1756 de salida
+12:19:35  120b  413  «Limit 8000, Requested 9266»
+12:19:36  20b   contesta   7510 de entrada        ← la MISMA petición
+```
+
+9266 − 7510 = **1756: la salida anterior del 120b, exacta.** Groq le suma a
+cada petición la última salida de ESE modelo. El `history_budget` del grafo es
+12288 × 0,6 = 7372 tokens —dimensionado para el contexto del LOCAL— y
+`groq_num_predict` es 8192, así que el choque estaba garantizado: un
+razonamiento de 8144 del 20b (12:03) dejó la siguiente en «Requested 15778» y
+**la vuelta 11 se perdió entera**; la 15 se perdió el 21 a las 20:07, justo tras
+el cierre de 4h. El viernes «ninguna vuelta se perdía»; el sábado ya sí.
+
+### Lo que se hace, y por qué no es una adaptación al modelo
+
+Un 413 que trae cifras se reintenta **una vez, el mismo modelo**, con el
+excedente (`pedido − tope` + margen) quitado del historial de la vuelta: los
+pasos más viejos de esa vuelta, del más antiguo al más nuevo, cada AIMessage con
+sus ToolMessages enteros. **No se toca el system, ni el primer mensaje humano
+—el mapa del mercado—, ni el último paso.** Si con eso no alcanza, rota como
+antes. Es lo que el usuario propuso el 18: «acortar antes de descartar».
+
+Esto no viola «no se le adapta nada al modelo remoto por el camino», y hay que
+decir exactamente por qué:
+
+- **Lo impone el proveedor, no lo elige el experimento.** Solo se dispara cuando
+  Groq rechaza la petición; gemini nunca lo ve porque su contexto es mayor. La
+  alternativa no es «la misma vuelta sin recorte»: es **ninguna vuelta**, y una
+  muestra que pierde justo las vueltas largas —las de más pasos, las de los
+  cierres— está más sesgada que una con las vueltas largas recortadas.
+- **Se declara, no se disimula.** El relevo imprime cada recorte con su tamaño y
+  lleva la cuenta (`recortes_413`). Cuando el brazo groq llegue a las 50, el
+  informe tiene que decir cuántas de sus vueltas fueron recortadas y de cuánto.
+- **No cambia el prompt ni el orden de los ejes**: quita pasos ya hechos de la
+  misma vuelta, que el modelo ya vio y cuyo resultado ya está en el historial
+  más reciente cuando importa.
+
+### Lo que NO se hace todavía, y es decisión del usuario
+
+Bajar `groq_num_predict` (8192) acotaría la salida que Groq suma después y haría
+el recorte casi innecesario, pero cambia una variable de un brazo de la
+comparación con gemini ya en el umbral: se propone con las cifras y no se toca.

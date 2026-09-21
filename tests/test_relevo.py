@@ -11,16 +11,24 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from agent.relevo import (
     CUARENTENA_MINUTO_S,
+    MARGEN_RECORTE,
     PACIFICO,
     Relevo,
     RelevoAgotado,
     espera_sugerida,
     por_minuto,
     presupuesto_del_413,
+    recortar_entrada,
     segundos_hasta_medianoche_pacifico,
     tipo_de_agotamiento,
 )
@@ -639,3 +647,123 @@ async def test_las_cifras_del_413_salen_en_el_log(capsys):
     [t async for t in relevo.astream("hola")]
     salida = capsys.readouterr().out
     assert "tope 8000 por minuto, pedido 8500" in salida
+
+
+# ── el 413 con cifras: recortar y reintentar el mismo modelo ────────────────
+# Medido el 2026-09-20 a las 12:19 EDT: el 20b contestó con 7510 de entrada la
+# misma petición que el 120b rechazó con «Limit 8000, Requested 9266», y 9266 −
+# 7510 = 1756 = la salida anterior del 120b. Groq suma la última salida de ese
+# modelo a la petición siguiente. Antes de esto el 413 rotaba y, con los dos de
+# Groq contra el mismo muro, la vuelta se perdía («la vuelta 11 falló»).
+
+
+def _paso(i: int, largo: int = 4000) -> list:
+    """Un AIMessage con llamada y su ToolMessage: ~1000 tokens con largo=4000."""
+    return [
+        AIMessage(content="", tool_calls=[{"name": "velas", "args": {}, "id": f"c{i}"}]),
+        ToolMessage(content="x" * largo, tool_call_id=f"c{i}"),
+    ]
+
+
+def _vuelta(pasos: int) -> list:
+    entrada = [SystemMessage(content="rol"), HumanMessage(content="mapa " * 200)]
+    for i in range(pasos):
+        entrada += _paso(i)
+    return entrada
+
+
+def _413(pedido: int, tope: int = 8000) -> _Error:
+    return _Error(
+        413,
+        f"Request too large for model `x` on tokens per minute (TPM): Limit {tope}, "
+        f"Requested {pedido}, please reduce your message size and try again.",
+    )
+
+
+def test_recortar_quita_los_pasos_mas_viejos_y_deja_el_ultimo():
+    entrada = _vuelta(4)
+    recortada = recortar_entrada(entrada, 500)
+    assert recortada is not None
+    # Cabecera intacta y el último paso intacto.
+    assert recortada[:2] == entrada[:2]
+    assert recortada[-2:] == entrada[-2:]
+    assert len(recortada) < len(entrada)
+    # ⚠ Ningún ToolMessage huérfano: cada uno va precedido de su AIMessage.
+    for a, b in zip(recortada, recortada[1:], strict=False):
+        if isinstance(b, ToolMessage):
+            assert isinstance(a, (AIMessage, ToolMessage))
+    assert isinstance(recortada[2], AIMessage)
+
+
+def test_recortar_no_toca_una_vuelta_de_un_solo_paso():
+    assert recortar_entrada(_vuelta(1), 100) is None
+
+
+def test_recortar_devuelve_none_si_no_alcanza():
+    # 4 pasos de ~1000 tokens: quitar los 3 viejos da ~3000; pedir 5000 no se puede.
+    assert recortar_entrada(_vuelta(4), 5000) is None
+
+
+def test_recortar_ignora_lo_que_no_es_una_lista_de_mensajes():
+    assert recortar_entrada("hola", 100) is None
+
+
+class _ModeloQueSeQueja(_Modelo):
+    """Falla con 413 mientras la entrada sea larga; contesta cuando se recorta.
+
+    El excedente que declara es FIJO (1500): con pasos de ~1000 tokens, quitar
+    uno no alcanza y quitar dos sí, que es justo lo que se quiere ver.
+    """
+
+    def __init__(self, nombre: str, tope_mensajes: int, excedente: int = 1500) -> None:
+        super().__init__(nombre)
+        self.tope_mensajes = tope_mensajes
+        self.excedente = excedente
+        self.entradas: list[Any] = []
+
+    async def astream(self, entrada: Any, **_: Any) -> Any:
+        self.llamadas += 1
+        self.entradas.append(entrada)
+        if len(entrada) > self.tope_mensajes:
+            raise _413(8000 + self.excedente)
+        for i in range(2):
+            yield f"{self.nombre}:{i}"
+
+
+async def test_el_413_con_cifras_recorta_y_reintenta_el_mismo_modelo(capsys):
+    quejica = _ModeloQueSeQueja("120b", tope_mensajes=6)
+    segundo = _Modelo("20b")
+    relevo = Relevo([("120b", quejica), ("20b", segundo)], espera_s=0)
+    trozos = [t async for t in relevo.astream(_vuelta(4))]  # 10 mensajes > 6
+    assert trozos == ["120b:0", "120b:1"]
+    # Dos llamadas al MISMO modelo, la segunda más corta; el segundo ni se tocó.
+    assert quejica.llamadas == 2 and segundo.llamadas == 0
+    assert len(quejica.entradas[1]) < len(quejica.entradas[0])
+    assert relevo.actual == "120b"
+    assert relevo.recortes_413 == 1
+    assert "recorto" in capsys.readouterr().out
+
+
+async def test_si_el_reintento_tambien_falla_se_rota_como_antes():
+    # Tope 1: el recorte deja 4 mensajes, sigue siendo «largo» → el reintento
+    # vuelve a dar 413 → rota. Y UN reintento, no un bucle.
+    quejica = _ModeloQueSeQueja("120b", tope_mensajes=1)
+    segundo = _Modelo("20b")
+    relevo = Relevo([("120b", quejica), ("20b", segundo)], espera_s=0)
+    trozos = [t async for t in relevo.astream(_vuelta(4))]
+    assert trozos == ["20b:0", "20b:1"]
+    assert quejica.llamadas == 2  # el original y UN reintento, nunca más
+    assert relevo.recortes_413 == 0
+
+
+async def test_un_413_sin_cifras_rota_sin_reintentar():
+    tonto = _Modelo("120b", _Error(413, "Request too large"))
+    relevo = Relevo([("120b", tonto), ("20b", _Modelo("20b"))], espera_s=0)
+    [t async for t in relevo.astream(_vuelta(4))]
+    assert tonto.llamadas == 1
+    assert relevo.actual == "20b"
+
+
+def test_el_margen_cubre_lo_que_el_contador_aproximado_se_deja():
+    # Groq cuenta un 5-10 % más que chars//4: sin margen, el recorte justo es un segundo 413.
+    assert MARGEN_RECORTE >= 64
