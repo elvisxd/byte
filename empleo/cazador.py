@@ -28,13 +28,22 @@ import api.config  # noqa: F401
 from api.logging import get_logger
 from empleo import fuentes
 from empleo.aviso import avisar
-from empleo.criterio import Criterio, Puntaje, cargar_criterio, puntuar
+from empleo.criterio import Criterio, Puntaje, cargar_criterio, pais_de, puntuar
 from empleo.memoria import Memoria, YaCorriendo, turno
 from empleo.oferta import Oferta
-from empleo.postulaciones import AVISABLES, Respuesta, bloque
-from empleo.retraso import informe, leer_avisos, medir, resumen
+from empleo.postulaciones import DE_POSTULACION, Respuesta, bloque, inventario
+from empleo.retraso import informe, leer_avisos, medir, parte, resumen, seguir
 
 logger = get_logger("empleo.cazador")
+
+# El prefijo con el que `fuentes` anota que el tope dejó correos sin leer.
+SIN_MIRAR = "correos_sin_mirar"
+
+
+# Cuántos días de buzón mira el seguimiento. Más que `--retraso` (45) porque un
+# proceso largo —cuatro rondas y una oferta— cruza los dos meses sin problema, y
+# el parte tiene que poder mostrar esa conversación entera y no su último tramo.
+DIAS_DE_SEGUIMIENTO = 90
 
 RAIZ = Path(__file__).resolve().parent.parent
 CRITERIO_POR_DEFECTO = RAIZ / "perfil" / "busqueda.toml"
@@ -48,6 +57,19 @@ def carpeta_de_trabajo() -> Path:
     esto se pueda dejar corriendo en un cron sin pensarlo más.
     """
     return Path(os.environ.get("BYTE_EMPLEO_DIR", Path.home() / ".byte" / "empleo"))
+
+
+async def _con_registro(
+    adaptador: Callable[[httpx.AsyncClient], Awaitable[list[Oferta]]], cliente: httpx.AsyncClient
+) -> tuple[list[Oferta], list[str]]:
+    """Corre una fuente contando lo que no le contestó.
+
+    El registro se abre ACÁ ADENTRO y no afuera: `asyncio.gather` envuelve cada
+    corrutina en su propia `Task`, y cada `Task` copia el contexto, así que cada
+    fuente cuenta los suyos aunque corran las once a la vez.
+    """
+    fallos = fuentes.contar_fallos()
+    return await adaptador(cliente), fallos
 
 
 async def recolectar(
@@ -105,13 +127,17 @@ async def recolectar(
     if criterio.fuentes.get("jobbank", False):
         # Misma razón que arriba para el hilo: es otra conexión IMAP.
         activas["jobbank"] = lambda _c: asyncio.to_thread(fuentes.jobbank_por_imap, usuario, clave)
+    if criterio.fuentes.get("wellfound", False):
+        activas["wellfound"] = lambda _c: asyncio.to_thread(
+            fuentes.wellfound_por_imap, usuario, clave
+        )
     if criterio.fuentes.get("upwork", False):
         token = os.environ.get("UPWORK_TOKEN", "")
         activas["upwork"] = lambda c: fuentes.upwork(c, token, consulta_upwork)
 
     async with fuentes.cliente_http() as cliente:
         resultados = await asyncio.gather(
-            *(adaptador(cliente) for adaptador in activas.values()),
+            *(_con_registro(adaptador, cliente) for adaptador in activas.values()),
             return_exceptions=True,
         )
 
@@ -122,8 +148,16 @@ async def recolectar(
             logger.warning("fuente_excepcion", fuente=nombre, error_type=type(resultado).__name__)
             conteo[nombre] = -1
             continue
-        conteo[nombre] = len(resultado)
-        ofertas.extend(resultado)
+        traidas, fallos = resultado
+        # Sin ofertas Y con algo que no contestó es una fuente ciega, no un día
+        # tranquilo: va como error. Con ofertas se informa el número aunque algo
+        # haya fallado, porque no te dejó sin ver —el detalle queda en el log—.
+        if not traidas and fallos:
+            logger.warning("fuente_ciega", fuente=nombre, fallos=len(fallos), motivos=fallos[:3])
+            conteo[nombre] = -1
+            continue
+        conteo[nombre] = len(traidas)
+        ofertas.extend(traidas)
     # Cada empresa muda entra al conteo con su propio nombre y en -1, que es el
     # mismo "error" que ya usa el pie del aviso para una fuente caída. Así el
     # token roto se lee en el teléfono —"empresa Shopify: error"— en vez de
@@ -206,7 +240,7 @@ def armar_aviso(
     dignas = _dignas(seleccion, criterio)
     cabecera = f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}"
     if not dignas:
-        revisadas = sum(n for n in conteo.values() if n > 0)
+        revisadas = _revisadas(conteo)
         return (
             f"{cabecera}\nNada sobre {criterio.puntaje_minimo} puntos "
             f"entre {revisadas} ofertas nuevas.\n{_pie_fuentes(conteo)}"
@@ -296,8 +330,8 @@ def texto_para_telegram(
     if pendientes:
         return f"{pendientes}\n\n{_pie_fuentes(conteo)}"
 
-    revisadas = sum(n for n in conteo.values() if n > 0)
-    if conteo and not revisadas:
+    revisadas = _revisadas(conteo)
+    if _hubo_fuentes_de_ofertas(conteo) and not revisadas:
         return (
             f"Ofertas — {datetime.now().strftime('%d/%m %H:%M')}\n"
             f"Ninguna fuente devolvió nada. No es que no haya ofertas: "
@@ -367,6 +401,27 @@ def _repartir(
     return dentro + fuera
 
 
+# Entradas del conteo que NO son ofertas revisadas. Hoy sólo el buzón de
+# postulaciones: entra al pie para que se vea que Gmail se leyó, pero sus
+# correos son respuestas a lo que ya postulaste, no candidatas de hoy.
+#
+# Sin esta lista, veinte acuses de recibo en la bandeja alcanzaban para que
+# `revisadas` diera veinte con las once fuentes de ofertas caídas, y entonces la
+# alerta de "ninguna fuente devolvió nada, algo se rompió" —que es la que avisa
+# que el cazador está ciego— no salía.
+NO_SON_OFERTAS = frozenset({"postulaciones"})
+
+
+def _revisadas(conteo: dict[str, int]) -> int:
+    """Cuántas ofertas se miraron en esta vuelta, sin contar lo que no lo es."""
+    return sum(n for nombre, n in conteo.items() if n > 0 and nombre not in NO_SON_OFERTAS)
+
+
+def _hubo_fuentes_de_ofertas(conteo: dict[str, int]) -> bool:
+    """¿Se consultó alguna fuente de ofertas? Con sólo el buzón, no."""
+    return any(nombre not in NO_SON_OFERTAS for nombre in conteo)
+
+
 def _pie_fuentes(conteo: dict[str, int]) -> str:
     partes = [f"{n}: {'error' if c < 0 else c}" for n, c in sorted(conteo.items())]
     return "fuentes → " + " · ".join(partes)
@@ -412,7 +467,9 @@ def escribir_digest(
     return destino
 
 
-async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
+async def _pendientes(
+    criterio: Criterio, carpeta: Path, conteo: dict[str, int] | None = None
+) -> list[Respuesta]:
     """Lo que tus postulaciones piden y todavía no te avisé.
 
     Memoria aparte de la de las ofertas: son cosas distintas con vidas distintas,
@@ -421,17 +478,61 @@ async def _pendientes(criterio: Criterio, carpeta: Path) -> list[Respuesta]:
 
     `imaplib` es síncrona, así que va a un hilo igual que la fuente de LinkedIn:
     una conexión IMAP en el bucle deja esperando a todo lo demás.
+
+    Entra al `conteo` como una fuente más, y ésa es la novedad: era el único
+    camino del cazador que no aparecía en el pie del aviso. Con la contraseña de
+    Gmail vencida no llegaba ningún pendiente Y el pie se veía igual de sano que
+    siempre, así que la señal de que el buzón dejó de leerse era... ninguna. Es
+    justo la fuente donde eso cuesta más caro: una entrevista que no avisa no se
+    nota hasta que ya pasó la fecha.
     """
+    if conteo is not None:
+        # Apagada en el TOML es distinto de rota: se informa y no se cuenta como
+        # error. Apagar una fuente es una decisión tuya; que no conteste, no.
+        conteo["postulaciones"] = 0
     if not criterio.fuentes.get("postulaciones", True):
+        if conteo is not None:
+            del conteo["postulaciones"]
         return []
     usuario = os.environ.get("GMAIL_USUARIO", "")
     clave = os.environ.get("GMAIL_APP_PASSWORD", "")
     if not usuario or not clave:
+        logger.warning("postulaciones_sin_credenciales", detail="falta GMAIL_APP_PASSWORD")
+        if conteo is not None:
+            conteo["postulaciones"] = -1
         return []
 
+    fallos = fuentes.contar_fallos()
     respuestas = await asyncio.to_thread(fuentes.respuestas_por_imap, usuario, clave)
+    if conteo is not None:
+        # Cuántas RESPUESTAS A POSTULACIONES TUYAS trajo el buzón, no cuántos
+        # correos se leyeron. Desde que nada se descarta en silencio, el lector
+        # devuelve la bandeja entera: con cuatro acuses, veinte alertas de
+        # LinkedIn y seis facturas, el pie decía «postulaciones: 30» al lado de
+        # «remoteok: 12», y leído en el teléfono eso son treinta respuestas a
+        # postulaciones que no existen.
+        #
+        # Un cero con credenciales puestas sigue queriendo decir "Gmail
+        # contestó y no había nada", que es distinto del `error` de abajo.
+        de_postulaciones = [r for r in respuestas if r.estado in DE_POSTULACION]
+        conteo["postulaciones"] = -1 if (fallos and not respuestas) else len(de_postulaciones)
+        # Y si el tope dejó correos sin mirar, se dice. Sin esta línea el
+        # recorte se anotaba en el registro de fallos y ahí se quedaba: el
+        # registro sólo decide `error` contra número, así que con una sola
+        # respuesta leída el aviso se veía perfecto aunque el buzón tuviera el
+        # triple. Un recorte que no se ve es exactamente el agujero que esto
+        # venía a tapar.
+        sin_mirar = sum(
+            int(f.split(":", 1)[1]) for f in fallos if f.startswith(SIN_MIRAR) and ":" in f
+        )
+        if sin_mirar:
+            conteo["buzón_sin_mirar"] = sin_mirar
     memoria = Memoria(carpeta / "postulaciones.json")
-    nuevas = [r for r in respuestas if r.estado in AVISABLES and not memoria.conoce(r.id_mensaje)]
+    # `interrumpe` y no `estado in AVISABLES`: un contacto con señales de estafa
+    # sigue apareciendo en `--correos`, con las señales a la vista, pero no te
+    # despierta el teléfono. Un canal que te interrumpe con fraude es un canal
+    # que dejás de abrir.
+    nuevas = [r for r in respuestas if r.interrumpe and not memoria.conoce(r.id_mensaje)]
     # Se anota acá y no después de avisar, al revés que las ofertas: un pendiente
     # repetido cinco veces por día es peor que uno perdido, porque el correo
     # sigue en tu bandeja mientras que la oferta caduca.
@@ -449,12 +550,15 @@ async def una_vuelta(
     ofertas, conteo = await recolectar(criterio, consulta_upwork)
     memoria = Memoria(carpeta / "vistas.json")
     seleccion = seleccionar(ofertas, criterio, memoria)
+    # El buzón se lee ANTES de armar los textos porque también entra al conteo:
+    # armándolos primero, el pie del aviso salía sin la línea de postulaciones y
+    # el digest quedaba con un conteo distinto al del teléfono.
+    pendientes = bloque(await _pendientes(criterio, carpeta, conteo))
     destino = escribir_digest(carpeta, seleccion, conteo)
     # Dos textos distintos a propósito: el de la consola cuenta siempre qué pasó
     # —corrés el comando, querés ver el resultado— y el del teléfono sólo
     # interrumpe cuando hay algo que decir.
     texto = armar_aviso(seleccion, criterio, conteo)
-    pendientes = bloque(await _pendientes(criterio, carpeta))
     al_telefono = texto_para_telegram(
         seleccion, criterio, conteo, _horas_de_silencio(carpeta), pendientes
     )
@@ -499,6 +603,82 @@ async def probar(criterio: Criterio, consulta_upwork: str) -> str:
             f"  puntaje: {puntaje.total} · {'; '.join(puntaje.motivos) or 'nada'}",
             "",
         ]
+    return "\n".join(lineas)
+
+
+async def contar_paises(criterio: Criterio, consulta_upwork: str) -> str:
+    """De qué países son las ofertas que traen las fuentes, y cuántas pasan.
+
+    Existe para poder elegir el peso de `estados_unidos` y `canada` con un
+    número en la mano y no a ojo. Medido el 21/09/2026 sobre 3.623 ofertas
+    reales: 27,4% en EE.UU., 4,4% en Canadá, 8,0% sin ubicación ninguna, y el
+    60,1% restante en algún otro país.
+
+    ⚠ Los dos últimos se cuentan APARTE, y es lo único delicado de este
+    comando. `pais_de()` devuelve "" en dos casos que no se parecen en nada:
+    cuando la oferta no trae ubicación, y cuando la trae pero no es de EE.UU.
+    ni de Canadá —que es todo lo demás, porque el detector sólo conoce esos
+    dos—. Juntarlos bajo "(sin ubicación)" decía que del 68% no sabíamos nada,
+    cuando de casi todas sí sabemos: están en otro lado.
+
+    Se vio con el desglose por fuente, que sumaba 291 y no 2.469. El desglose
+    sigue abajo porque contesta la otra pregunta: qué fuente no manda el campo.
+
+    No escribe nada ni avisa: se puede correr mientras una vuelta está en curso.
+    """
+    ofertas, conteo = await recolectar(criterio, consulta_upwork)
+    por_pais: dict[str, list[int]] = {}
+    for oferta in ofertas:
+        puntaje = puntuar(oferta, criterio)
+        # "No sabemos dónde está" y "está en otro lado" son cosas distintas y
+        # se cuentan distinto: ver el aviso del docstring.
+        pais = pais_de(oferta)
+        if not pais:
+            pais = "(otro país)" if oferta.ubicacion.strip() else "(sin ubicación)"
+        por_pais.setdefault(pais, []).append(puntaje.total)
+
+    lineas = [_pie_fuentes(conteo), ""]
+    if not ofertas:
+        return "\n".join([*lineas, "Ninguna fuente trajo ofertas: no hay nada que contar."])
+
+    lineas.append(f"{len(ofertas)} ofertas, por país del puesto:")
+    for pais, puntajes in sorted(por_pais.items(), key=lambda par: -len(par[1])):
+        sobre = sum(1 for p in puntajes if p >= criterio.puntaje_minimo)
+        cuota = 100 * len(puntajes) / len(ofertas)
+        mediana = sorted(puntajes)[len(puntajes) // 2]
+        lineas.append(
+            f"  {pais:18} {len(puntajes):>5} ({cuota:4.1f}%) · "
+            f"{sobre} sobre {criterio.puntaje_minimo} · mediana {mediana}"
+        )
+    # Qué fuente no manda el campo. Medido: Hacker News el 100% —la empresa sale
+    # de la primera línea de un comentario, así que no hay campo que mandar— y
+    # RemoteOK un tercio. Las dos son esperables y no hay adaptador que
+    # arreglar; lo que hace falta es que el número no se confunda con el de las
+    # ofertas que sí traen ubicación pero no son de EE.UU. ni de Canadá.
+    sin_lugar: dict[str, int] = {}
+    total_fuente: dict[str, int] = {}
+    for oferta in ofertas:
+        total_fuente[oferta.fuente] = total_fuente.get(oferta.fuente, 0) + 1
+        if not oferta.ubicacion.strip():
+            sin_lugar[oferta.fuente] = sin_lugar.get(oferta.fuente, 0) + 1
+    if sin_lugar:
+        lineas += ["", "Sin ubicación, por fuente:"]
+        for fuente, cuantas in sorted(sin_lugar.items(), key=lambda par: -par[1]):
+            de = total_fuente[fuente]
+            lineas.append(f"  {fuente:14} {cuantas:>5} de {de:>5} ({100 * cuantas / de:4.1f}%)")
+
+    # Lo que contesta la pregunta de verdad: si el peso del país está admitiendo
+    # ofertas que sin él no pasarían, o sólo ordenando las que ya pasaban.
+    sin_pais = replace(
+        criterio, preferencias={**criterio.preferencias, "estados_unidos": 0, "canada": 0}
+    )
+    con = sum(1 for o in ofertas if puntuar(o, criterio).total >= criterio.puntaje_minimo)
+    sin = sum(1 for o in ofertas if puntuar(o, sin_pais).total >= criterio.puntaje_minimo)
+    lineas += [
+        "",
+        f"Pasan el mínimo: {con} con el peso del país, {sin} sin él.",
+        f"El país admite {con - sin} que sin él no llegaban.",
+    ]
     return "\n".join(lineas)
 
 
@@ -619,6 +799,66 @@ async def medir_retraso(criterio: Criterio, carpeta: Path, al_telefono: bool = F
     return informe(medicion)
 
 
+async def ver_seguimiento(criterio: Criterio, carpeta: Path, al_telefono: bool) -> str:
+    """En qué quedó cada postulación. Sólo lee: digests y buzón.
+
+    Comparte el camino con `--retraso` a propósito —son el mismo cruce— pero
+    contestan cosas distintas: aquél mide cuánto tardás en postular, éste dice
+    qué pasó después.
+    """
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    # Mismo aviso que en `medir_retraso`: sin buzón TODO figura sin rastro, y
+    # ese número se lee como "no postulaste a ninguna" cuando dice "no miramos".
+    sin_buzon = "" if usuario and clave else "faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD"
+    respuestas = (
+        []
+        if sin_buzon
+        else await asyncio.to_thread(
+            fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
+        )
+    )
+    avisos = leer_avisos(carpeta)
+    medicion = medir(
+        avisos,
+        respuestas,
+        criterio.puntaje_minimo,
+        (criterio.descartar_despues_de_dias or 4) * 24,
+        sin_buzon,
+    )
+    texto = parte(seguir(avisos, respuestas), medicion)
+    if al_telefono:
+        avisar(texto)
+    return texto
+
+
+async def ver_correos(criterio: Criterio, al_telefono: bool = False) -> str:
+    """Qué hay en el buzón, por tipo. Sólo lee.
+
+    Es la herramienta que hacía falta para poder decir "no se descarta
+    ninguno": antes, lo que el clasificador no reconocía desaparecía sin
+    contarse, y no había forma de saber cuánto era ni de qué.
+
+    `--al-telefono` existe por la misma razón que en `--retraso`: las
+    credenciales de Gmail viven en Railway y no en la Mac, así que el único
+    lugar donde este comando ve el buzón de verdad es allá —y la salida de una
+    corrida allá no siempre se puede leer—. El panel sí llega.
+    """
+    if not criterio.fuentes.get("postulaciones", True):
+        return "La fuente `postulaciones` está apagada en el TOML."
+    usuario = os.environ.get("GMAIL_USUARIO", "")
+    clave = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not usuario or not clave:
+        return "Faltan GMAIL_USUARIO / GMAIL_APP_PASSWORD: sin buzón no hay nada que mirar."
+    respuestas = await asyncio.to_thread(
+        fuentes.respuestas_por_imap, usuario, clave, DIAS_DE_SEGUIMIENTO
+    )
+    texto = inventario(respuestas)
+    if al_telefono:
+        avisar(texto)
+    return texto
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Trae ofertas de trabajo y avisa por Telegram.")
     parser.add_argument(
@@ -636,14 +876,29 @@ def main() -> None:
         help="Dice cuáles tokens de [[empresas]] responden y cuántos puestos traen",
     )
     parser.add_argument(
+        "--paises",
+        action="store_true",
+        help="De qué países son las ofertas que llegan, y cuántas pasan el mínimo",
+    )
+    parser.add_argument(
         "--retraso",
         action="store_true",
         help="Cuánto tardás en postular después del aviso, y qué quedó sin postular",
     )
     parser.add_argument(
+        "--correos",
+        action="store_true",
+        help="Qué hay en el buzón por tipo, incluido lo que no se reconoció",
+    )
+    parser.add_argument(
+        "--seguimiento",
+        action="store_true",
+        help="En qué quedó cada postulación: entrevista, piden algo, esperando, cerrada",
+    )
+    parser.add_argument(
         "--al-telefono",
         action="store_true",
-        help="Con --retraso: manda el resumen al panel además de imprimirlo",
+        help="Con --retraso, --seguimiento o --correos: manda el parte al panel también",
     )
     parser.add_argument(
         "--sin-avisar", action="store_true", help="Corre entero pero no manda el mensaje"
@@ -669,15 +924,27 @@ def main() -> None:
     if args.probar_empresas:
         print(asyncio.run(probar_empresas(criterio)))
         return
-    if args.al_telefono and not args.retraso:
+    if args.al_telefono and not (args.retraso or args.seguimiento or args.correos):
         # Sin esto el flag se ignoraba en silencio y arrancaba una vuelta
         # completa: escribía memoria y mandaba el aviso de ofertas. Quien lo
         # tipea esperando el informe recibía otra cosa, y encima con efectos.
-        parser.error("--al-telefono necesita --retraso")
+        parser.error("--al-telefono necesita --retraso, --seguimiento o --correos")
+    if args.correos:
+        # Sólo lectura, igual que --retraso y --seguimiento.
+        print(asyncio.run(ver_correos(criterio, args.al_telefono)))
+        return
+    if args.seguimiento:
+        # Sólo lectura, igual que --retraso: se puede mirar con una vuelta en curso.
+        print(asyncio.run(ver_seguimiento(criterio, carpeta_de_trabajo(), args.al_telefono)))
+        return
     if args.retraso:
         # No toma el cerrojo: es de sólo lectura y tiene que poder mirarse
         # mientras una vuelta está corriendo.
         print(asyncio.run(medir_retraso(criterio, carpeta_de_trabajo(), args.al_telefono)))
+        return
+    if args.paises:
+        # Igual que `--probar`: sólo lee.
+        print(asyncio.run(contar_paises(criterio, args.consulta_upwork)))
         return
     if args.probar:
         # `--probar` no escribe nada: no toma el turno ni molesta a la vuelta

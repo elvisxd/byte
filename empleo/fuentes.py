@@ -8,8 +8,12 @@ cambiar una cuenta por unos links. Upwork es un caso aparte y está explicado en
 
 **Una fuente que falla no frena a las demás.** Cada adaptador atrapa sus propios
 errores y devuelve lista vacía: que RemoteOK esté caído no puede dejarte sin el
-aviso de hoy. Lo que sí hace es quedar registrado, para que "no llegó nada" se
-distinga de "no había nada".
+aviso de hoy.
+
+Y queda registrado dos veces, que es lo que separa "no llegó nada" de "no había
+nada": en el log, con la URL y el código, y en el contador de `contar_fallos()`,
+que es el que hace que el pie del aviso diga «remoteok: error» en vez de
+«remoteok: 0». Esa segunda parte es la que llega al teléfono.
 
 **Todo lo que entra por acá es contenido de terceros.** Una descripción de
 trabajo la escribe cualquiera y puede traer instrucciones adentro: por eso, todo
@@ -17,6 +21,7 @@ lo que llegue al prompt del modelo pasa por `wrap_untrusted` en `tools/empleo.py
 y nada de acá se ejecuta ni se obedece.
 """
 
+import contextvars
 import email
 import html
 import imaplib
@@ -32,7 +37,7 @@ import httpx
 
 from api.logging import get_logger
 from empleo.oferta import Oferta
-from empleo.postulaciones import Respuesta, clasificar
+from empleo.postulaciones import Respuesta, clasificar, sospechas
 
 logger = get_logger("empleo.fuentes")
 
@@ -82,6 +87,53 @@ def _texto(valor: object, tope: int = 20_000) -> str:
     return str(valor)[:tope]
 
 
+# Qué le falló a la fuente que se está corriendo ahora mismo.
+#
+# Existe por el agujero que dejaba la promesa de arriba. Un adaptador que falla
+# atrapa su error y devuelve `[]`, que es lo correcto —una fuente caída no puede
+# dejarte sin el aviso de hoy—, pero el conteo del pie contaba ese `[]` como
+# CERO. Y cero es lo mismo que dice un día tranquilo.
+#
+# Así que en el teléfono, que es donde el pie se lee, «remoteok: 0» quería decir
+# dos cosas opuestas: «hoy no publicaron nada» y «no contesté». Lo segundo
+# quedaba sólo en el log, y al log no se asoma nadie cinco veces por día. El
+# caso que importa es el de las fuentes de correo: la contraseña de aplicación
+# de Gmail vence sin avisar, y el síntoma era «linkedin: 0 · jobbank: 0» durante
+# los días que tardaras en sospechar.
+#
+# Es un `ContextVar` y no un parámetro porque quien falla es `_traer()`, tres
+# capas adentro de cada adaptador: pasarlo a mano sería cambiar la firma de las
+# once fuentes y de todo lo que llamen.
+_FALLOS: contextvars.ContextVar[list[str]] = contextvars.ContextVar("fallos_de_la_fuente")
+
+
+def contar_fallos() -> list[str]:
+    """Empieza a contar los fallos de esta fuente y devuelve la lista viva.
+
+    Se llama DENTRO de la tarea de cada fuente. `asyncio.gather` envuelve cada
+    corrutina en una `Task` y cada `Task` copia el contexto, así que la lista que
+    se registra acá no pisa la de la fuente de al lado aunque corran a la vez.
+
+    Y `asyncio.to_thread` propaga ese mismo contexto, que es lo que hace que los
+    fallos de las tres fuentes de correo —síncronas, corriendo en un hilo— se
+    cuenten igual que los de las demás.
+    """
+    lista: list[str] = []
+    _FALLOS.set(lista)
+    return lista
+
+
+def _anotar_fallo(motivo: str) -> None:
+    """Deja constancia de que algo no contestó. Sin nadie contando, no hace nada.
+
+    Las fuentes se pueden llamar sueltas —desde una prueba, desde `tools/`— y
+    ahí no hay vuelta que registre nada. Que eso no falle es a propósito.
+    """
+    lista = _FALLOS.get(None)
+    if lista is not None:
+        lista.append(motivo)
+
+
 def _por_que_fallo(exc: Exception) -> dict[str, object]:
     """El tipo del error y, si el servidor contestó, su código.
 
@@ -110,9 +162,11 @@ async def _traer(
         respuesta.raise_for_status()
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.warning("fuente_fallo", url=url[:120], **_por_que_fallo(exc))
+        _anotar_fallo(type(exc).__name__)
         return None
     if len(respuesta.content) > max_bytes:
         logger.warning("fuente_demasiado_grande", url=url[:120], bytes=len(respuesta.content))
+        _anotar_fallo("demasiado_grande")
         return None
     return respuesta
 
@@ -124,6 +178,7 @@ def _json_de(respuesta: httpx.Response | None) -> object | None:
         return respuesta.json()
     except (json.JSONDecodeError, ValueError):
         logger.warning("fuente_json_invalido", url=str(respuesta.url)[:120])
+        _anotar_fallo("json_invalido")
         return None
 
 
@@ -238,6 +293,7 @@ def _rss_a_ofertas(xml: str) -> list[Oferta]:
         raiz = ET.fromstring(xml)  # noqa: S314 - ver el docstring
     except ET.ParseError as exc:
         logger.warning("wwr_rss_invalido", error_type=type(exc).__name__)
+        _anotar_fallo("rss_invalido")
         return []
 
     ofertas: list[Oferta] = []
@@ -448,6 +504,7 @@ async def hackernews(cliente: httpx.AsyncClient) -> list[Oferta]:
             break
     if not id_hilo:
         logger.warning("hn_sin_hilo", detail="ningún 'Who is hiring?' entre los últimos hilos")
+        _anotar_fallo("sin_hilo")
         return []
 
     hilo = _json_de(await _traer(cliente, f"https://hn.algolia.com/api/v1/items/{id_hilo}"))
@@ -601,6 +658,7 @@ def linkedin_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
     """
     if not usuario or not clave:
         logger.info("linkedin_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        _anotar_fallo("sin_credenciales")
         return []
 
     desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
@@ -625,6 +683,7 @@ def linkedin_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
             return list(ofertas.values())
     except (OSError, imaplib.IMAP4.error) as exc:
         logger.warning("linkedin_imap_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
         return []
 
 
@@ -795,6 +854,7 @@ def jobbank_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
     """
     if not usuario or not clave:
         logger.info("jobbank_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        _anotar_fallo("sin_credenciales")
         return []
 
     desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
@@ -819,6 +879,7 @@ def jobbank_por_imap(usuario: str, clave: str, dias: int = 3) -> list[Oferta]:
             return list(ofertas.values())
     except (OSError, imaplib.IMAP4.error) as exc:
         logger.warning("jobbank_imap_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
         return []
 
 
@@ -828,6 +889,159 @@ def _ofertas_jobbank_del_correo(crudo: bytes) -> list[Oferta]:
     fecha = _texto(mensaje.get("Date"), 60)
     cuerpo = _cuerpo_de(mensaje, "text/html")
     return ofertas_de_alerta_jobbank(cuerpo, fecha) if cuerpo else []
+
+
+# --- Wellfound (ex AngelList) -----------------------------------------------
+
+REMITENTE_WELLFOUND = "team@hi.wellfound.com"
+# Manda un digest cada varios días, con entre dos y diez ofertas. Quince cubre
+# de sobra la ventana que se mira.
+TOPE_CORREOS_WELLFOUND = 15
+
+# El enlace de cada oferta, que es también el separador entre una y la
+# siguiente. Es el ancla de todo el parseo: es lo único del correo que no
+# cambia de forma según los campos que la empresa haya completado.
+#
+# Y llega LIMPIO, sin redirector ni parámetros de seguimiento —al revés que
+# Lensa, donde cada enlace pasa por `email.mg3.lensa.com/c/<base64>` y no hay
+# forma de saber a dónde lleva sin pedírselo a su rastreador—.
+_ENLACE_WELLFOUND = re.compile(r"<(https://wellfound\.com/jobs\?job_listing_slug=([\w-]+))>")
+
+# "Turnberry Solutions / Employees", "Nuel / 1-10 Employees". El tamaño puede
+# venir vacío, y por eso no se exige.
+_EMPRESA_WELLFOUND = re.compile(r"^(.+?)\s*/\s*[\w\s-]*Employees$")
+
+# Lo que Wellfound llama su resumen. Marca dónde empieza la descripción.
+_RESUMEN_WELLFOUND = "Our Take"
+
+
+def ofertas_de_alerta_wellfound(cuerpo: str, fecha: str) -> list[Oferta]:
+    """Las ofertas de un digest de Wellfound, leídas del texto plano.
+
+    El correo viene con una estructura fija por oferta —título, empresa,
+    una línea de datos, las etiquetas, "Our Take" y la descripción— y termina
+    en el enlace. Se parte por el enlace y cada trozo se lee HACIA ATRÁS desde
+    "Our Take": es la única forma de que el saludo del principio y el pie del
+    final no se cuelen como si fueran el título de la primera y la última.
+
+    Es el único de los tres portales nuevos que se puede leer sin tocar HTML,
+    y el único que manda la modalidad —"In office" o "Remote only"— como dato
+    y no como prosa. Esa palabra es la que encienden las señales `presencial` y
+    `remoto_global` sin que haya que inventar nada.
+    """
+    salida: list[Oferta] = []
+    desde = 0
+    for enlace in _ENLACE_WELLFOUND.finditer(cuerpo):
+        trozo = cuerpo[desde : enlace.start()]
+        desde = enlace.end()
+        oferta = _una_oferta_wellfound(trozo, enlace.group(1), enlace.group(2), fecha)
+        if oferta is not None:
+            salida.append(oferta)
+    return salida
+
+
+def _una_oferta_wellfound(trozo: str, url: str, slug: str, fecha: str) -> Oferta | None:
+    """Un bloque del digest, leído de atrás para adelante."""
+    lineas = [x.strip() for x in trozo.splitlines()]
+    try:
+        corte = len(lineas) - 1 - lineas[::-1].index(_RESUMEN_WELLFOUND)
+    except ValueError:
+        # Sin "Our Take" no es un bloque de oferta: es el pie del correo, o el
+        # saludo. Se descarta en silencio y a propósito.
+        return None
+
+    # Hacia atrás desde "Our Take": la línea de la empresa es la referencia,
+    # porque es la única con forma reconocible. El título es la anterior.
+    empresa = ""
+    titulo = ""
+    datos = ""
+    for i in range(corte - 1, -1, -1):
+        acierto = _EMPRESA_WELLFOUND.match(lineas[i])
+        if not acierto:
+            continue
+        empresa = acierto.group(1)
+        anteriores = [x for x in lineas[:i] if x]
+        titulo = anteriores[-1] if anteriores else ""
+        # La línea de datos va justo después de la empresa, y es la que trae
+        # los `|`: salario, modalidad y lugar, experiencia y tipo de contrato.
+        datos = next((x for x in lineas[i + 1 : corte] if "|" in x), "")
+        break
+    if not titulo:
+        return None
+
+    partes = [x.strip() for x in datos.split("|")] if datos else []
+    salario = partes[0] if partes else ""
+    # "In office, Des Moines", "Remote only, Everywhere". La modalidad entra a
+    # la ubicación a propósito: es donde ya miran `presencial` y `remoto_global`.
+    lugar = partes[1] if len(partes) > 1 else ""
+    # La experiencia pedida va con las etiquetas y no con el título: "1 years of
+    # exp" es lo que enciende la señal `junior` sin tocar ningún patrón.
+    experiencia = partes[2] if len(partes) > 2 else ""
+    contrato = partes[3] if len(partes) > 3 else ""
+
+    descripcion = "\n".join(x for x in lineas[corte + 1 :] if x)
+    return Oferta(
+        fuente="wellfound",
+        id_externo=slug,
+        titulo=titulo[:300],
+        empresa=empresa[:200],
+        url=url[:600],
+        descripcion=_texto(f"{descripcion}\n{experiencia} · {contrato}".strip(), 20_000),
+        ubicacion=lugar[:200],
+        publicada=fecha,
+        salario=salario[:200],
+    )
+
+
+def _ofertas_wellfound_del_correo(crudo: bytes) -> list[Oferta]:
+    """Saca el texto plano de un correo de Wellfound y lo pasa al parser."""
+    mensaje = email.message_from_bytes(crudo)
+    fecha = _texto(mensaje.get("Date"), 60)
+    cuerpo = _cuerpo_de(mensaje, "text/plain")
+    return ofertas_de_alerta_wellfound(cuerpo, fecha) if cuerpo else []
+
+
+def wellfound_por_imap(usuario: str, clave: str, dias: int = 5) -> list[Oferta]:
+    """Los digests de Wellfound de los últimos `dias`, leídos del buzón.
+
+    Mismo camino, misma contraseña de aplicación y el mismo **solo lectura**
+    que LinkedIn y Job Bank: no marca, no mueve, no borra.
+
+    La ventana es más ancha que la de las otras dos —cinco días contra tres—
+    porque Wellfound no manda todos los días: manda cuando junta ofertas.
+
+    Nunca lanza: sin credenciales o con Gmail caído, la vuelta sigue.
+    """
+    if not usuario or not clave:
+        logger.info("wellfound_sin_credenciales", detail="fuente apagada: falta GMAIL_APP_PASSWORD")
+        _anotar_fallo("sin_credenciales")
+        return []
+
+    desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
+    try:
+        with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
+            buzon.login(usuario, clave)
+            buzon.select("INBOX", readonly=True)
+            estado, respuesta = buzon.search(
+                None, f'(FROM "{REMITENTE_WELLFOUND}" SINCE "{desde}")'
+            )
+            if estado != "OK" or not respuesta or not respuesta[0]:
+                return []
+            identificadores = respuesta[0].split()[-TOPE_CORREOS_WELLFOUND:]
+
+            ofertas: dict[str, Oferta] = {}
+            for identificador in identificadores:
+                estado, datos = buzon.fetch(identificador, "(RFC822)")
+                if estado != "OK" or not datos or not isinstance(datos[0], tuple):
+                    continue
+                for oferta in _ofertas_wellfound_del_correo(datos[0][1]):
+                    # La misma oferta vuelve en el digest siguiente: es una sola.
+                    ofertas.setdefault(oferta.id_externo, oferta)
+            return list(ofertas.values())
+    except (OSError, imaplib.IMAP4.error) as exc:
+        logger.warning("wellfound_imap_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
+        return []
 
 
 # --- Empresas, por su propio sistema de postulación ---
@@ -1075,6 +1289,7 @@ async def workday(
         partes = partes_de_workday(url)
         if partes is None:
             logger.warning("workday_url_invalida", empresa=nombre[:80])
+            _anotar_fallo("url_invalida")
             continue
         salida.extend(await _una_empresa_workday(cliente, nombre, partes, consultas))
     return salida
@@ -1098,6 +1313,7 @@ async def _una_empresa_workday(
     puestos = crudo.get("jobPostings") if isinstance(crudo, dict) else None
     if not isinstance(puestos, list):
         logger.warning("workday_forma_inesperada", empresa=nombre[:80])
+        _anotar_fallo("forma_inesperada")
         return []
 
     ofertas: list[Oferta] = []
@@ -1151,6 +1367,7 @@ async def _traer_post(cliente: httpx.AsyncClient, url: str, cuerpo: dict) -> htt
         respuesta.raise_for_status()
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.warning("fuente_fallo", url=url[:120], **_por_que_fallo(exc))
+        _anotar_fallo(type(exc).__name__)
         return None
     return respuesta
 
@@ -1207,6 +1424,7 @@ async def upwork(cliente: httpx.AsyncClient, token: str, consulta: str) -> list[
         crudo = respuesta.json()
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("upwork_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
         return []
 
     bordes = (((crudo or {}).get("data") or {}).get("marketplaceJobPostingsSearch") or {}).get(
@@ -1214,6 +1432,7 @@ async def upwork(cliente: httpx.AsyncClient, token: str, consulta: str) -> list[
     )
     if not isinstance(bordes, list):
         logger.warning("upwork_forma_inesperada", detail="usar --probar para ver la respuesta")
+        _anotar_fallo("forma_inesperada")
         return []
 
     ofertas: list[Oferta] = []
@@ -1277,9 +1496,37 @@ def cliente_http() -> httpx.AsyncClient:
 
 # --- Respuestas a tus postulaciones ---
 
-# Cuántos correos se miran por vuelta. El buzón trae de todo; lo que importa son
-# los últimos días, y pedir más es tiempo de IMAP por correos ya clasificados.
-TOPE_CORREOS_POSTULACIONES = 60
+# Cuántos correos se miran por vuelta.
+#
+# Eran 60, y con 60 la ventana de 14 días era mentira. Medido sobre el buzón de
+# verdad el 21/09: 201 hilos en esos 14 días, y 50 de ellos en las últimas 19
+# HORAS. O sea que el tope se gastaba en un día y todo lo anterior quedaba
+# invisible —incluido el "falta el video" de hace once días, que es el caso que
+# originó todo esto—. Y no se notaba: el recorte era un `[-60:]` mudo.
+#
+# 200 cubre los 14 días con aire de sobra una vez descontado lo de abajo. El
+# costo es tiempo de IMAP y se paga una vez por vuelta.
+TOPE_CORREOS_POSTULACIONES = 200
+
+# Lo que NO se pide por esta vía, porque ya se lee por otra.
+#
+# LinkedIn, Job Bank y Wellfound tienen cada uno su propia fuente, con su propio
+# parser: pedirlos acá es bajarlos dos veces y, sobre todo, gastar el tope en
+# correos que ya están leídos. Entre los tres son la mitad del buzón.
+#
+# GitHub es ruido de este mismo repo: 11 de los 50 últimos hilos son avisos de
+# CI. No es correo de trabajo y no tiene por qué comerse un lugar.
+#
+# ⚠ Esto NO es descartar: son remitentes que YA se leen. Todo lo demás —las
+# alertas de Jobright, de Lensa, los boletines, las facturas— sigue entrando y
+# sigue saliendo en `--correos` con su tipo, que es lo que hace que se pueda
+# decir "no se descarta ninguno".
+YA_SE_LEEN_APARTE = (
+    REMITENTE_LINKEDIN,
+    REMITENTE_JOBBANK,
+    REMITENTE_WELLFOUND,
+    "notifications@github.com",
+)
 
 
 def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respuesta]:
@@ -1296,6 +1543,7 @@ def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respue
     """
     if not usuario or not clave:
         logger.info("postulaciones_sin_credenciales", detail="falta GMAIL_APP_PASSWORD")
+        _anotar_fallo("sin_credenciales")
         return []
 
     desde = (datetime.now(tz=UTC) - timedelta(days=dias)).strftime("%d-%b-%Y")
@@ -1303,27 +1551,58 @@ def respuestas_por_imap(usuario: str, clave: str, dias: int = 14) -> list[Respue
         with imaplib.IMAP4_SSL(IMAP_GMAIL) as buzon:
             buzon.login(usuario, clave)
             buzon.select("INBOX", readonly=True)
-            estado, respuesta = buzon.search(None, f'(SINCE "{desde}")')
+            excluidos = "".join(f' NOT FROM "{quien}"' for quien in YA_SE_LEEN_APARTE)
+            base = f'SINCE "{desde}"{excluidos}'
+            # `X-GM-RAW` es la extensión de Gmail que acepta su propia sintaxis
+            # de búsqueda. Sirve para sacar Promociones, que es donde Gmail ya
+            # puso los boletines —Walmart, Pinterest, SeaWorld, Netflix— y que
+            # en el buzón real son una cuarta parte de lo que llega.
+            #
+            # ⚠ Medido antes de ponerlo: de los 35 correos de ATS de estos 14
+            # días, CERO están en Promociones. Si alguno cayera ahí lo estaríamos
+            # perdiendo, y eso sería peor que el ruido.
+            estado, respuesta = buzon.search(None, f'({base} X-GM-RAW "-category:promotions")')
+            if estado != "OK":
+                # Un servidor sin la extensión, o Gmail cambiándole el nombre.
+                # Se vuelve a pedir sin ella: menos limpio, pero nunca cero.
+                logger.info("postulaciones_sin_gmail_raw", detail="se busca sin la categoría")
+                estado, respuesta = buzon.search(None, f"({base})")
             if estado != "OK" or not respuesta or not respuesta[0]:
                 return []
-            identificadores = respuesta[0].split()[-TOPE_CORREOS_POSTULACIONES:]
+            todos = respuesta[0].split()
+            identificadores = todos[-TOPE_CORREOS_POSTULACIONES:]
+            # Que el recorte se vea. Antes era un `[-60:]` mudo: el buzón podía
+            # tener el triple y nadie se enteraba. Ahora sale en el pie del
+            # aviso, junto a las fuentes que se cayeron.
+            if len(todos) > len(identificadores):
+                sobran = len(todos) - len(identificadores)
+                logger.warning(
+                    "postulaciones_recortadas", vistos=len(identificadores), sin_mirar=sobran
+                )
+                _anotar_fallo(f"correos_sin_mirar:{sobran}")
 
             encontradas: list[Respuesta] = []
             for identificador in identificadores:
                 estado, datos = buzon.fetch(identificador, "(RFC822)")
                 if estado != "OK" or not datos or not isinstance(datos[0], tuple):
                     continue
-                hallada = _respuesta_del_correo(datos[0][1])
-                if hallada is not None:
-                    encontradas.append(hallada)
+                encontradas.append(_respuesta_del_correo(datos[0][1]))
             return encontradas
     except (OSError, imaplib.IMAP4.error) as exc:
         logger.warning("postulaciones_imap_fallo", error_type=type(exc).__name__)
+        _anotar_fallo(type(exc).__name__)
         return []
 
 
-def _respuesta_del_correo(crudo: bytes) -> Respuesta | None:
-    """Clasifica un correo MIME. `None` si no es una respuesta de postulación."""
+def _respuesta_del_correo(crudo: bytes) -> Respuesta:
+    """Clasifica un correo MIME. Siempre devuelve uno: nada se descarta.
+
+    Antes devolvía `None` para lo que el clasificador no reconocía, y ahí
+    terminaba: el correo no se contaba, no se registraba y no se veía. De los
+    sesenta que se miran por vuelta no había forma de saber cuántos caían en
+    ese agujero ni de qué eran —un ATS que cambiara la plantilla dejaba de
+    verse y nadie se enteraba—. Ahora todo sale con estado, aunque sea `otro`.
+    """
     mensaje = email.message_from_bytes(crudo)
     asunto = _texto(str(make_header(decode_header(mensaje.get("Subject", "")))), 300)
     cuerpo = ""
@@ -1336,13 +1615,22 @@ def _respuesta_del_correo(crudo: bytes) -> Respuesta | None:
             break
     # Sólo el principio: las plantillas dicen lo importante arriba y el pie trae
     # enlaces de baja y avisos legales que sólo agregan falsos positivos.
-    estado = clasificar(asunto, cuerpo[:4000])
-    if not estado:
-        return None
+    recorte = cuerpo[:4000]
+    remitente = _texto(mensaje.get("From"), 200)
     return Respuesta(
         id_mensaje=_texto(mensaje.get("Message-ID"), 200) or asunto,
-        remitente=_texto(mensaje.get("From"), 200),
+        remitente=remitente,
         asunto=asunto,
         fecha=_texto(mensaje.get("Date"), 60),
-        estado=estado,
+        estado=clasificar(asunto, recorte, remitente),
+        # `Authentication-Results` lo escribe Gmail al recibir: ya verificó SPF,
+        # DKIM y DMARC, y tirar esa cabecera sería repetir a mano un trabajo que
+        # ya está hecho. Puede haber varias; se miran todas.
+        sospechas=sospechas(
+            remitente,
+            _texto(mensaje.get("Reply-To"), 200),
+            " ".join(_texto(v, 400) for v in mensaje.get_all("Authentication-Results") or []),
+            asunto,
+            recorte,
+        ),
     )

@@ -47,6 +47,23 @@ leve = [
 latam = 30
 # Remoto en cualquier parte del mundo.
 remoto_global = 20
+# El PUESTO está en Estados Unidos o en Canadá. Sale del campo de ubicación de
+# la oferta —no del texto entero: "we serve customers across Canada" no vuelve
+# canadiense a un puesto de Berlín—, y las ofertas sin ubicación quedan sin país
+# y no suman ni restan, igual que las que no traen fecha.
+#
+# Ojo, no es lo mismo que `cliente_norteamerica`, que es de dónde es QUIEN
+# PUBLICA en Upwork. Una cosa es dónde está el trabajo y otra quién paga.
+#
+# 15 y no 25 a propósito, y el número importa: con 25 —el mínimo del aviso— una
+# oferta llegaría al teléfono por estar en EE.UU. y nada más. Y casi todos los
+# 1.700 puestos que traen las `[[empresas]]` están en EE.UU., así que el mínimo
+# dejaría de filtrar justo el día que más hace falta. Con 15 el país ORDENA:
+# empuja hacia arriba a las que además coinciden con tu stack, y no admite sola
+# a ninguna. Es el mismo principio de las penalizaciones, del otro lado:
+# ninguna señal descarta sola, ninguna señal admite sola.
+estados_unidos = 15
+canada = 15
 # Reubicación: la pagan, o al menos se comprometen. Pesa igual que el remoto
 # global porque son dos caminos igual de válidos para el mismo objetivo —
 # trabajar desde donde estés—, no uno bueno y uno de consuelo.
@@ -89,6 +106,36 @@ largo_plazo = 20
 [penalizaciones]
 # Restan. Ninguna descarta sola: el aviso muestra la señal y decidís vos.
 #
+# Un oficio que no es el tuyo, leído del TÍTULO. Hoy: gastronomía.
+#
+# El canal de LMIA sirve y se queda —es la vía por la que un empleador
+# canadiense contrata a alguien de afuera— pero trae con él todo lo que se
+# contrata por esa vía, y la cocina es lo que más volumen tiene. Medido con la
+# oferta real que llegó el 21/09/2026: «Line Cook (LMIA/PNP Available)» sacaba
+# 40 contra un mínimo de 25 y entraba al aviso.
+#
+# Pesa 60 y no 40 porque 40 es exactamente lo que juntaba esa oferta: el
+# patrocinio (15) más la frescura (25). Con 60 queda en -20.
+#
+# ⚠ Un oficio técnico en el título GANA siempre: «Software Engineer, Restaurant
+# Platform» es un puesto de programación en una empresa de gastronomía, que es
+# lo contrario de lo que se quiere frenar. Toast, Olo y Lightspeed contratan
+# ingenieros todo el tiempo.
+#
+# ⚠ Y no descarta: sigue en el digest, con la señal a la vista. Para agregar
+# otros oficios —camioneros, cuidadores, limpieza, que llegan por la misma vía—
+# se edita `_OFICIO_GASTRONOMIA` en `empleo/criterio.py`. Están fuera por ahora
+# porque todavía no aparecieron en el buzón: la lista se agranda con lo que
+# llega, no con lo que uno se imagina.
+#
+# ⚠ EL MISMO PESO FRENA LOS PUESTOS COMERCIALES, y esos llegan por otra vía.
+# «Sales Development Representative | France | Remote — Grafana Labs» sacó 57
+# el 21/09 y salió TERCERA de 101. No vino del canal de LMIA: vino de la lista
+# de `[[empresas]]` de acá abajo, porque el cazador se baja el board entero de
+# cada una —3.606 puestos esa vuelta— y un board entero trae ventas, marketing,
+# finanzas y recursos humanos. Es la misma fuente buena, con el departamento
+# equivocado. Ver `_OFICIO_COMERCIAL`.
+fuera_de_oficio = 60
 # Junior / entry level: a los diez años es tiempo perdido.
 junior = 40
 # Dice explícitamente que no patrocina visas. Se muestra siempre, pero solo
@@ -196,6 +243,33 @@ linkedin = true
 # con el filtro de candidatos internacionales—, y el criterio de qué se busca
 # se define allá, no en este archivo.
 jobbank = true
+# Wellfound (ex AngelList), leyendo sus digests del correo. Mismo camino, misma
+# contraseña de aplicación y el mismo solo lectura que `linkedin` y `jobbank`.
+#
+# ENCENDIDA desde 2026-09-21. Se eligió entre los tres portales nuevos que
+# aparecieron en el buzón porque es el único que se puede leer SIN tocar HTML:
+# su texto plano trae título, empresa, salario, modalidad, lugar, años pedidos
+# y un resumen, cada uno en su lugar fijo. Y sus enlaces llegan limpios, sin
+# redirector de seguimiento.
+#
+# Lo que trae son startups, sobre todo por contrato. Medido contra el primer
+# digest real: de tres ofertas, dos eran presenciales y una junior, y el
+# criterio las hundió a -96, -93 y dejó arriba la única remota. Es una fuente
+# de volumen bajo y señal desigual: el filtro hace el trabajo.
+#
+# Los otros dos que llegan al buzón y NO se leen, con su razón:
+#
+# - Jobright.ai manda varias alertas por día con datos ricos —porcentaje de
+#   coincidencia, salario, lugar, etapa de la empresa— pero SÓLO en HTML: su
+#   texto plano tiene los enlaces y nada más. Necesita un parser de HTML como
+#   el de Job Bank. Vale la pena y es lo siguiente.
+# - Lensa queda afuera a propósito. Cada enlace pasa por un redirector
+#   (`email.mg3.lensa.com/c/<base64>`), así que no se sabe a dónde lleva sin
+#   pedírselo a su rastreador; los sueldos que muestra son estimaciones suyas
+#   y no de la empresa; y el mismo correo trae una sección de "GIG JOBS" con
+#   "Online Survey Participant" y "Data Entry Clerk - Part Time Panelists",
+#   que es el perfil exacto de la estafa de empleo que describe la FTC.
+wellfound = true
 # Respuestas a tus postulaciones, leídas de tu propio buzón por IMAP —el mismo
 # camino y la misma contraseña de aplicación que `linkedin`, y también en solo
 # lectura: no marca, no mueve, no borra—.
@@ -228,6 +302,13 @@ upwork = false
 #
 # Una oferta sin fecha no suma ni resta: que un feed no la mande no la vuelve
 # vieja.
+#
+# ⚠ Y el premio sólo cuenta sobre una oferta que YA sumó algo. `hasta_24h` vale
+# lo mismo que `puntaje_minimo`, así que sin esa condición cualquier oferta
+# publicada hoy pasaba el corte con cero de todo lo demás: medido, «Cocinero de
+# línea — Parrilla, Madrid» juntaba los 25 justos y llegaba al teléfono. Llegar
+# temprano vale sobre algo que ya vale; sobre nada, no vale nada. `mas_vieja`
+# sigue restando siempre: hundir no admite a nadie.
 hasta_24h = 25
 hasta_48h = 15
 hasta_96h = 8
@@ -384,12 +465,32 @@ ats = "ashby"
 token = "1password"
 
 [aviso]
-# Cuántas ofertas entran en el mensaje de Telegram. Más que esto no se lee, y
-# además no entra: el panel que reenvía a Telegram rechaza los textos de más de
-# 1000 caracteres, así que un aviso más largo llega cortado. Medido el
-# 17/09/2026: cuatro ofertas ocupan 820 caracteres y cinco ya se pasan. Las que
-# no entran siguen en el digest del disco.
-tope_por_aviso = 4
+# Cuántas ofertas entran en el aviso de Telegram.
+#
+# Eran 4, y el motivo escrito acá era que «el panel rechaza los textos de más
+# de 1000 caracteres, así que un aviso más largo llega cortado». Ese límite YA
+# NO EXISTE: el panel valida contra los 4096 de `sendMessage`, y desde
+# entonces `avisar()` parte el aviso en varios mensajes cortando entre ofertas.
+# O sea que el 4 sobrevivió a la razón por la que se eligió.
+#
+# Lo que costaba: la vuelta del 21/09 a las 09:12 trajo 101 ofertas sobre el
+# mínimo y el mensaje decía «(+97 más en el digest)». El digest vive en el
+# volumen de Railway, así que esas 97 no se veían desde el teléfono.
+#
+# 25 está medido con las líneas REALES de ese mensaje —204 caracteres de
+# promedio por oferta, 279 la peor—:
+#
+#     tope   caracteres   mensajes
+#        4        1.049          1
+#       15        3.384          1
+#       25        5.403          2   <- acá
+#       40        8.483          3
+#      101       21.097          6   ya recorta
+#
+# Dos mensajes es exactamente para lo que existe el partidor. Y el número
+# grande es de la PRIMERA vuelta del día, que acumula la noche entera: las
+# otras cuatro traen bastante menos y entran en uno solo.
+tope_por_aviso = 25
 # Cuántas de la MISMA empresa pueden entrar. Los marketplaces de talento
 # —Lemon.io, Toptal— republican su catálogo entero todo el tiempo y con buen
 # puntaje: sin tope se llevan casi todos los lugares y las ofertas frescas del
