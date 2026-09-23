@@ -497,6 +497,8 @@ async def vigilar(
             # que CRITERIO_HORARIOS.md necesita para comparar lecturas de
             # estructura con lecturas de gestión.
             fijar_vuelta(motivo="; ".join(motivos))
+            # Para saber, si falla, si llegó a escribir algo antes de fallar.
+            escrito_antes = registro.ultima_escritura()
             vuelta_en_curso = asyncio.ensure_future(correr_vuelta(vueltas_total))
             try:
                 error = await vuelta_en_curso
@@ -506,6 +508,23 @@ async def vigilar(
                 vuelta_en_curso = None
             if error:
                 print(f"[vigía] la vuelta {vueltas_total} falló: {error[:120]}", flush=True)
+                # ⚠ UNA VUELTA QUE FALLÓ SIN ESCRIBIR NADA NO ES UNA VUELTA, Y
+                # COBRARLA DEJÓ A LOS CUATRO BRAZOS SIN EL CIERRE DE LAS 20:00.
+                # Medido el 2026-09-22: el brazo nvidia gastó sus ocho en ocho
+                # 410 de un modelo retirado, gemini gastó las suyas en 503, y a
+                # las 20:00 los cuatro brazos dijeron «tope diario alcanzado»
+                # ante el cierre de 4h. Y la operación #21 agotó su plazo y el
+                # modelo no pudo decidir sobre ella en dos horas por lo mismo.
+                # El tope existe para acotar el gasto en vueltas que SÍ corren;
+                # una que murió antes de la primera escritura no gastó nada de
+                # lo que el tope acota. Si escribió algo antes de morir, sí
+                # cuenta: ya produjo muestra.
+                if registro.ultima_escritura() == escrito_antes and not solo_arranque:
+                    vueltas_hoy[dia] = hoy
+                    print(
+                        "[vigía] la vuelta no escribió nada: no cuenta contra el tope",
+                        flush=True,
+                    )
                 # ⚠ UNA VUELTA PERDIDA POR CUOTA CORTA VUELVE, Y NO GASTA TOPE.
                 # Medido el 2026-09-15 a las 20:06: Groq perdió el cierre de
                 # 4h por «todos agotados… vuelve en 1 min» y el motivo no se

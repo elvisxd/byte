@@ -180,3 +180,30 @@ modelo dormido y al despertar hay tesis que habría querido revisar antes
 —medible: cierres por `evaluar_abiertas` en horas de reposo con R que
 contradiga la tesis—. Eso sería un hallazgo sobre la ventana, no un ajuste de
 comodidad, y se anota aquí con el valor viejo y el nuevo.
+
+## 2026-09-23: una vuelta que falló sin escribir no gasta tope
+
+Medido el 2026-09-22. NVIDIA retiró `deepseek-v4-flash-0731` el día anterior
+(410 «Gone»), y como el relevo solo conocía el 404 y el 402, cada vuelta del
+brazo nvidia subía el error, se perdía y **se cobraba contra las ocho del día**.
+A media tarde el brazo estaba capado sin haber escrito una sola predicción.
+Gemini gastó las suyas en 503 de Google. A las 20:00, ante el cierre de 4h, los
+**cuatro** brazos dijeron «tope diario alcanzado»; y la operación #21 agotó su
+plazo a las 18:30 y el modelo **no pudo decidir sobre ella durante dos horas**
+—seis avisos «pero tope diario alcanzado»— por lo mismo.
+
+Dos arreglos, los dos bugs y no cambios de criterio:
+
+- **El 410 es `permanente`** en `agent/relevo.py` (rota y entra al catálogo como
+  `retirado`, que no se revisa nunca). Un modelo retirado es tan permanente como
+  uno que no existe.
+- **Una vuelta que falló sin escribir nada no cuenta contra el tope.** El tope
+  existe para acotar el gasto en vueltas que SÍ corren; una que murió antes de
+  la primera escritura no gastó nada de lo que el tope acota. Si escribió algo
+  antes de morir, sí cuenta: ya produjo muestra. Se mide con
+  `registro.ultima_escritura()` antes y después.
+
+Lo que NO se cambia acá y queda propuesto en `paper/HIPOTESIS_PROMPT_V5.md`
+(H6): que los cierres de 4h y los plazos agotados **no cuenten para el tope**
+aunque la vuelta corra bien. Eso sí es un cambio de cadencia de los brazos de la
+comparación, y lo decide quien decide.

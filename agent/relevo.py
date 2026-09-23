@@ -149,7 +149,19 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
     #
     # Van antes que todo lo demás porque el texto de un 402 puede contener
     # palabras que las reglas de abajo confundirían.
-    if codigo in (402, 404) or "not_found_error" in bajo_todo or "payment_required" in bajo_todo:
+    # ⚠ Y EL 410 «GONE» TAMBIÉN, Y COSTÓ TRES DÍAS DE UN BRAZO. NVIDIA retiró
+    # `deepseek-ai/deepseek-v4-flash-0731` el 2026-09-21 y desde las 08:00 EDT
+    # cada vuelta del brazo nvidia devolvía 410. Como acá solo se conocían 404 y
+    # 402, el 410 era None: el error subía, la vuelta se perdía, no rotaba y no
+    # se anotaba en el catálogo. Quince vueltas seguidas fallidas y cero
+    # predicciones en dos días y medio, hasta que alguien leyó el log. Un
+    # modelo retirado es tan permanente como uno que no existe.
+    if (
+        codigo in (402, 404, 410)
+        or "not_found_error" in bajo_todo
+        or "payment_required" in bajo_todo
+        or "'status': 410" in texto
+    ):
         return "permanente"
     if codigo == 429 or "RateLimit" in type(exc).__name__ or "RESOURCE_EXHAUSTED" in texto:
         bajo = texto.lower()

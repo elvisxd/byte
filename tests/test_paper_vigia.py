@@ -855,3 +855,74 @@ def test_un_brazo_sin_publicar_no_avisa_por_telegram(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(sys, "argv", ["vigia"])
     vigia.main()
     assert recibido["brazo"] == "local" and recibido["avisar"] is vigia.avisar_por_telegram
+
+
+async def test_una_vuelta_que_falla_sin_escribir_no_gasta_tope(
+    mundo: _Mundo, tmp_path: Any
+) -> None:
+    """Medido el 2026-09-22: el brazo nvidia gastó sus ocho vueltas en ocho 410 de un
+    modelo retirado, gemini las suyas en 503, y a las 20:00 los cuatro brazos dijeron
+    «tope diario alcanzado» ante el cierre de 4h. Una vuelta que murió antes de la
+    primera escritura no gastó nada de lo que el tope acota."""
+
+    async def vuelta(n: int) -> str | None:
+        # Falla siempre, y con un error que NO dice «vuelve en N min»: ni cuota
+        # corta ni reintento. Es el 410 de NVIDIA o un 503 a secas.
+        return "Error code: 410 - {'title': 'Gone', 'status': 410}"
+
+    def ahora() -> datetime:
+        mundo.cierre_4h += 14400  # un cierre de 4h en cada sondeo: motivo siempre
+        return mundo.hora
+
+    resultado = await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=ahora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=3,
+        primera_vuelta_al_arrancar=False,
+    )
+    # Se intentó más de una vez…
+    assert resultado["vueltas"] >= 2
+    # …y ninguna cuenta contra el tope: no escribieron nada.
+    assert list(resultado["por_dia"].values()) in ([0], [])
+
+
+async def test_una_vuelta_que_escribio_antes_de_fallar_si_gasta_tope(
+    mundo: _Mundo, tmp_path: Any
+) -> None:
+    """La contraparte: si llegó a escribir antes de morir, ya produjo muestra y cuenta.
+    Medido el 2026-09-18 a las 20:01: gemini escribió las #58 y #59 y después la
+    vuelta murió por 503."""
+    from paper.registro import Registro
+
+    registro = Registro(str(tmp_path / "op.db"), modelo="t")
+
+    async def vuelta(n: int) -> str | None:
+        registro.predecir(
+            simbolo="BTCUSDT",
+            nivel=80000.0,
+            hacia="arriba",
+            probabilidad=0.4,
+            temporalidad="1h",
+            contexto=_ctx(80000.0),
+            razonamiento="r",
+        )
+        return "503 UNAVAILABLE"
+
+    def ahora() -> datetime:
+        mundo.cierre_4h += 14400
+        return mundo.hora
+
+    resultado = await vigilar(
+        ruta_db=str(tmp_path / "op.db"),
+        ruta_scripts="",
+        ahora=ahora,
+        dormir=_nada,
+        correr_vuelta=vuelta,
+        ticks=2,
+        primera_vuelta_al_arrancar=False,
+    )
+    assert resultado["vueltas"] == 2
+    assert list(resultado["por_dia"].values()) == [2]
