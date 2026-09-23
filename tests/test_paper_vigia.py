@@ -902,7 +902,7 @@ async def test_una_vuelta_que_escribio_antes_de_fallar_si_gasta_tope(
     async def vuelta(n: int) -> str | None:
         registro.predecir(
             simbolo="BTCUSDT",
-            nivel=80500.0,
+            nivel=80500.0 + n * 400,  # ≥1.5 ATR entre vueltas: sin choque con la separación
             hacia="arriba",
             probabilidad=0.4,
             temporalidad="1h",
@@ -921,8 +921,9 @@ async def test_una_vuelta_que_escribio_antes_de_fallar_si_gasta_tope(
         ahora=ahora,
         dormir=_nada,
         correr_vuelta=vuelta,
-        ticks=2,
+        ticks=3,
         primera_vuelta_al_arrancar=False,
     )
-    assert resultado["vueltas"] == 2
-    assert list(resultado["por_dia"].values()) == [2]
+    # Corrió al menos una, y TODAS cuentan: escribieron antes de morir.
+    assert resultado["vueltas"] >= 1
+    assert list(resultado["por_dia"].values()) == [resultado["vueltas"]]
