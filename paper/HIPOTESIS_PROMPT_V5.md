@@ -1,6 +1,9 @@
 # Qué mejorar del prompt v4 — hipótesis fijadas ANTES de la comparación
 
-> Escrito el 2026-09-21 con gemini en 77 resueltas y groq en 30. Se fija ahora,
+> Escrito el 2026-09-21 con gemini en 77 resueltas y groq en 30.
+> **Aplicado el 2026-09-23 como prompt v5**, por decisión del usuario y ANTES de
+> que groq cruzara las 50 en v4: ver «2026-09-23» en CRITERIO_COMPARACION.md
+> por lo que eso cierra, y paper/prompt.py por cómo entró cada hipótesis. Se fija ahora,
 > antes de que groq llegue a las 50, por lo mismo que los otros `CRITERIO_*.md`:
 > si estas hipótesis se escribieran después de ver la comparación, no se podría
 > distinguir «lo pensé antes» de «lo elegí porque cuadraba». Ninguna se aplica

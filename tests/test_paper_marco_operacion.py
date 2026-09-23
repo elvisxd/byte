@@ -106,6 +106,10 @@ def test_la_herramienta_pasa_el_intervalo_al_registro(
             take_profit=77000.0,
             razon="techo",
             intervalo="4h",
+            ejes=(
+                "range-sweep: sí; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no"
+            ),
+            en_contra="prueba",
         ),
     )
 

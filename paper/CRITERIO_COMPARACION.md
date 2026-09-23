@@ -350,3 +350,49 @@ decir exactamente por qué:
 Bajar `groq_num_predict` (8192) acotaría la salida que Groq suma después y haría
 el recorte casi innecesario, pero cambia una variable de un brazo de la
 comparación con gemini ya en el umbral: se propone con las cifras y no se toca.
+
+## 2026-09-23: prompt v5 para los cuatro brazos, y la comparación v4 se cierra donde estaba
+
+Decisión del usuario, no del criterio: «quisiera aplicarlas todas». Las seis
+mejoras de paper/HIPOTESIS_PROMPT_V5.md más las de la revisión de trucos de
+prompt del mismo día entran en `VERSION_PROMPT = "5"` (paper/prompt.py), en un
+solo commit y para gemini, groq, openrouter y nvidia a la vez. Lo que eso
+cambia de la comparación, dicho con las cifras:
+
+- **La muestra v4 de groq queda sellada donde estaba** (33 resueltas el 21 a
+  las 06:57 EDT; el recuento de esta noche dice dónde llegó). No cruza las 50 en
+  v4 y **la comparación gemini-groq sobre v4 no se lee nunca**: gemini v4 (65
+  resueltas, Brier 0.2664 contra 0.2400 del ingenuo) queda como línea base de
+  gemini, no como comparación. Se dice para que nadie la busque.
+- **La comparación v5 arranca en cero para los cuatro a la vez**, que es más
+  limpio que lo que había —gemini llevaba 30 de ventaja—. La puerta sigue siendo
+  50 resueltas **por brazo y por versión**: el resumen que va al panel
+  (`paper/comparar.py`, `por_version`) y la lectura del arranque (`leer.py`)
+  parten por versión, y el panel enseña v4 y v5 en columnas aparte.
+- **Cada cambio se puede medir por separado**, porque cada uno deja su rastro en
+  el sello (`extra`): `revision` (tasa base leída, ajuste, sí/no por eje,
+  contra), `analista` (los niveles, las muestras y su media) y
+  `calibracion_vista`. La pregunta «¿aporta la media del analista sobre el
+  número del trader?» se contesta con `por_version.analista` sin haberlos
+  mezclado: el Brier de uno y del otro sobre las mismas predicciones.
+
+### El presupuesto de Groq manda sobre el tamaño del prompt
+
+Groq rechaza cualquier pedido de más de 8000 tokens y el de v4 ya llegaba a
+7004-7510 de entrada (2026-09-21). Así que **v5 no es más largo que v4**: la
+instrucción pasa de 8388 a 8245 caracteres (se acortó lo que los campos ahora
+exigen), las descripciones de las herramientas se recortaron para pagar los
+cinco campos nuevos, y la lectura del analista se corta a 1100 caracteres. Lo
+que sí crece es el número de LLAMADAS por vuelta: una lectura más
+`BYTE_MUESTRAS_ANALISTA − 1` muestras (3 por defecto) antes del turno del
+trader, cada una con el mapa entero. En Groq son minutos (60 s entre llamadas);
+el usuario lo aceptó desde el principio («no importa que tarde»). La lectura de
+esta noche tiene que mirar las cifras de «de entrada» de groq en el log: si
+pasan de 8000, el recorte del 413 no puede con un primer mensaje y hay que
+acortar más.
+
+### Lo que sigue igual
+
+Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
+modelos. H6 (los cierres de 4h y los plazos fuera del tope) sigue propuesta en
+CRITERIO_CADENCIA.md y la decide el usuario.

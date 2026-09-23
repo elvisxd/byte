@@ -43,6 +43,9 @@ from agent.graph import build_graph
 from agent.llm import build_llm, es_de_groq, es_remoto
 from agent.relevo import Relevo
 from api.config import Settings
+from paper.analista import bloque as bloque_del_analista
+from paper.analista import leer as leer_como_analista
+from paper.analista import sello as sello_del_analista
 from paper.mercado import MercadoNoDisponible, indicadores
 from paper.mercado import velas as velas_del_mercado
 from paper.prompt import INSTRUCCION, ROL, SIMBOLO  # noqa: F401 — SIMBOLO se reexporta
@@ -153,7 +156,9 @@ def armar(
     # separarlos cuando alguien mire el registro dentro de una semana. Sin la
     # marca, las dos configuraciones caerían en el mismo eje sin que nada lo
     # dijera, que es exactamente lo que `EJES.md` prohíbe mezclar.
-    etiqueta_modelo = ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
+    etiqueta_modelo = _EtiquetaLocal(
+        ajustes.ollama_model + ("+razona" if ajustes.paper_reasoning else "")
+    )
     # Cómo piensa este brazo, sellado en cada escritura (ver `fijar_vuelta`).
     fijar_vuelta(pensamiento="razona" if ajustes.paper_reasoning else "sin razonar")
 
@@ -182,23 +187,46 @@ def armar(
     # cómo estaba escrita la regla.
     #
     # `paper_num_predict` va con él por lo que dice `build_llm`: son un par.
+    llm = build_llm(
+        ajustes,
+        reasoning=ajustes.paper_reasoning,
+        num_predict=ajustes.paper_num_predict,
+        # 12K, no 16K: es lo que cabe entero en la GPU de un Mac de 16 GB.
+        # Ver `paper_num_ctx` en api/config.py, con la medición.
+        num_ctx=ajustes.paper_num_ctx,
+        # Que no se descargue entre vueltas: son horas. Ver `build_llm`.
+        keep_alive=ajustes.paper_keep_alive,
+    )
     grafo = build_graph(
-        build_llm(
-            ajustes,
-            reasoning=ajustes.paper_reasoning,
-            num_predict=ajustes.paper_num_predict,
-            # 12K, no 16K: es lo que cabe entero en la GPU de un Mac de 16 GB.
-            # Ver `paper_num_ctx` en api/config.py, con la medición.
-            num_ctx=ajustes.paper_num_ctx,
-            # Que no se descargue entre vueltas: son horas. Ver `build_llm`.
-            keep_alive=ajustes.paper_keep_alive,
-        ),
+        llm,
         herramientas,
         max_iterations=ajustes.max_iterations,
         max_tool_result_chars=ajustes.paper_max_tool_result_chars,
         num_ctx=ajustes.paper_num_ctx,
     )
+    # La fase de analista (prompt v5), con el MISMO modelo: ver `_armar_analista`.
+    etiqueta_modelo.analista = _armar_analista(llm, ajustes)
     return registro, grafo, etiqueta_modelo
+
+
+class _EtiquetaLocal(str):
+    """La etiqueta del brazo local es un str —el nombre del modelo— y necesita
+    colgar el analista igual que la del remoto (un callable). Un str con
+    atributos: se registra y se serializa como el str que es."""
+
+    analista: Any = None
+
+
+def _armar_analista(llm: Any, ajustes: Settings) -> Any:
+    """La fase de analista de cada vuelta (prompt v5, paper/analista.py), sobre
+    el mismo modelo o relevo del brazo. `BYTE_MUESTRAS_ANALISTA` en 0 la apaga:
+    devuelve None y la vuelta es la de v4."""
+    muestras = ajustes.muestras_analista
+
+    async def analista(precarga: str, trace: Any = None) -> Any:
+        return await leer_como_analista(llm, precarga, muestras, trace)
+
+    return analista if muestras > 0 else None
 
 
 def _catalogo_y_lista(ajustes: Settings, nombres: list[str]) -> tuple[Any, list[str]]:
@@ -338,6 +366,8 @@ def _armar_remoto(
     # el primero de la lista se reserva —vuelta de gestión— o se usa —cierre
     # de 4h—. El local no tiene relevo y no tiene nada que reservar.
     etiqueta.reservar_primero = relevo.reservar_primero  # type: ignore[attr-defined]
+    # La fase de analista (prompt v5) sobre el mismo relevo: ver `_armar_analista`.
+    etiqueta.analista = _armar_analista(relevo, ajustes)  # type: ignore[attr-defined]
 
     herramientas = ToolRegistry(
         build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta)
@@ -406,7 +436,11 @@ def poner_al_dia(
 
 
 async def una_vuelta(
-    grafo: Any, trace: TraceDeSesion, numero: int, precarga: str = ""
+    grafo: Any,
+    trace: TraceDeSesion,
+    numero: int,
+    precarga: str = "",
+    analista: Any = None,
 ) -> str | None:
     """Una pregunta al modelo. Devuelve el error si falló; None si fue bien.
 
@@ -415,6 +449,12 @@ async def una_vuelta(
     vueltas: 28 empezaban pidiéndolos con dos llamadas al modelo —un tercio
     de los tokens de la vuelta— para cargar lo que el vigía ya tenía. Va
     DESPUÉS de `INSTRUCCION` para que el prefijo fijo sea cacheable.
+
+    `analista` (prompt v5) es la fase de lectura previa —`armar` la cuelga de
+    la etiqueta—: recibe la precarga y la traza, devuelve la `Lectura` o None.
+    Su bloque va AL FINAL del mensaje, después del mapa, y su sello queda en
+    cada escritura de la vuelta. Si no hay analista o falló, la vuelta es la
+    de siempre: la fase nunca cuesta la vuelta (paper/analista.py).
     """
     trace.vuelta = numero
     # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
@@ -428,6 +468,14 @@ async def una_vuelta(
         # tienen que seguir viendo QUÉ recibió el modelo, aunque no lo pidiera.
         trace.emit("TOOL_CALL_START", {"toolCallName": "precarga"})
         trace.emit("TOOL_CALL_RESULT", {"ok": True, "precargado": "estado_paper + mirar_mercado"})
+    lectura = None
+    if analista is not None and precarga:
+        lectura = await analista(precarga, trace)
+    # Explícito también cuando no hubo lectura: el sello de esta vuelta no
+    # puede arrastrar la de la anterior.
+    fijar_vuelta(analista=sello_del_analista(lectura))
+    if bloque := bloque_del_analista(lectura):
+        contenido = f"{contenido}\n\n{bloque}"
     try:
         # El estado va COMPLETO: `iterations` y los acumuladores no tienen
         # default en el grafo, y sin ellos el primer nodo revienta con un
@@ -497,7 +545,13 @@ async def una_sesion(
         if not recien_puesto_al_dia:
             poner_al_dia(registro)
         recien_puesto_al_dia = False
-        error = await una_vuelta(grafo, trace, vueltas, precarga=precarga_segura(registro, ajustes))
+        error = await una_vuelta(
+            grafo,
+            trace,
+            vueltas,
+            precarga=precarga_segura(registro, ajustes),
+            analista=getattr(etiqueta_modelo, "analista", None),
+        )
         if error is not None:
             errores.append(error)
             print(f"[sesión] vuelta {vueltas} falló: {error[:120]}", flush=True)
