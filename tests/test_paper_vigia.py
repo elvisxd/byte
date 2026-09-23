@@ -902,7 +902,7 @@ async def test_una_vuelta_que_escribio_antes_de_fallar_si_gasta_tope(
     async def vuelta(n: int) -> str | None:
         registro.predecir(
             simbolo="BTCUSDT",
-            nivel=80000.0,
+            nivel=80500.0,
             hacia="arriba",
             probabilidad=0.4,
             temporalidad="1h",
