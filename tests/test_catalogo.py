@@ -196,3 +196,16 @@ def test_nunca_sondeado_no_es_lo_mismo_que_desaparecido(catalogo):
     catalogo.visto_en_catalogo(["gemini-3.7-flash"])
     ficha = next(f for f in catalogo.fichas() if f["modelo"] == "gemini-3.8-flash")
     assert ficha["en_catalogo"] == 0 and ficha["visto_ultimo"] is not None  # ahora sí
+
+
+def test_un_modelo_retirado_no_se_revisa_nunca(catalogo):
+    """Un 410 es el proveedor diciendo que ya no existe: probarlo al mes es gastar una
+    vuelta en un cadáver. Distinto del 404 «sin acceso», que puede ser un typo."""
+    motivo = catalogo.descartar(
+        "nvidia/deepseek-ai/deepseek-v4-flash-0731",
+        codigo=410,
+        texto="Error code: 410 - {'title': 'Gone', 'status': 410}",
+    )
+    assert motivo == "retirado"
+    ficha = catalogo.descartado("nvidia/deepseek-ai/deepseek-v4-flash-0731")
+    assert ficha is not None and ficha["revisable_desde"] is None

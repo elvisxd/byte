@@ -45,6 +45,8 @@ comparación: anotarlo lo habría borrado del relevo por ser el que más trabaja
                       llamada fallida, equivocarse al revés cuesta un modelo.
   `hay_que_pagar`     402. Depende de la cuenta, no del modelo; no se revisa sola
                       porque lo que tiene que cambiar es la cuenta.
+  `retirado`          410 «Gone»: el proveedor lo retiró (NVIDIA con
+                      `deepseek-v4-flash-0731`, 2026-09-21). Nunca se revisa.
   `se_cobra`          un id de OpenRouter sin el sufijo `:free`. No lo descubre
                       un fallo: lo decide la regla del proyecto —no pagar una IA
                       antes de saber si es rentable— y nunca se revisa.
@@ -161,6 +163,11 @@ def motivo_permanente(codigo: int | None, texto: str) -> str:
     bajo = texto.lower()
     if codigo == 402 or "payment" in bajo or "payment_required" in bajo:
         return "hay_que_pagar"
+    # 410 «Gone»: el proveedor lo retiró. No es un typo ni un catálogo que
+    # cambió —es la cuenta del proveedor diciendo que ya no existe—, así que no
+    # se revisa: probarlo al mes sería gastar una vuelta en un cadáver.
+    if codigo == 410 or "'status': 410" in texto or "'title': 'gone'" in bajo:
+        return "retirado"
     if any(frase in bajo for frase in _SIN_HERRAMIENTAS):
         return "sin_herramientas"
     return "sin_acceso"

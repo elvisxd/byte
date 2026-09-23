@@ -767,3 +767,17 @@ async def test_un_413_sin_cifras_rota_sin_reintentar():
 def test_el_margen_cubre_lo_que_el_contador_aproximado_se_deja():
     # Groq cuenta un 5-10 % más que chars//4: sin margen, el recorte justo es un segundo 413.
     assert MARGEN_RECORTE >= 64
+
+
+def test_el_410_gone_es_permanente():
+    """NVIDIA retiró deepseek-v4-flash-0731 el 2026-09-21 y el brazo perdió 15 vueltas
+    seguidas porque el 410 no era ni cuota ni caída: subía y no rotaba."""
+
+    class _E(Exception):
+        status_code = 410
+
+    texto = (
+        "Error code: 410 - {'type': 'about:blank', 'title': 'Gone', 'status': 410, "
+        "'detail': \"The model 'deepseek-ai/deepseek-v4-flash-0731' is gone\"}"
+    )
+    assert tipo_de_agotamiento(_E(texto)) == "permanente"
