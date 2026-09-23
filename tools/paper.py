@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.logging import get_logger
 from paper.mercado import MercadoNoDisponible, indicadores, velas
-from paper.prompt import VERSION_PROMPT
+from paper.prompt import EJES, VERSION_PROMPT
 from paper.publicar import publicar
 from paper.registro import Contexto, Registro
 from paper.sesiones import describir as describir_sesion
@@ -55,15 +55,86 @@ SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime", "di
 # logs a mano. Van en `extra`, como `fuente` y `prompt`: entran al sello y no
 # rompen las filas de antes. Es estado de módulo porque las herramientas
 # construyen su propio `Registro` y el vigía no llega a él.
-_VUELTA: dict[str, str | None] = {"motivo": None, "pensamiento": None}
+_VUELTA: dict[str, Any] = {
+    "motivo": None,
+    "pensamiento": None,
+    # Prompt v5: la lectura del analista de ESTA vuelta (paper/analista.py,
+    # `sello`) y si el modelo vio su propia calibración en la precarga. Las
+    # dos son variables del experimento y van al sello para poder separar
+    # después «con lectura» de «sin lectura» y «vio su tabla» de «no la vio».
+    "analista": None,
+    "calibracion_vista": None,
+}
+_SIN_CAMBIO: Any = object()
 
 
-def fijar_vuelta(*, motivo: str | None = None, pensamiento: str | None = None) -> None:
-    """Lo que la siguiente escritura sella sobre la vuelta. `None` deja lo que había."""
+def fijar_vuelta(
+    *,
+    motivo: str | None = None,
+    pensamiento: str | None = None,
+    analista: Any = _SIN_CAMBIO,
+    calibracion_vista: bool | None = None,
+) -> None:
+    """Lo que la siguiente escritura sella sobre la vuelta. `None` deja lo que había
+    (salvo `analista`, que se pone explícitamente a None cuando no hubo lectura)."""
     if motivo is not None:
         _VUELTA["motivo"] = motivo[:200]
     if pensamiento is not None:
         _VUELTA["pensamiento"] = pensamiento[:80]
+    if analista is not _SIN_CAMBIO:
+        _VUELTA["analista"] = analista
+    if calibracion_vista is not None:
+        _VUELTA["calibracion_vista"] = calibracion_vista
+
+
+# ═══ LA REVISIÓN QUE EXIGEN LAS ESCRITURAS (prompt v5) ═══
+#
+# Medido con gemini v4 (paper/HIPOTESIS_PROMPT_V5.md): el modelo hace lo que
+# la herramienta le exige —reacciona a los rechazos 12 contra 2— y se salta lo
+# que el texto le pide —8 de 53 pensamientos recorren ≥3 ejes—. Así que la
+# lista de comprobación deja de ser un párrafo y pasa a ser un campo que se
+# valida y se sella: el sí/no por cada eje, el argumento en contra, y en las
+# predicciones la cuenta entera (tasa base + ajuste = probabilidad).
+
+_SI = {"sí", "si", "yes", "sí.", "si."}
+_NO = {"no", "no."}
+
+
+def revisar_ejes(texto: str) -> dict[str, bool]:
+    """`ejes` como lo escribe el modelo —«range-sweep: sí (85200); zone-reclaim:
+    no; …»— a un dict con los cinco. Falta uno o no dice sí/no: ValueError con
+    la lista de lo que falta, para que el rechazo diga qué corregir."""
+    encontrados: dict[str, bool] = {}
+    bajo = texto.lower()
+    for eje in EJES:
+        pos = bajo.find(eje)
+        if pos < 0:
+            continue
+        resto = bajo[pos + len(eje) :].lstrip(" :=-—\t")
+        palabra = resto.split(maxsplit=1)[0].strip("(),;") if resto else ""
+        if palabra in _SI:
+            encontrados[eje] = True
+        elif palabra in _NO:
+            encontrados[eje] = False
+    faltan = [eje for eje in EJES if eje not in encontrados]
+    if faltan:
+        raise ValueError(
+            "`ejes` tiene que decir sí o no para CADA eje, como «range-sweep: sí (nivel, "
+            f"invalidación); zone-reclaim: no; …». Faltan o no dicen sí/no: {', '.join(faltan)}"
+        )
+    return encontrados
+
+
+def _revision(ejes: str, en_contra: str, **cuenta: Any) -> dict[str, Any]:
+    """Lo que se sella en `extra.revision`: la lista revisada y el contra, más la
+    cuenta de la predicción cuando la hay. ValueError si falta algo."""
+    revisados = revisar_ejes(ejes)
+    if not en_contra.strip():
+        raise ValueError(
+            "`en_contra` va vacío: decí el hecho del mapa que más daño le hace a tu "
+            "lectura y, si falla, por qué habrá sido. Una lectura sin contra no miró el otro lado."
+        )
+    return {"ejes": revisados, "en_contra": en_contra.strip()[:600], **cuenta}
 
 
 # El par del experimento. Ver la cabecera de paper/sesion.py: con un solo par la
@@ -145,6 +216,10 @@ def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
             # Por qué despertó y cómo piensa. Ver `fijar_vuelta`.
             "motivo": _VUELTA["motivo"],
             "pensamiento": _VUELTA["pensamiento"],
+            # Prompt v5: la lectura del analista de la vuelta, y si el modelo
+            # vio su propia calibración. Ver `fijar_vuelta`.
+            "analista": _VUELTA["analista"],
+            "calibracion_vista": _VUELTA["calibracion_vista"],
         },
     )
 
@@ -263,9 +338,21 @@ class AbrirArgs(BaseModel):
     )
     razon: str = Field(
         description=(
-            "Por qué entrás ACÁ y no cinco velas después. Concreto: qué viste en el "
-            "gráfico, y qué pesa EN CONTRA. Esto queda sellado y es lo que se va a "
-            "revisar cuando la operación cierre."
+            "Por qué entrás ACÁ y no cinco velas después: qué viste, quién quedó "
+            "atrapado, cuántas velas tiene el extremo. Queda sellado y se revisa al cerrar."
+        )
+    )
+    ejes: str = Field(
+        description=(
+            "Sí o no para CADA uno de los cinco ejes, con nivel e invalidación en los "
+            "sí: «range-sweep: sí (85200, invalida 85050); zone-reclaim: no; "
+            "cvd-divergence: no; dip-trap: no; anti-smc: no». Sin los cinco no se registra."
+        )
+    )
+    en_contra: str = Field(
+        description=(
+            "El hecho del mapa que más daño le hace a esta entrada, y si falla, por "
+            "qué habrá sido. Obligatorio."
         )
     )
 
@@ -278,6 +365,12 @@ def _abrir(registro: Registro, args: AbrirArgs) -> ToolResult:
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
 
     ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    try:
+        ctx.extra["revision"] = _revision(args.ejes, args.en_contra)
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se abrió: {exc}", summary={"error": "sin revisión"}, ok=False
+        )
     # ⚠ SIN OBJETIVO NO SE ABRE. CRITERIO_GESTION.md: el objetivo fijo fue la
     # segunda mejor salida en 567.000 backtests, y la #1 —sin objetivo— se cerró
     # donde el modelo quiso, a los 17 minutos. Va aquí y no en el registro
@@ -458,9 +551,33 @@ class PredecirArgs(BaseModel):
         )
     )
     razonamiento: str = Field(
+        description="Qué ves que justifica ESA probabilidad. Queda sellado al predecir."
+    )
+    tasa_base: float = Field(
         description=(
-            "Qué ves que justifica ESA probabilidad, partiendo de la tasa base del mapa, "
-            "y qué pesa EN CONTRA. Queda sellado al predecir."
+            "La tasa base que LEÉS en el mapa para ese marco y esa distancia (1 o 2 "
+            "ATR), en porcentaje: 38 si el mapa dice 38%."
+        )
+    )
+    ajuste: float = Field(
+        description=(
+            "Los puntos que le sumás o restás a la tasa base por lo que ves: +9, -12, "
+            "0. probabilidad = (tasa_base + ajuste) / 100, o se rechaza."
+        )
+    )
+    razon_del_ajuste: str = Field(
+        description="Por qué ESE ajuste y no 0: el hecho del mapa que mueve la tasa base."
+    )
+    ejes: str = Field(
+        description=(
+            "Sí o no para CADA uno de los cinco ejes: «range-sweep: sí (85200, invalida "
+            "85050); zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no»."
+        )
+    )
+    en_contra: str = Field(
+        description=(
+            "El hecho del mapa que más daño le hace a tu lectura, y si falla, por qué "
+            "habrá sido. Obligatorio."
         )
     )
     temporalidad: str = Field(
@@ -570,6 +687,46 @@ def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolRes
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
 
     ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    # ⚠ LA CUENTA TIENE QUE CUADRAR. `probabilidad` es lo que se puntúa; la
+    # tasa base y el ajuste son lo que dice de dónde salió. Un número que no
+    # sale de esa suma es justo lo que v4 medía —dijo 37%, ocurrió 40%, en
+    # todas las bandas— y se rechaza con la aritmética delante.
+    esperada = (args.tasa_base + args.ajuste) / 100
+    if not 0 <= args.tasa_base <= 100:
+        return ToolResult(
+            content=f"no se registró: tasa_base va en porcentaje (0-100), no {args.tasa_base}",
+            summary={"error": "cuenta"},
+            ok=False,
+        )
+    if abs(esperada - args.probabilidad) > 0.011:
+        return ToolResult(
+            content=(
+                f"no se registró: tasa_base {args.tasa_base:g} + ajuste {args.ajuste:+g} = "
+                f"{esperada:.0%}, y dijiste probabilidad {args.probabilidad:.0%}. La probabilidad "
+                "tiene que salir de esa cuenta: corregí el ajuste o la probabilidad."
+            ),
+            summary={"error": "cuenta"},
+            ok=False,
+        )
+    if not args.razon_del_ajuste.strip():
+        return ToolResult(
+            content="no se registró: `razon_del_ajuste` va vacío. Decí qué hecho del mapa mueve "
+            "la tasa base, o poné ajuste 0 y decí que no ves nada que la mueva.",
+            summary={"error": "cuenta"},
+            ok=False,
+        )
+    try:
+        ctx.extra["revision"] = _revision(
+            args.ejes,
+            args.en_contra,
+            tasa_base=args.tasa_base,
+            ajuste=args.ajuste,
+            razon_del_ajuste=args.razon_del_ajuste.strip()[:400],
+        )
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se registró: {exc}", summary={"error": "sin revisión"}, ok=False
+        )
     try:
         pid = registro.predecir(
             simbolo=SIMBOLO_UNICO,
@@ -632,6 +789,15 @@ class OrdenArgs(BaseModel):
         default=24.0,
         description="Cuántas horas sigue viva. Pasadas, se marca vencida y no entra.",
     )
+    ejes: str = Field(
+        description=(
+            "Sí o no para CADA uno de los cinco ejes, como en abrir_operacion; en la "
+            "orden, el sí es el que ocurriría en el precio límite."
+        )
+    )
+    en_contra: str = Field(
+        description="El hecho del mapa que más daño le hace a esta tesis. Obligatorio."
+    )
 
 
 def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolResult:
@@ -650,6 +816,12 @@ def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolRes
     except MercadoNoDisponible as exc:
         return ToolResult(content=str(exc), summary={"error": "sin datos"}, ok=False)
     ctx = _contexto_de(datos, indicadores(datos["velas"], SIEMPRE))
+    try:
+        ctx.extra["revision"] = _revision(args.ejes, args.en_contra)
+    except ValueError as exc:
+        return ToolResult(
+            content=f"no se dejó la orden: {exc}", summary={"error": "sin revisión"}, ok=False
+        )
     try:
         oid = registro.dejar_orden(
             eje=args.eje,
@@ -1292,8 +1464,41 @@ def precarga(registro: Registro, max_chars: int) -> str:
         f"{estado.content}\n\n"
         "═══ MAPA DEL MERCADO, los tres gráficos de este instante (ya consultado; "
         "no llames a `mirar_mercado` sin intervalo) ═══\n"
-        f"{mercado}"
+        f"{mercado}\n\n"
+        f"{calibracion_propia(registro)}"
     )
+
+
+def calibracion_propia(registro: Registro) -> str:
+    """«TU CALIBRACIÓN» (prompt v5): la tabla dijo/ocurrió de ESTE brazo con ESTE
+    prompt, cuando llega a las 50 resueltas. Antes, solo la cuenta: enseñarle su
+    tasa a las 20 es invitarlo a ajustar contra ruido (`Registro.brier_por_tramo`).
+    Deja sellado si la vio (`fijar_vuelta(calibracion_vista=…)`)."""
+    try:
+        c = registro.calibracion_propia(VERSION_PROMPT)
+    except Exception as exc:  # noqa: BLE001 — una base vieja sin JSON no cuesta la vuelta
+        fijar_vuelta(calibracion_vista=False)
+        return f"═══ TU CALIBRACIÓN (prompt v{VERSION_PROMPT}) ═══\nno disponible ({str(exc)[:80]})"
+    cabecera = f"═══ TU CALIBRACIÓN (prompt v{VERSION_PROMPT}): lo que dijiste y lo que ocurrió ═══"
+    if not c["tramos"]:
+        fijar_vuelta(calibracion_vista=False)
+        return (
+            f"{cabecera}\n{c['resueltas']} resueltas con este prompt: faltan {c['faltan']} para "
+            "enseñarte tu tabla (se enseña a partir de 50; antes es ruido)."
+        )
+    fijar_vuelta(calibracion_vista=True)
+    lineas = [
+        cabecera,
+        f"{c['resueltas']} resueltas · Brier medio {c['brier_medio']} · ocurrió el "
+        f"{c['tasa_base']:.0%} de lo que predijiste (decir siempre eso daría "
+        f"{c['tasa_base'] * (1 - c['tasa_base']):.4f})",
+    ]
+    for t in c["tramos"]:
+        lineas.append(
+            f"  {t['tramo']:>8}: dijiste {t['dijo']:.0%} de media, ocurrió "
+            f"{t['ocurrio']:.0%} (n={t['n']})"
+        )
+    return "\n".join(lineas)
 
 
 def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[Tool]:
@@ -1343,12 +1548,9 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
         Tool(
             name="mirar_mercado",
             description=(
-                "El mercado. Sin `intervalo` te da los TRES gráficos del mismo instante "
-                "(15m, 1h, 4h): precio, dónde está en su rango, régimen medido, ATR, "
-                "ADX, RSI, MACD, de qué lado de la EMA, la vela en curso, pools de "
-                "liquidez y FVGs — ese mapa YA VIENE en tu mensaje, no lo repitas. Con "
-                "`intervalo` (15m, 1h o 4h) te da UN gráfico con más detalle: pedilo "
-                "solo si te hace falta."
+                "El mercado. Sin `intervalo`, el mapa de los tres gráficos que YA VIENE "
+                "en tu mensaje: no lo repitas. Con `intervalo` (15m, 1h o 4h), UN gráfico "
+                "con más detalle, solo si te hace falta."
             ),
             args_model=MirarArgs,
             run=mirar,
@@ -1356,9 +1558,8 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
         Tool(
             name="abrir_operacion",
             description=(
-                "Registra una entrada en papel (sin dinero real). Exige la razón: qué "
-                "viste que justifica entrar ACÁ y no cinco velas después. Esa razón "
-                "queda sellada y se revisa cuando la operación cierre."
+                "Registra una entrada en papel. Exige la razón, el sí/no por eje y el "
+                "contra; todo queda sellado y se revisa al cerrar."
             ),
             args_model=AbrirArgs,
             run=abrir,
@@ -1375,9 +1576,8 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
         Tool(
             name="estado_paper",
             description=(
-                "Qué operaciones quedaron abiertas y cómo va cada eje. YA VIENE en tu "
-                "mensaje al empezar la vuelta: pedilo solo si acabás de escribir algo y "
-                "necesitás verlo actualizado."
+                "El estado del registro, que YA VIENE en tu mensaje: pedilo solo si "
+                "acabás de escribir algo y necesitás verlo actualizado."
             ),
             args_model=EstadoArgs,
             run=estado,
@@ -1405,9 +1605,8 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
             name="dejar_orden",
             description=(
                 "Deja una orden límite que entra sola si el precio la toca mientras no "
-                "estás operando. Entre sesión y sesión pasan horas: esto es lo que "
-                "permite esperar a que el precio VUELVA al nivel que te interesa en vez "
-                "de entrar donde esté ahora. La razón se sella al dejarla."
+                "estás: para esperar a que VUELVA al nivel que te interesa. La razón se "
+                "sella al dejarla."
             ),
             args_model=OrdenArgs,
             run=dejar_orden,
@@ -1422,20 +1621,15 @@ def build_paper_tools(ruta_db: str, max_chars: int, modelo: str = "") -> list[To
             name="predecir",
             description=(
                 "Apostá una PROBABILIDAD a que el precio toque un nivel antes de que "
-                "venza. No cuesta nada —no hay entrada ni stop— y se puede hacer aunque "
-                "no operes: es la forma de dejar constancia de qué esperás del mercado. "
-                "Se puntúa con Brier, así que la confianza exagerada se castiga."
+                "venza, con la cuenta entera: tasa base + ajuste = probabilidad, el sí/no "
+                "por eje y el contra. Se puntúa con Brier."
             ),
             args_model=PredecirArgs,
             run=predecir,
         ),
         Tool(
             name="publicar_historial",
-            description=(
-                "Publica el historial en el panel web para poder revisarlo desde "
-                "fuera. Usala al TERMINAR una sesión: esta máquina se apaga y el "
-                "registro deja de ser accesible hasta la próxima."
-            ),
+            description="Publica el historial en el panel web. Solo al TERMINAR una sesión.",
             args_model=EstadoArgs,
             run=publicar_historial,
         ),

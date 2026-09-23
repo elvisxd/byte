@@ -9,6 +9,7 @@ las 50 predicciones resueltas por brazo, y la toma una persona con esto y las
 trazas delante — no este script.
 """
 
+import json
 import sqlite3
 import sys
 from collections import Counter
@@ -16,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from paper.prompt import VERSION_PROMPT
 from paper.sesiones import SESIONES, sesion_de
 
 # Umbral del criterio: antes de esto, lo que se ve es ruido.
@@ -32,9 +34,128 @@ def resumen(ruta: str | Path) -> dict[str, Any]:
             "cierres": _cierres(con),
             "razones": _razones(con),
             "ultimas": _ultimas(con),
+            # Con qué prompt escribe HOY este brazo, y la muestra de cada
+            # prompt por separado: ver `_por_version`.
+            "prompt_actual": VERSION_PROMPT,
+            "por_version": _por_version(con),
         }
     finally:
         con.close()
+
+
+# ═══ LA MUESTRA DE CADA PROMPT, POR SEPARADO ═══
+#
+# Un prompt es otra muestra (paper/prompt.py): lo que un brazo hizo con v4 no
+# dice qué hace con v5, y mezclarlos en un Brier deja la lectura sin sentido.
+# Cada versión lleva su propia puerta de 50 —igual que el brazo entero— y por
+# debajo solo la cuenta. El panel las pone en columnas aparte.
+#
+# `analista` (v5): la comparación que el sello permite hacer SIN haberla
+# mezclado —el Brier del número que firmó el trader contra el de la media de
+# las lecturas del analista, en las predicciones donde el trader eligió el
+# mismo nivel que el analista—. Es lo que mide si «muestrear y promediar»
+# aporta sobre el número del trader.
+
+
+def _por_version(con: sqlite3.Connection) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    filas = list(
+        con.execute(
+            """SELECT COALESCE(json_extract(contexto, '$.extra.prompt'), '?') v,
+                      probabilidad, ocurrio, brier, temporalidad, hacia, nivel, contexto,
+                      resuelta_en
+               FROM predicciones"""
+        )
+    )
+    por_v: dict[str, list[Any]] = {}
+    for f in filas:
+        por_v.setdefault(str(f["v"]), []).append(f)
+    ops = {
+        str(f["v"]): {
+            "cerradas": int(f["cerradas"] or 0),
+            "abiertas": int(f["abiertas"] or 0),
+            "r_total": f["r_total"],
+        }
+        for f in con.execute(
+            """SELECT COALESCE(json_extract(contexto, '$.extra.prompt'), '?') v,
+                      SUM(cerrada_en IS NOT NULL) cerradas, SUM(cerrada_en IS NULL) abiertas,
+                      ROUND(SUM(CASE WHEN cerrada_en IS NOT NULL THEN r_multiplo END), 2) r_total
+               FROM operaciones GROUP BY v"""
+        )
+    }
+    for v in sorted(set(por_v) | set(ops)):
+        todas = por_v.get(v, [])
+        resueltas = [f for f in todas if f["resuelta_en"] is not None and f["brier"] is not None]
+        bloque: dict[str, Any] = {
+            "escritas": len(todas),
+            "resueltas": len(resueltas),
+            "vivas": len(todas) - len(resueltas),
+            "faltan": max(0, PREDICCIONES_PARA_DECIDIR - len(resueltas)),
+            "operaciones": {
+                "cerradas": ops.get(v, {}).get("cerradas", 0),
+                "abiertas": ops.get(v, {}).get("abiertas", 0),
+                # El R espera a la puerta, como todo lo demás.
+                "r_total": None,
+            },
+            "brier": None,
+            "ingenuo": None,
+            "por_marco": {},
+            "tramos": [],
+            "analista": None,
+        }
+        if len(resueltas) >= PREDICCIONES_PARA_DECIDIR:
+            n = len(resueltas)
+            ocurrio = sum(int(f["ocurrio"]) for f in resueltas) / n
+            bloque["brier"] = round(sum(float(f["brier"]) for f in resueltas) / n, 4)
+            bloque["ingenuo"] = round(ocurrio * (1 - ocurrio), 4)
+            bloque["operaciones"]["r_total"] = ops.get(v, {}).get("r_total")
+            marcos: dict[str, list[Any]] = {}
+            tramos: dict[str, list[Any]] = {}
+            for f in resueltas:
+                marcos.setdefault(str(f["temporalidad"] or "?"), []).append(f)
+                base = int(float(f["probabilidad"]) * 100 // 20) * 20
+                tramos.setdefault(f"{base}-{base + 20}%", []).append(f)
+            bloque["por_marco"] = {m: _celda(fs) for m, fs in sorted(marcos.items())}
+            bloque["tramos"] = [{"tramo": t, **_celda(fs)} for t, fs in sorted(tramos.items())]
+            bloque["analista"] = _contra_el_analista(resueltas)
+        out[v] = bloque
+    return out
+
+
+def _celda(fs: list[Any]) -> dict[str, Any]:
+    n = len(fs)
+    return {
+        "n": n,
+        "brier": round(sum(float(f["brier"]) for f in fs) / n, 4),
+        "dijo": round(sum(float(f["probabilidad"]) for f in fs) / n, 3),
+        "ocurrio": round(sum(int(f["ocurrio"]) for f in fs) / n, 3),
+    }
+
+
+def _contra_el_analista(resueltas: list[Any]) -> dict[str, Any] | None:
+    """Trader contra analista, solo donde apostaron al MISMO nivel (v5)."""
+    pares: list[tuple[float, float, int]] = []
+    for f in resueltas:
+        try:
+            analista = json.loads(f["contexto"]).get("extra", {}).get("analista")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(analista, dict):
+            continue
+        lado = analista.get(str(f["hacia"]))
+        if not isinstance(lado, dict) or lado.get("media") is None or lado.get("nivel") is None:
+            continue
+        if abs(float(lado["nivel"]) - float(f["nivel"])) > 1e-6:
+            continue
+        pares.append((float(f["probabilidad"]), float(lado["media"]), int(f["ocurrio"])))
+    if not pares:
+        return None
+    n = len(pares)
+    return {
+        "comparables": n,
+        "brier_trader": round(sum((p - o) ** 2 for p, _, o in pares) / n, 4),
+        "brier_analista": round(sum((m - o) ** 2 for _, m, o in pares) / n, 4),
+    }
 
 
 def _modelos(con: sqlite3.Connection) -> dict[str, int]:

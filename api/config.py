@@ -249,6 +249,12 @@ class Settings(BaseSettings):
 
     # --- Límites del agente (seguridad: costos y loops) ---
     max_iterations: int = Field(default=6, alias="BYTE_MAX_ITERATIONS")
+
+    # Cuántas veces se le pregunta al analista por vuelta (prompt v5,
+    # paper/analista.py): la primera fija los niveles, las demás solo puntúan y
+    # se promedian. 0 apaga la fase. ⚠ ES UNA VARIABLE DE CONDUCTA DEL
+    # EXPERIMENTO: la misma para todos los brazos, sellada en cada escritura.
+    muestras_analista: int = Field(default=3, alias="BYTE_MUESTRAS_ANALISTA")
     # 10 minutos, no 3: un run son varias llamadas al modelo, y en CPU un 7B
     # hace ~5-15 tokens por segundo. Con 3 minutos se cortan runs legítimos en
     # la primera prueba local. Sigue acotado, que es lo que pide el checklist.

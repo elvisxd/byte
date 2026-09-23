@@ -94,7 +94,17 @@ def mercado(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_abrir_sin_objetivo_se_rechaza_y_lo_explica(tmp_path: Any, mercado: None) -> None:
     r = Registro(str(tmp_path / "op.db"))
     res = _abrir(
-        r, AbrirArgs(eje="range-sweep", direccion="short", stop_loss=79867.31, razon="techo")
+        r,
+        AbrirArgs(
+            eje="range-sweep",
+            direccion="short",
+            stop_loss=79867.31,
+            razon="techo",
+            ejes=(
+                "range-sweep: sí; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no"
+            ),
+            en_contra="prueba",
+        ),
     )
 
     assert res.ok is False
@@ -109,6 +119,10 @@ def test_abrir_sin_objetivo_se_rechaza_y_lo_explica(tmp_path: Any, mercado: None
             stop_loss=79867.31,
             take_profit=77000.0,
             razon="techo",
+            ejes=(
+                "range-sweep: sí; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no"
+            ),
+            en_contra="prueba",
         ),
     )
     assert ok.ok
@@ -124,6 +138,10 @@ def test_dejar_orden_sin_objetivo_se_rechaza(tmp_path: Any, mercado: None) -> No
             precio_limite=76100.0,
             stop_loss=75500.0,
             razon="piso",
+            ejes=(
+                "range-sweep: sí; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no"
+            ),
+            en_contra="prueba",
         ),
         4000,
     )

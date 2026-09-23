@@ -333,7 +333,14 @@ async def vigilar(
             # menos por vuelta. Si no se pueden calcular, la vuelta sale sin
             # ellos y el modelo los pide como antes —nunca se pierde la vuelta
             # por la precarga—.
-            return await una_vuelta(grafo, trace, n, precarga=precarga_segura(registro, ajustes))
+            return await una_vuelta(
+                grafo,
+                trace,
+                n,
+                precarga=precarga_segura(registro, ajustes),
+                # La fase de analista del prompt v5, si el brazo la tiene.
+                analista=getattr(etiqueta, "analista", None),
+            )
 
     if mantener_despierta is None:
         mantener_despierta = Despertador()

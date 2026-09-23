@@ -1483,5 +1483,53 @@ class Registro:
             ],
         }
 
+    def calibracion_propia(self, version: str, minimo: int = 50) -> dict[str, Any]:
+        """Lo que este brazo dijo y lo que ocurrió, SOLO con el prompt `version`.
+
+        Es lo que el prompt v5 le enseña al modelo como «TU CALIBRACIÓN»
+        (tools/paper.py, `precarga`): su propia tabla por banda de 20 puntos.
+        Misma puerta que `brier_por_tramo` y que el criterio —50 resueltas—
+        y por lo mismo: enseñarle su tasa a las 20 es invitarlo a ajustar
+        contra ruido. Por debajo devuelve la cuenta y ningún tramo.
+
+        Por versión y no sobre todo el registro porque un prompt es otra
+        muestra (paper/prompt.py): lo que hizo con v4 no dice qué hace con v5.
+        """
+        filas = list(
+            self._con.execute(
+                "SELECT probabilidad, ocurrio, brier FROM predicciones "
+                "WHERE resuelta_en IS NOT NULL AND brier IS NOT NULL "
+                "AND json_extract(contexto, '$.extra.prompt') = ?",
+                (version,),
+            )
+        )
+        if len(filas) < minimo:
+            return {
+                "version": version,
+                "resueltas": len(filas),
+                "faltan": minimo - len(filas),
+                "tramos": [],
+            }
+        tramos: dict[str, list[Any]] = {}
+        for f in filas:
+            base = int(f["probabilidad"] * 100 // 20) * 20
+            tramos.setdefault(f"{base}-{base + 20}%", []).append(f)
+        return {
+            "version": version,
+            "resueltas": len(filas),
+            "faltan": 0,
+            "brier_medio": round(sum(f["brier"] for f in filas) / len(filas), 4),
+            "tasa_base": round(sum(f["ocurrio"] for f in filas) / len(filas), 3),
+            "tramos": [
+                {
+                    "tramo": nombre,
+                    "n": len(fs),
+                    "dijo": round(sum(f["probabilidad"] for f in fs) / len(fs), 3),
+                    "ocurrio": round(sum(f["ocurrio"] for f in fs) / len(fs), 3),
+                }
+                for nombre, fs in sorted(tramos.items())
+            ],
+        }
+
     def cerrar_conexion(self) -> None:
         self._con.close()

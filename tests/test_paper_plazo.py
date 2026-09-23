@@ -99,6 +99,13 @@ def test_la_pista_pide_el_plazo_de_15m(monkeypatch: pytest.MonkeyPatch, tmp_path
             razonamiento="x",
             regimen="RANGE",
             horas_vigencia=0,
+            tasa_base=60,
+            ajuste=10,
+            razon_del_ajuste="x",
+            ejes=(
+                "range-sweep: sí; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no"
+            ),
+            en_contra="prueba",
         ),
         4000,
     )

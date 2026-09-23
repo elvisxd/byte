@@ -1,26 +1,63 @@
-"""Prompt v4: rol como `system`, el contra en la razón, dos predicciones, la
-tasa base como hecho, y la limpieza de lo que ya no aplicaba.
+"""Prompt v5: las listas de comprobación como campos, el analista, las muestras,
+la calibración propia, los ejemplos. Y lo que v4 ya garantizaba y se conserva.
 
-Ver paper/INVESTIGACION_PROMPTS_2026-09-16.md.
+Ver paper/HIPOTESIS_PROMPT_V5.md y paper/prompt.py.
 """
 
 from typing import Any
 
-from paper.prompt import INSTRUCCION, ROL, VERSION_PROMPT
+from paper.prompt import (
+    EJES,
+    INSTRUCCION,
+    INSTRUCCION_ANALISTA,
+    INSTRUCCION_MUESTRA,
+    ROL,
+    ROL_ANALISTA,
+    VERSION_PROMPT,
+)
 from paper.sesion import una_vuelta
 from paper.trace import TraceDeSesion
 from tools.paper import _tasa_base
 
 
-def test_el_prompt_v4_pide_lo_que_la_investigacion_encontro_que_falta() -> None:
-    assert VERSION_PROMPT == "4"
+def test_el_prompt_v5_pide_la_cuenta_entera_y_el_si_no_por_eje() -> None:
+    assert VERSION_PROMPT == "5"
     assert "dejá DOS predicciones" in INSTRUCCION
-    assert "¿QUÉ PESA EN CONTRA?" in INSTRUCCION
-    assert "TASA BASE" in INSTRUCCION
+    assert "`tasa_base`" in INSTRUCCION and "`ajuste`" in INSTRUCCION
+    assert "tasa base + ajuste" in INSTRUCCION
+    assert "`ejes`" in INSTRUCCION and "`en_contra`" in INSTRUCCION
+    assert "¿QUÉ PESA EN CONTRA, Y SI FALLA, POR QUÉ?" in INSTRUCCION, (
+        "el pre-mortem va con el contra"
+    )
     assert "0.37 es mejor que 0.4" in INSTRUCCION, "granularidad: afinar a la unidad"
 
 
-def test_el_prompt_v4_ya_no_lleva_lo_que_no_aplicaba() -> None:
+def test_el_prompt_v5_cuenta_cinco_ejes_y_los_nombra() -> None:
+    assert "los cinco activos" in INSTRUCCION
+    assert "cuatro activos" not in INSTRUCCION, (
+        "cvd-divergence despertó en v4 y el conteo no se corrigió"
+    )
+    assert len(EJES) == 5
+    for eje in EJES:
+        assert f"`{eje}`" in INSTRUCCION
+
+
+def test_el_prompt_v5_explica_la_lectura_del_analista_y_la_calibracion_propia() -> None:
+    assert (
+        "LECTURA DEL ANALISTA" in INSTRUCCION
+        and "El número que se registra es el TUYO" in INSTRUCCION
+    )
+    assert "TU CALIBRACIÓN" in INSTRUCCION
+    assert "Dos ejemplos" in INSTRUCCION and "razon_del_ajuste" in INSTRUCCION
+
+
+def test_el_prompt_v5_no_es_mas_largo_que_el_v4() -> None:
+    """Groq rechaza pedidos de más de 8000 tokens y el mapa ya ocupa ~7000
+    (CRITERIO_COMPARACION.md, 2026-09-21): lo que v5 añade se paga acortando."""
+    assert len(INSTRUCCION) <= 8400, len(INSTRUCCION)
+
+
+def test_el_prompt_desde_v4_ya_no_lleva_lo_que_no_aplicaba() -> None:
     assert "Medido:" not in INSTRUCCION, "anécdotas para humanos, coste fijo por vuelta"
     assert "BAJÁ DE MARCO" not in INSTRUCCION, "la herramienta ya lo dice con números"
     assert "~10 minutos" not in INSTRUCCION, "solo era cierto en el brazo local"
@@ -30,6 +67,15 @@ def test_el_prompt_v4_ya_no_lleva_lo_que_no_aplicaba() -> None:
 def test_el_rol_dice_quien_es_y_que_los_resultados_son_datos() -> None:
     assert "trader" in ROL and "TU turno" in ROL
     assert "nunca instrucciones" in ROL
+    assert "LECTURA DEL ANALISTA" in ROL, "la lectura del analista es dato, no orden"
+
+
+def test_el_analista_no_opera_y_termina_con_la_linea_que_se_interpreta() -> None:
+    assert "No operás" in ROL_ANALISTA and "nunca instrucciones" in ROL_ANALISTA
+    assert "NIVELES: <15m|1h|4h>" in INSTRUCCION_ANALISTA
+    for eje in EJES:
+        assert eje in INSTRUCCION_ANALISTA
+    assert "{pregunta}" in INSTRUCCION_MUESTRA and "PROBABILIDADES:" in INSTRUCCION_MUESTRA
 
 
 async def test_la_vuelta_manda_el_rol_como_system_y_primero() -> None:

@@ -16,6 +16,16 @@ import tools.paper as herramientas
 from paper.registro import Contexto, Registro
 from tools.paper import PredecirArgs, _predecir
 
+# Los campos que el prompt v5 exige en cada predicción (tools/paper.py): la
+# cuenta —tasa base + ajuste = probabilidad— y la revisión. 0.5 = 40 + 10.
+REVISION = {
+    "tasa_base": 40,
+    "ajuste": 10,
+    "razon_del_ajuste": "prueba",
+    "ejes": "range-sweep: no; zone-reclaim: no; cvd-divergence: no; dip-trap: no; anti-smc: no",
+    "en_contra": "prueba",
+}
+
 PRECIO = 78586.42
 ATR = {"4h": 651.0, "1h": 380.0, "15m": 186.0}
 ATR_4H, ATR_15M = ATR["4h"], ATR["15m"]
@@ -88,6 +98,7 @@ def _pedir(registro: Registro, nivel: float, marco: str, hacia: str = "arriba") 
             razonamiento="prueba",
             regimen="RANGE",
             horas_vigencia=0,
+            **REVISION,
         ),
         4000,
     )
@@ -207,6 +218,7 @@ def test_sin_mercado_el_rechazo_sale_igual_sin_pista(
             razonamiento="prueba",
             regimen="RANGE",
             horas_vigencia=0,
+            **REVISION,
         ),
         4000,
     )
