@@ -460,7 +460,7 @@ La regla de los 60 s sale de seis casos de un solo día. La lectura del 25 tiene
 que contar cuántas vueltas de groq escriben y cuántos 413 quedan. Si siguen,
 lo siguiente a decidir es bajar `groq_num_predict` (sección del 21).
 
-Las predicciones v5 siguen siendo una sola muestra: el prompt, el mapa, las
+Las predicciones v5 se siguen contando juntas: el prompt, el mapa, las
 herramientas y las 3 muestras son los mismos antes y después del cambio.
 
 Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
