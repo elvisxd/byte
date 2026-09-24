@@ -423,32 +423,45 @@ Cómo se separan las muestras: `calcular.mjs` sella `version_mapa: 2` dentro de
 `indicadores`, que va entero en `contexto.extra` de cada escritura; las de antes
 no lo tienen (mapa v1). Ninguna predicción v5 lleva mapa v1.
 
-## 2026-09-24: una sola muestra de analista para todos (`BYTE_MUESTRAS_ANALISTA=1`)
+## 2026-09-24: el 413 de Groq se ataca con la espera, no con menos muestras (`BYTE_GROQ_ESPERA_S=90`)
 
-Decisión del usuario («has lo de groq con las muestras de analista»), sobre la
-primera mañana v5. Groq no aguantó las cuatro llamadas por vuelta: la fase de
-analista eran tres llamadas con el mapa entero más el turno del trader, Groq
-suma al pedido la salida anterior del mismo modelo, y el 413 llegó en las dos
-vueltas de la mañana (pedidos de 8287 a 8733 contra el tope de 8000). Con tres
-muestras su muestra v5 habría tardado meses en llegar a 50.
+Decisión del usuario («aplica esta BYTE_GROQ_ESPERA_S=90 con 3 muestras de
+analista»), que reemplaza a la de horas antes de pasar a una sola muestra
+(`BYTE_MUESTRAS_ANALISTA=1`). Aquella nunca se aplicó.
 
-- **Para los cuatro brazos, no solo groq.** Es una variable de conducta: si
-  cambia para uno solo, la comparación deja de ser la misma pregunta.
-- **Qué se pierde:** el «muestrear y promediar» (paper/analista.py). Queda la
-  lectura del analista de una sola muestra, que sigue entrando al trader como
-  dato y sellándose en `extra.analista`. La pregunta «¿aporta el analista
-  sobre el número del trader?» se sigue pudiendo contestar; la de «¿aporta
-  promediar?» ya no.
-- **Qué se gana:** dos llamadas por vuelta en vez de cuatro, para todos.
+**Qué dicen los registros del 24.** Groq le suma a cada pedido la salida de la
+llamada anterior del mismo modelo mientras esa salida siga dentro del último
+minuto. El relevo espacia 60 s de arranque a arranque (`_espaciar`,
+agent/relevo.py). Como cada llamada tarda unos segundos, la siguiente llega
+antes de que pase el minuto desde que terminó la anterior:
+
+| Separación desde que terminó la llamada anterior | Resultado |
+|---|---|
+| 47, 50, 55 y 58 s | 413 |
+| 62 y 64 s | contestó |
+
+Así que el choque venía del ritmo, no del número de muestras en sí.
+
+- **Se sube la espera de Groq de 60 a 90 s**, de arranque a arranque. Una
+  llamada de hasta ~30 s deja el minuto libre antes de la siguiente.
+- **Se mantienen las 3 muestras de analista para los cuatro brazos**, y con
+  ellas el «muestrear y promediar» (paper/analista.py).
+- **No es una variable de conducta.** No cambia lo que ve ningún modelo ni cómo
+  se le pregunta: solo cuándo se llama a Groq, y ya era una espera propia de
+  ese proveedor. Lo único que cambia es que su vuelta tarda más: de 6 a 9
+  llamadas a 90 s son de 9 a 14 minutos, dentro de la cadencia de 15.
+- **Lo que no arregla.** Dentro del turno del trader cada paso reenvía el mapa
+  más lo ya hecho, y eso crece con o sin espera. Lo sigue cubriendo el recorte
+  del 413 del 21, que se declara en `recortes_413`.
 - **Se aplica fuera de la ventana**, esta noche después de las 20:30 EDT, como
   variable del servicio del vigía. No cambia el código ni `BYTE_REF`.
 
-Cómo se separan las muestras: cada escritura v5 sella
-`extra.analista.muestras_pedidas`. Las del 24 por la mañana llevan 3, y desde
-el cambio llevan 1. `por_version` las sigue contando juntas como v5: son las
-de una sola mañana, y el prompt, el mapa y las herramientas son los mismos.
-Si al llegar a 50 esas pocas pesan, se recalcula sin ellas filtrando por ese
-campo, sin tocar nada más.
+La regla de los 60 s sale de seis casos de un solo día. La lectura del 25 tiene
+que contar cuántas vueltas de groq escriben y cuántos 413 quedan. Si siguen,
+lo siguiente a decidir es bajar `groq_num_predict` (sección del 21).
+
+Las predicciones v5 siguen siendo una sola muestra: el prompt, el mapa, las
+herramientas y las 3 muestras son los mismos antes y después del cambio.
 
 Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
 modelos.
