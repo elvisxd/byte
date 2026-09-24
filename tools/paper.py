@@ -270,7 +270,8 @@ def _mirar(args: MirarArgs, max_chars: int) -> ToolResult:
         lineas.append("")
         lineas.append(
             f"régimen: {regimen['regimen']} (chop {regimen.get('chop')}, "
-            f"ancho de bandas en el percentil {regimen.get('bbw_percentil')})"
+            f"ancho de bandas en el percentil {regimen.get('bbw_percentil')}"
+            f"{_regimen_hace(regimen)})"
         )
 
     pools = ind.get("liquidity") or []
@@ -1032,6 +1033,16 @@ def _tasa_base(
     }
 
 
+def _regimen_hace(reg: dict[str, Any]) -> str:
+    """«, confirmado hace N velas» cuando el mapa v2 lo trae (calcular.mjs,
+    2026-09-24): el régimen confirmado caduca si nadie lo vota, y el modelo
+    tiene que saber si lee un régimen de esta vela o uno arrastrado."""
+    hace = reg.get("hace_velas")
+    if not isinstance(hace, int | float) or hace < 0:
+        return ""
+    return f", confirmado hace {int(hace)} velas"
+
+
 def _bloque(
     marco: str,
     datos: dict[str, Any],
@@ -1050,7 +1061,9 @@ def _bloque(
         f"{ctx.extra['techo_hace_velas']} velas, piso hace {ctx.extra['piso_hace_velas']})"
     )
     if reg.get("regimen"):
-        cabecera += f" · régimen medido: {reg['regimen']} (chop {_n(reg.get('chop'))})"
+        cabecera += (
+            f" · régimen medido: {reg['regimen']} (chop {_n(reg.get('chop'))}{_regimen_hace(reg)})"
+        )
     vc = ctx.extra.get("volumen_en_curso")
     volumen = f"   volumen {ctx.volumen_relativo}x de la media (última cerrada)"
     if vc:
