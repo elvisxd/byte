@@ -51,7 +51,7 @@ INDICADORES = {
     "rsi": 66.7,
     "adx": {"adx": 17.1, "plusDI": 20.0, "minusDI": 15.0},
     "macd": {"macd": 90.8, "signal": -163.9},
-    "regime": {"regimen": "RANGE", "chop": 40.4, "bbw_percentil": 30},
+    "regime": {"regimen": "RANGE", "chop": 40.4, "bbw_percentil": 30, "hace_velas": 2},
     "liquidity": [
         {"precio": 79867.31, "lado": "encima", "fuerza": 2, "swings": 2},
         {"precio": 75503.62, "lado": "debajo", "fuerza": 1},
@@ -88,6 +88,9 @@ async def test_sin_intervalo_vienen_los_tres_marcos(mercado: None, tmp_path: Any
     assert "precio 79136.58 · al 82% del rango" in texto  # el 4h, con su porcentaje
     assert "por ENCIMA de la EMA20" in texto
     assert "régimen medido: RANGE" in texto
+    assert "confirmado hace 2 velas" in texto, (
+        "el mapa v2 dice si el régimen es de esta vela o arrastrado"
+    )
     assert "pools sin barrer: 79867.31 (encima, f2, 2 swings)" in texto
     assert (
         "FVG sin rellenar: 75766.89–75950.75 (alcista), 78100.0–78210.0 (bajista, INVERTIDO)"

@@ -396,3 +396,29 @@ acortar más.
 Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
 modelos. H6 (los cierres de 4h y los plazos fuera del tope) sigue propuesta en
 CRITERIO_CADENCIA.md y la decide el usuario.
+
+## 2026-09-24: el mapa cambia de versión (v2), antes de la primera vuelta v5
+
+Decisión del usuario («haz esas 4») sobre la auditoría numérica de los
+indicadores del 24 (mi-dashboard-trading #70 y el PR del mapa v2). Los cuatro
+cambios tocan lo que ven los cuatro modelos, así que entran juntos, para todos,
+y ANTES de la primera vuelta con el prompt v5 (08:00 EDT del 24): la muestra
+v5 arranca entera con el mapa v2 y no hay que partirla.
+
+1. **La vela en curso sale de los indicadores.** Con ella dentro, el ATR que
+   veía el modelo con la vela recién abierta salía un 7,14 % bajo (−1/14,
+   exacto, n=160 casos), y ese ATR fija la tasa base y las distancias «a 1
+   ATR». Los indicadores se calculan sobre las velas cerradas; la vela en curso
+   se sigue describiendo aparte, como ya se hacía.
+2. **El régimen caduca.** El confirmado por histéresis se arrastraba sin
+   límite: en series sin tendencia difería del voto de esa vela el 62 % de las
+   veces. Ahora caduca sin votos que lo sostengan y el mapa dice «confirmado
+   hace N velas».
+3. **El FVG se mitiga por mecha**, como su cabecera prometía y el código no
+   hacía.
+4. **El pool de liquidez lleva el precio del swing**, no el desplazado un
+   0,05 % que se usaba para detectar el barrido (ese queda aparte).
+
+Cómo se separan las muestras: `calcular.mjs` sella `version_mapa: 2` dentro de
+`indicadores`, que va entero en `contexto.extra` de cada escritura; las de antes
+no lo tienen (mapa v1). Ninguna predicción v5 lleva mapa v1.
