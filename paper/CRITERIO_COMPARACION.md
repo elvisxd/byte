@@ -422,3 +422,33 @@ v5 arranca entera con el mapa v2 y no hay que partirla.
 Cómo se separan las muestras: `calcular.mjs` sella `version_mapa: 2` dentro de
 `indicadores`, que va entero en `contexto.extra` de cada escritura; las de antes
 no lo tienen (mapa v1). Ninguna predicción v5 lleva mapa v1.
+
+## 2026-09-24: una sola muestra de analista para todos (`BYTE_MUESTRAS_ANALISTA=1`)
+
+Decisión del usuario («has lo de groq con las muestras de analista»), sobre la
+primera mañana v5. Groq no aguantó las cuatro llamadas por vuelta: la fase de
+analista eran tres llamadas con el mapa entero más el turno del trader, Groq
+suma al pedido la salida anterior del mismo modelo, y el 413 llegó en las dos
+vueltas de la mañana (pedidos de 8287 a 8733 contra el tope de 8000). Con tres
+muestras su muestra v5 habría tardado meses en llegar a 50.
+
+- **Para los cuatro brazos, no solo groq.** Es una variable de conducta: si
+  cambia para uno solo, la comparación deja de ser la misma pregunta.
+- **Qué se pierde:** el «muestrear y promediar» (paper/analista.py). Queda la
+  lectura del analista de una sola muestra, que sigue entrando al trader como
+  dato y sellándose en `extra.analista`. La pregunta «¿aporta el analista
+  sobre el número del trader?» se sigue pudiendo contestar; la de «¿aporta
+  promediar?» ya no.
+- **Qué se gana:** dos llamadas por vuelta en vez de cuatro, para todos.
+- **Se aplica fuera de la ventana**, esta noche después de las 20:30 EDT, como
+  variable del servicio del vigía. No cambia el código ni `BYTE_REF`.
+
+Cómo se separan las muestras: cada escritura v5 sella
+`extra.analista.muestras_pedidas`. Las del 24 por la mañana llevan 3, y desde
+el cambio llevan 1. `por_version` las sigue contando juntas como v5: son las
+de una sola mañana, y el prompt, el mapa y las herramientas son los mismos.
+Si al llegar a 50 esas pocas pesan, se recalcula sin ellas filtrando por ese
+campo, sin tocar nada más.
+
+Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
+modelos.
