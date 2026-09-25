@@ -408,14 +408,21 @@ class Relevo:
         alfabético, nunca por disponibilidad: es un parte, no un ranking.
         """
         t = self.reloj()
-        return {
-            nombre: {
+        parte: dict[str, dict[str, Any]] = {}
+        for nombre in sorted(self.nombres):
+            hasta = self._estado.hasta.get(nombre, t)
+            # Una cuarentena permanente (404 «sin endpoints»: el modelo ya no se
+            # sirve) dura `inf`: `round(inf)` lanzaba OverflowError y el parte
+            # entero se perdía en cada vuelta. No vuelve en esta sesión: sin
+            # minutos, y dicho con `permanente`.
+            permanente = hasta == CUARENTENA_PERMANENTE_S
+            parte[nombre] = {
                 "disponible": self._estado.hasta.get(nombre, float("-inf")) <= t,
-                "vuelve_en_min": max(0, round((self._estado.hasta.get(nombre, t) - t) / 60)),
+                "vuelve_en_min": None if permanente else max(0, round((hasta - t) / 60)),
+                "permanente": permanente,
                 "contesto": self._estado.actual == nombre,
             }
-            for nombre in sorted(self.nombres)
-        }
+        return parte
 
     def bind_tools(self, *args: Any, **kwargs: Any) -> "Relevo":
         # La copia con herramientas comparte estado con la original: el grafo usa
