@@ -508,6 +508,24 @@ async def test_el_parte_de_modelos_dice_quien_esta_en_cuarentena() -> None:
     assert relevo.estado_modelos()["a"]["disponible"] is True
 
 
+async def test_el_parte_aguanta_una_cuarentena_permanente() -> None:
+    """Un 404 «sin endpoints» deja al modelo fuera para siempre (cuarentena
+    `inf`): `round(inf)` lanzaba OverflowError y el parte de los modelos no
+    llegaba al panel en ninguna vuelta del día (visto el 2026-09-25 con
+    nex-agi/nex-n2.5-pro:free en el brazo openrouter)."""
+    relevo = _relevo(_Modelo("retirado", _Error(404, "No endpoints found")), _Modelo("b"))
+
+    await relevo.ainvoke("hola")
+    parte = relevo.estado_modelos()
+    assert parte["retirado"] == {
+        "disponible": False,
+        "vuelve_en_min": None,
+        "permanente": True,
+        "contesto": False,
+    }
+    assert parte["b"]["permanente"] is False and parte["b"]["vuelve_en_min"] == 0
+
+
 def test_el_log_lleva_entrada_y_salida_para_poder_costear(capsys) -> None:
     """Sin los de SALIDA el coste de un brazo es una estimación, no un dato: en
     Gemini el pensamiento factura como salida y cuesta 5x la entrada."""
