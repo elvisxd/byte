@@ -7,7 +7,7 @@ description = "Agente de IA local (self-hosted) que programa, busca en internet 
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.52.4",
+    "uvicorn[standard]>=0.53.0",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
     "structlog>=24.4",
@@ -17,16 +17,16 @@ dependencies = [
     "jinja2>=3.1",
     # Extraer el texto legible de una página: sin esto, lo que entra al prompt
     # es el HTML entero —menús, scripts, banners— y el contenido se pierde.
-    "selectolax>=0.3",
-    "langgraph>=1.2",
-    "langchain-core>=1.6",
+    "selectolax>=0.4.12",
+    "langgraph>=1.2.12",
+    "langchain-core>=1.6.4",
     "langchain-ollama>=1.1",
     "langgraph-checkpoint-postgres>=3.1",
-    "psycopg[binary,pool]>=3.3.5",
-    "tavily-python>=0.8",
+    "psycopg[binary,pool]>=3.3.6",
+    "tavily-python>=0.8.4",
     # Parseo de los PDF que se suben al RAG (Fase 2). Python puro: no agrega
     # binarios al contenedor.
-    "pypdf>=5.1",
+    "pypdf>=6.19.0",
     # FastAPI lo necesita para leer los uploads multipart de POST /documents.
     "python-multipart>=0.0.18",
     "mcp>=1.12",
@@ -34,7 +34,7 @@ dependencies = [
     "pyjwt>=2.9",
     "email-validator>=2.2",
     "langchain-google-genai>=4.4.0",
-    "langchain-openai>=1.6.2",
+    "langchain-openai>=1.6.3",
 ]
 
 [project.optional-dependencies]
@@ -42,13 +42,13 @@ dependencies = [
 # En el MVP la página mínima renderiza con textContent, sin HTML.
 html = ["nh3>=0.2"]
 observabilidad = [
-    "langfuse>=3.0",
-    "sentry-sdk>=2.0",
+    "langfuse>=4.15.4",
+    "sentry-sdk>=2.70.0",
 ]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.6.9",
+    "ruff>=0.16.8",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pip-audit>=2.7",
