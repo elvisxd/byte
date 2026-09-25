@@ -1,0 +1,78 @@
+# La mesa de analistas — fijada ANTES de la primera ronda
+
+> En su propio commit y antes del código, como los otros `CRITERIO_*.md`: si
+> las reglas de abajo se escribieran después de ver qué familia acertó, el
+> historial no podría distinguir «se decidió antes» de «se eligió porque
+> cuadraba». Decidido con Elvis el 2026-09-25.
+
+## La pregunta
+
+¿Los analistas de familias distintas **coinciden** cuando leen el mismo mapa?
+¿Y el **consenso** de varios acierta más que cada uno por separado? Si sí, el
+trader podría recibir la mesa entera en vez de la lectura de su propio modelo.
+
+Hoy no se puede responder con lo que hay. La fase de analista del prompt v5
+(`paper/analista.py`) usa el MISMO modelo del brazo, y cada analista elige sus
+propios niveles: dos lecturas sobre niveles distintos no se comparan.
+
+## Fase 1 — la mesa en sombra (desde el 2026-09-25)
+
+- **Cuándo:** después de cada cierre de 4h DENTRO de la ventana del vigía
+  (08, 12, 16 y 20 h locales), con `MESA_ESPERA_MIN` de retraso (50 por
+  defecto). Los brazos despiertan en ese mismo cierre y su vuelta dura 25-40
+  min; la mesa va detrás para no competir con ellos por la cuota por minuto
+  (Groq: 8.000 tokens/min).
+- **Quién:** un analista por familia de los brazos que estén en `BRAZOS`
+  (gemini, groq, nvidia, openrouter), con la lista de modelos de ese brazo.
+- **La misma pregunta para todos, fijada por el CÓDIGO:** marco 1h, arriba =
+  precio + 1 ATR(1h), abajo = precio − 1 ATR(1h), plazo 24 h (el
+  `PLAZO_POR_MARCO` de 1h). Cada analista da su probabilidad de que el precio
+  TOQUE cada nivel antes de vencer, y un veredicto: alcista, bajista o
+  neutral.
+- **El mapa:** el mismo `_mapa` de los brazos, sin el estado de ningún
+  registro (la mesa no tiene operaciones).
+- **Una muestra por familia y ronda.** Son ~4 llamadas por ronda, 16 al día.
+- **Se resuelve por código** contra velas de 15m, como las predicciones: tocó
+  o no tocó. El modelo nunca se puntúa a sí mismo.
+- **Aviso por Telegram aparte**, uno por ronda: el veredicto y las dos
+  probabilidades de cada familia, el consenso y cuánto discrepan. Lo pidió
+  Elvis el 2026-09-25.
+- **Vive en `$DATOS/mesa.db`**, en el volumen, separada de los registros de
+  los brazos.
+
+### ⚠ EL TRADER NO VE LA MESA
+
+Es la condición que hace posible correrla a mitad de la muestra v5: los brazos
+siguen exactamente igual (mismo prompt, mismo analista propio, mismas
+herramientas) y la comparación v5 no se toca. Lo único compartido es la cuota
+de las claves, y por eso la mesa va detrás de la vuelta del cierre y una clave
+agotada se salta sin reintentos.
+
+### ⚠ SIN BRIER ANTES DE 50
+
+La misma puerta que los brazos: el Brier de una familia como analista no se
+mira ni se enseña hasta que tenga **50 preguntas resueltas** (100 niveles).
+Antes solo se cuentan las rondas y la **discrepancia** entre familias, que no
+depende del resultado y no invita a ajustar contra ruido.
+
+## Fase 2 — la mesa como dato del trader (prompt v6)
+
+**No empieza antes** de que los brazos crucen las 50 predicciones resueltas en
+v5. Con los datos de la fase 1 se decide:
+
+- si el consenso de la mesa tiene mejor Brier que cada familia sola y que el
+  analista propio de cada brazo (`extra.analista` de v5);
+- si la discrepancia sirve: ¿cuando la mesa discrepa mucho, fallan más?
+
+Si la respuesta es sí, v6 le da al trader la mesa (consenso + quién discrepa)
+en lugar de su analista propio, con **su propia muestra de 50**. Si es no, no
+se cambia nada y el experimento a ciegas se ahorró. Es una variable de
+conducta: la decide Elvis con las cifras delante.
+
+## Dónde está cada cosa
+
+- `paper/mesa.py`: la ronda, el registro (`mesa.db`), la resolución, el aviso
+  y `--informe`.
+- `railway-vigia-service/arrancar.sh` (repo `mi-dashboard-trading`): la lanza
+  junto a los brazos con las claves de cada uno. Si la mesa cae, los brazos
+  siguen: no está en la lista de procesos que tumban el contenedor.
