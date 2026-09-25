@@ -56,6 +56,13 @@ otra para lo que se manda a un tercero en runtime.
 
 ## El agente que opera en papel
 
+**Lo que está en marcha y por fases, para un chat nuevo:** la **mesa de
+analistas** (`paper/CRITERIO_MESA_ANALISTAS.md`). Fase 1 en sombra desde el
+2026-09-25: una misma pregunta a un analista por familia tras cada cierre de
+4h, con aviso por Telegram, y el trader NO la ve. Fase 2 (prompt v6, la mesa
+como dato del trader) solo después de 50 resueltas por brazo en v5 y con la
+decisión de Elvis.
+
 `paper/` y `tools/paper.py` son el motor de un experimento de trading **en
 papel, sin dinero**: Byte entra y sale sobre cinco hipótesis a la vez, escribe
 por qué entra ANTES de saber cómo sale, y publica el historial en un panel web.
