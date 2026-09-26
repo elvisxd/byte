@@ -156,8 +156,15 @@ def tipo_de_agotamiento(exc: BaseException) -> str | None:
     # se anotaba en el catálogo. Quince vueltas seguidas fallidas y cero
     # predicciones en dos días y medio, hasta que alguien leyó el log. Un
     # modelo retirado es tan permanente como uno que no existe.
+    # ⚠ Y UN 403 DE OPENROUTER QUE NOMBRA AL MODELO, TAMBIÉN. Medido el
+    # 2026-09-25 al sondear los candidatos gratis del brazo openrouter:
+    # `thinkingmachines/inkling:free` da 403 «… is only available on agentic
+    # harnesses». Es del MODELO —la misma clave usa los demás—, pero un 403 a
+    # secas es de la clave y no se rota (ver el test del 401), así que la
+    # vuelta se perdía sin probar el segundo de la lista. Solo con esa frase.
     if (
         codigo in (402, 404, 410)
+        or (codigo == 403 and "only available on" in bajo_todo)
         or "not_found_error" in bajo_todo
         or "payment_required" in bajo_todo
         or "'status': 410" in texto
