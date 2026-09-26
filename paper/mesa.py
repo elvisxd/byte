@@ -630,6 +630,7 @@ async def ronda(
     faltan = f" · fuentes sin dato: {', '.join(sorted(ctx.fallos))}" if ctx and ctx.fallos else ""
     print(
         f"[mesa] ronda del cierre {cierre}: {por_variante} contestaron"
+        f" · tasa base {_pct(base) if base is not None else 'sin dato'}"
         f" · telegram {'enviado' if enviado else 'NO enviado'}{faltan}",
         flush=True,
     )
