@@ -127,6 +127,41 @@ trader sigue sin ver la mesa. Y la puerta de 50 vale **por familia y por
 variante**: no se mira ninguna diferencia antes de 50 rondas resueltas con
 las dos variantes.
 
+## La tasa base, como un analista más (desde el 2026-09-26)
+
+Decidido con Elvis el 2026-09-26, tras la evaluación de qué pagar: antes de
+pagar un modelo hace falta la vara con que medirlo. El mapa ya le da a cada
+analista la tasa base de su pregunta —cuántas veces, en las últimas velas de
+1h, un nivel a 1 ATR se tocó dentro de 24 velas— y la instrucción le pide
+partir de ella. Pero no se guardaba: no había forma de saber si un analista
+le gana al número que ya tenía delante.
+
+- **Qué se guarda:** en cada ronda, la tasa base de 1h a 1 ATR que trae el
+  mapa de ESA ronda, leída del texto del mapa (el mismo número que leyeron
+  los analistas, no uno recalculado). Va como una fila más de `respuestas`,
+  familia `tasa base`, modelo `mapa`, con la misma probabilidad arriba y
+  abajo (la tasa base promedia los dos lados). Una fila por variante de la
+  ronda, para que cada variante se compare en sus mismas rondas.
+- **No cuenta como analista:** no entra en el consenso, en la discrepancia
+  ni en el «contestaron» del registro. En el aviso de Telegram va en una
+  línea aparte.
+- **La medida:** para cada familia, el Brier Skill Score contra la tasa base
+  en las MISMAS rondas y variante: `1 − Brier(familia) / Brier(tasa base)`.
+  Positivo, la familia le gana; cero o negativo, no aporta nada que el mapa
+  no dijera ya.
+- **La misma puerta:** nada de Brier ni de skill antes de 50 resueltas por
+  familia y variante. La tasa base también la cruza: su Brier sale con las
+  mismas 50.
+- **Las rondas anteriores no se rellenan:** el texto del mapa no se guardó y
+  la tasa base cambia con las velas.
+- ⚠ **ATR distinto, por poco:** la tasa base del mapa usa el ATR de cada
+  vela de producción (`calculateATR`), y los niveles de la pregunta usan el
+  ATR simple de 14 velas de `paper/mesa.py`. La diferencia es pequeña y es la
+  misma para todos: la vara es la que el analista tenía delante.
+
+Es la línea base que pide la literatura de pronóstico («copy the market»):
+un modelo de pago solo se evalúa si le gana a esta.
+
 ## Fase 2 — la mesa como dato del trader (prompt v6)
 
 **No empieza antes** de que los brazos crucen las 50 predicciones resueltas en
