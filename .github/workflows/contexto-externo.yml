@@ -1,0 +1,39 @@
+name: Contexto externo
+
+# Prueba de verdad las fuentes del contexto externo de la mesa
+# (paper/contexto_externo.py, fase 1b de CRITERIO_MESA_ANALISTAS.md) e imprime
+# el bloque que vería el analista. Existe porque el entorno donde se escribe
+# este código tiene esas fuentes bloqueadas.
+#
+# ⚠ NO LLAMA A NINGÚN MODELO NI ESCRIBE NADA: cero tokens. Sin FIRECRAWL_API_KEY
+# ni FINNHUB_API_KEY en los secretos del repo, los flujos de ETF y los
+# titulares salen como fuentes sin dato; lo demás no lleva clave.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/mesa-contexto-externo]
+    paths:
+      - "paper/contexto_externo.py"
+      - ".github/workflows/contexto-externo.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bloque:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+      FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Instalar dependencias desde el lock
+        run: uv sync --frozen
+      - name: Armar el bloque
+        run: uv run python -m paper.contexto_externo

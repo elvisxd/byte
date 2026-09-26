@@ -55,6 +55,73 @@ mira ni se enseña hasta que tenga **50 preguntas resueltas** (100 niveles).
 Antes solo se cuentan las rondas y la **discrepancia** entre familias, que no
 depende del resultado y no invita a ajustar contra ruido.
 
+## Fase 1b — el contexto externo, en A/B dentro de la mesa (desde el 2026-09-26)
+
+Elvis pidió el 2026-09-26 probar con los analistas lo que el mapa no ve: la
+macro, el oro, el petróleo, el dólar, las acciones que son BTC en bolsa, los
+flujos, los derivados, las opciones, el resto de cripto, lo on-chain, el
+sentimiento, el calendario y los titulares. Con una condición suya: **no
+saturar el mensaje**.
+
+### Qué se prueba
+
+¿El contexto externo mejora al analista? Se responde con un A/B **dentro de
+la misma ronda**: cada familia contesta la MISMA pregunta dos veces,
+
+- `mapa`: solo el mapa, igual que en la fase 1;
+- `mapa+externo`: el mapa y, al final, el bloque de contexto externo.
+
+Misma familia, mismo modelo, mismo instante, misma pregunta: lo único que
+cambia es el bloque. Las dos llamadas son independientes (la segunda no ve la
+primera). La diferencia de Brier entre variantes, por familia, es la medida.
+
+### El bloque, y su tope
+
+Una línea por familia de ejes, solo el valor y su cambio reciente, sin prosa:
+
+- **Macro:** Nasdaq-100, S&P 500, VIX, DXY, bono de 10 años de EE. UU.
+- **Refugio y energía:** oro, plata, WTI, Brent.
+- **Divisas:** USD/JPY, EUR/USD, USD/CNY.
+- **Acciones BTC:** MSTR, COIN, IBIT, MARA, NVDA.
+- **Flujos:** ETF spot del día anterior, oferta de stablecoins (7 d),
+  Coinbase premium.
+- **Derivados:** funding (y su media de 7 d), open interest (4 h), long/short
+  de cuentas, base de CME.
+- **Opciones:** DVOL, put/call de open interest, el vencimiento grande más
+  próximo.
+- **Cripto:** ETH/BTC, SOL/BTC, dominancia de BTC.
+- **On-chain y sentimiento:** hashrate, comisiones, Fear & Greed.
+- **Calendario:** eventos de EE. UU. de impacto alto hoy y mañana, sesión,
+  fin de semana, días a fin de mes.
+- **Titulares:** los 3 más recientes de cripto, cortados.
+
+**Tope: 1.600 caracteres** (~450 tokens) para todo el bloque. Lo que no quepa
+se corta por el final (titulares primero). Una fuente que no responde se
+omite en silencio del bloque y queda anotada en `mesa.db`: el bloque nunca
+dice «sin dato» once veces.
+
+⚠ **SON DATOS DE AFUERA Y VAN MARCADOS COMO TALES.** El bloque entra con el
+encabezado de CONTENIDO EXTERNO: los titulares los escribe un tercero y no
+son instrucciones.
+
+⚠ **NINGÚN NÚMERO LO CALCULA UN MODELO.** Cambios, medias, premium y base los
+calcula el código a partir de las fuentes; el bloque se guarda entero con
+cada ronda para poder revisar después qué vio cada analista.
+
+### Coste
+
+Ocho llamadas por ronda en vez de cuatro, 32 al día. Para Groq (8.000
+tokens/min) la segunda tanda espera un minuto a la primera. Los datos salen
+de fuentes gratis sin clave, más Firecrawl (capa gratis, 1.000 créditos al
+mes: ~4 por ronda) y Finnhub para titulares.
+
+### Qué no cambia
+
+La fase 1 sigue siendo la variante `mapa`, así que su serie no se corta. El
+trader sigue sin ver la mesa. Y la puerta de 50 vale **por familia y por
+variante**: no se mira ninguna diferencia antes de 50 rondas resueltas con
+las dos variantes.
+
 ## Fase 2 — la mesa como dato del trader (prompt v6)
 
 **No empieza antes** de que los brazos crucen las 50 predicciones resueltas en

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import re
 import signal
@@ -59,6 +60,12 @@ CADA_S = 300
 # La puerta del criterio: ni Brier ni acierto antes de esto, por familia.
 PUERTA = 50
 TOPE_TEXTO = 700
+# Fase 1b (CRITERIO_MESA_ANALISTAS.md): las dos variantes de cada familia.
+VARIANTE_MAPA = "mapa"
+VARIANTE_EXTERNO = "mapa+externo"
+# La segunda tanda espera a la primera: Groq cuenta 8.000 tokens POR MINUTO y
+# las dos preguntas llevan el mapa entero.
+ESPERA_TANDA_S = 65.0
 
 _VEREDICTO = re.compile(
     r"VEREDICTO:\s*(alcista|bajista|neutral)\s*(?:[—–-]+\s*(.*))?", re.IGNORECASE
@@ -163,6 +170,7 @@ class Respuesta:
     porque: str = ""
     texto: str = ""
     fallo: str = ""
+    variante: str = VARIANTE_MAPA
 
 
 def interpretar(familia: str, modelo: str, texto: str) -> Respuesta:
@@ -179,8 +187,12 @@ def interpretar(familia: str, modelo: str, texto: str) -> Respuesta:
     return r
 
 
-async def preguntar(familia: str, llm: Any, p: Pregunta, mapa: str) -> Respuesta:
-    """Una familia, una muestra. Un fallo es una respuesta vacía, nunca una excepción."""
+async def preguntar(familia: str, llm: Any, p: Pregunta, mapa: str, externo: str = "") -> Respuesta:
+    """Una familia, una muestra. Un fallo es una respuesta vacía, nunca una excepción.
+
+    Con `externo`, el bloque de contexto externo va DESPUÉS del mapa y es lo
+    único que cambia entre las dos variantes (fase 1b del criterio)."""
+    variante = VARIANTE_EXTERNO if externo else VARIANTE_MAPA
     contenido = INSTRUCCION_MESA.format(
         marco=MARCO,
         plazo=PLAZO_H,
@@ -191,13 +203,23 @@ async def preguntar(familia: str, llm: Any, p: Pregunta, mapa: str) -> Respuesta
     )
     try:
         respuesta = await llm.ainvoke(
-            [SystemMessage(content=ROL_ANALISTA), HumanMessage(content=f"{contenido}\n\n{mapa}")]
+            [
+                SystemMessage(content=ROL_ANALISTA),
+                HumanMessage(
+                    content=f"{contenido}\n\n{mapa}" + (f"\n\n{externo}" if externo else "")
+                ),
+            ]
         )
     except Exception as exc:  # noqa: BLE001 — una familia menos, no una ronda menos
         return Respuesta(
-            familia=familia, modelo=str(getattr(llm, "actual", "") or ""), fallo=str(exc)[:160]
+            familia=familia,
+            modelo=str(getattr(llm, "actual", "") or ""),
+            fallo=str(exc)[:160],
+            variante=variante,
         )
-    return interpretar(familia, str(getattr(llm, "actual", "") or ""), _texto_de(respuesta))
+    r = interpretar(familia, str(getattr(llm, "actual", "") or ""), _texto_de(respuesta))
+    r.variante = variante
+    return r
 
 
 def consenso(respuestas: list[Respuesta]) -> tuple[float, float, float] | None:
@@ -225,8 +247,13 @@ def _pct(p: float | None) -> str:
     return "—" if p is None else f"{round(p * 100)}%"
 
 
-def mensaje(p: Pregunta, respuestas: list[Respuesta]) -> str:
-    """El aviso de Telegram de una ronda. Texto plano: la razón la escribe un modelo."""
+def mensaje(p: Pregunta, respuestas: list[Respuesta], externo: str = "") -> str:
+    """El aviso de Telegram de una ronda. Texto plano: la razón la escribe un modelo.
+
+    La línea de cada familia es la de la variante `mapa` (la serie de la fase
+    1); debajo, en una línea corta, lo que dijo CON el contexto externo."""
+    con_externo = {r.familia: r for r in respuestas if r.variante == VARIANTE_EXTERNO}
+    respuestas = [r for r in respuestas if r.variante == VARIANTE_MAPA]
     hora = datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M")
     lineas = [
         f"🧑‍💼 Mesa de analistas · BTC tras el cierre de 4h de las {hora}",
@@ -245,6 +272,14 @@ def mensaje(p: Pregunta, respuestas: list[Respuesta]) -> str:
             f" · ↑ {_pct(r.p_arriba)} · ↓ {_pct(r.p_abajo)}"
         )
         lineas.append(cabeza + (f"\n   {r.porque}" if r.porque else ""))
+        b = con_externo.get(r.familia)
+        if b is not None:
+            lineas.append(
+                f"   con contexto: {b.veredicto or 'sin veredicto'}"
+                f" · ↑ {_pct(b.p_arriba)} · ↓ {_pct(b.p_abajo)}"
+                if b.p_arriba is not None
+                else f"   con contexto: sin respuesta — {b.fallo[:60]}"
+            )
     c = consenso(respuestas)
     lineas.append("")
     if c:
@@ -259,6 +294,15 @@ def mensaje(p: Pregunta, respuestas: list[Respuesta]) -> str:
             lineas.append(f"Veredictos: {conteo}")
     else:
         lineas.append("Nadie contestó esta ronda.")
+    ce = consenso(list(con_externo.values()))
+    if ce:
+        lineas.append(
+            f"Con contexto: ↑ {_pct(ce[0])} · ↓ {_pct(ce[1])} · discrepan ±{round(ce[2] * 100)} pts"
+        )
+    # Del bloque, lo que más se mira: la macro y el calendario.
+    for linea in externo.splitlines():
+        if linea.startswith(("Macro 24h:", "Calendario:")):
+            lineas.append(linea[:220])
     lineas.append("(en sombra: el trader no ve la mesa)")
     return "\n".join(lineas)[:4000]
 
@@ -299,14 +343,27 @@ class Mesa:
                 texto     TEXT,
                 fallo     TEXT
             );
+            CREATE TABLE IF NOT EXISTS contextos (
+                ronda_id  INTEGER PRIMARY KEY REFERENCES rondas(id),
+                bloque    TEXT    NOT NULL,
+                datos     TEXT,              -- JSON: los números con que se armó el bloque
+                fallos    TEXT               -- JSON: qué fuente no respondió
+            );
             """
         )
+        # Fase 1b: la variante de cada respuesta. Las de la fase 1 son `mapa`.
+        columnas = {f[1] for f in self._con.execute("PRAGMA table_info(respuestas)")}
+        if "variante" not in columnas:
+            self._con.execute(
+                "ALTER TABLE respuestas ADD COLUMN variante TEXT NOT NULL"
+                f" DEFAULT '{VARIANTE_MAPA}'"
+            )
         self._con.commit()
 
     def hechas(self) -> set[int]:
         return {int(f[0]) for f in self._con.execute("SELECT cierre_4h FROM rondas")}
 
-    def guardar(self, p: Pregunta, respuestas: list[Respuesta]) -> int:
+    def guardar(self, p: Pregunta, respuestas: list[Respuesta], contexto: Any = None) -> int:
         cur = self._con.execute(
             """INSERT INTO rondas (cierre_4h, hecha_en, precio, atr, arriba, abajo, vence_en)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -323,8 +380,9 @@ class Mesa:
         ronda = int(cur.lastrowid or 0)
         self._con.executemany(
             """INSERT INTO respuestas
-                 (ronda_id, familia, modelo, p_arriba, p_abajo, veredicto, porque, texto, fallo)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 (ronda_id, familia, modelo, p_arriba, p_abajo, veredicto, porque, texto, fallo,
+                  variante)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     ronda,
@@ -336,10 +394,21 @@ class Mesa:
                     r.porque,
                     r.texto,
                     r.fallo,
+                    r.variante,
                 )
                 for r in respuestas
             ],
         )
+        if contexto is not None:
+            self._con.execute(
+                "INSERT INTO contextos (ronda_id, bloque, datos, fallos) VALUES (?, ?, ?, ?)",
+                (
+                    ronda,
+                    contexto.bloque,
+                    json.dumps(contexto.datos, ensure_ascii=False, default=str),
+                    json.dumps(contexto.fallos, ensure_ascii=False),
+                ),
+            )
         self._con.commit()
         return ronda
 
@@ -375,45 +444,44 @@ class Mesa:
         return cerradas
 
     def informe(self) -> str:
-        """Por familia: rondas contestadas, resueltas y discrepancia media. El
-        Brier solo desde la puerta de 50 resueltas (el criterio)."""
+        """Por familia y variante: contestadas, resueltas y cuánto se aparta del
+        resto. El Brier solo desde la puerta de 50 resueltas, por familia Y por
+        variante (el criterio): antes, la diferencia entre variantes es ruido."""
         filas = self._con.execute(
-            """SELECT s.familia, s.p_arriba, s.p_abajo, r.id AS ronda,
+            """SELECT s.familia, s.variante, s.p_arriba, s.p_abajo, r.id AS ronda,
                       r.toco_arriba, r.toco_abajo, r.resuelta_en
                FROM respuestas s JOIN rondas r ON r.id = s.ronda_id"""
         ).fetchall()
         rondas = self._con.execute("SELECT COUNT(*), COUNT(resuelta_en) FROM rondas").fetchone()
         salida = [
             f"Mesa de analistas: {rondas[0]} rondas, {rondas[1]} resueltas"
-            f" (puerta del Brier: {PUERTA} por familia)"
+            f" (puerta del Brier: {PUERTA} por familia y variante)"
         ]
-        # La media de cada ronda, para la discrepancia de cada familia contra el resto.
-        medias: dict[int, tuple[float, float]] = {}
-        por_ronda: dict[int, list[Any]] = {}
+        # La media de cada ronda y variante, para la discrepancia contra el resto.
+        por_ronda: dict[tuple[int, str], list[Any]] = {}
         for f in filas:
             if f["p_arriba"] is not None:
-                por_ronda.setdefault(f["ronda"], []).append(f)
-        for ronda, fs in por_ronda.items():
-            medias[ronda] = (
-                sum(x["p_arriba"] for x in fs) / len(fs),
-                sum(x["p_abajo"] for x in fs) / len(fs),
-            )
-        for familia in sorted({f["familia"] for f in filas}):
-            propias = [f for f in filas if f["familia"] == familia]
+                por_ronda.setdefault((f["ronda"], f["variante"]), []).append(f)
+        medias = {
+            k: (sum(x["p_arriba"] for x in fs) / len(fs), sum(x["p_abajo"] for x in fs) / len(fs))
+            for k, fs in por_ronda.items()
+        }
+        for familia, variante in sorted({(f["familia"], f["variante"]) for f in filas}):
+            propias = [f for f in filas if f["familia"] == familia and f["variante"] == variante]
             contestadas = [f for f in propias if f["p_arriba"] is not None]
             resueltas = [f for f in contestadas if f["resuelta_en"]]
             dis = [
                 (
-                    abs(f["p_arriba"] - medias[f["ronda"]][0])
-                    + abs(f["p_abajo"] - medias[f["ronda"]][1])
+                    abs(f["p_arriba"] - medias[(f["ronda"], variante)][0])
+                    + abs(f["p_abajo"] - medias[(f["ronda"], variante)][1])
                 )
                 / 2
                 for f in contestadas
-                if len(por_ronda.get(f["ronda"], [])) > 1
+                if len(por_ronda.get((f["ronda"], variante), [])) > 1
             ]
             aparte = round(100 * sum(dis) / len(dis)) if dis else "—"
             linea = (
-                f"  {familia}: contestó {len(contestadas)}/{len(propias)}"
+                f"  {familia} [{variante}]: contestó {len(contestadas)}/{len(propias)}"
                 f" · resueltas {len(resueltas)}"
                 f" · se aparta del resto {aparte} pts de media"
             )
@@ -453,24 +521,51 @@ async def ronda(
     mapa: Callable[[], str],
     avisar: Callable[[str], bool],
     ahora: datetime | None = None,
+    contexto: Callable[[], Any] | None = None,
+    dormir: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> str | None:
-    """Una ronda completa. Devuelve el aviso, o None si no se pudo preguntar."""
+    """Una ronda completa. Devuelve el aviso, o None si no se pudo preguntar.
+
+    Con `contexto` (fase 1b), dos tandas: primero todas las familias con el
+    mapa solo, y tras `ESPERA_TANDA_S` todas con el mapa y el bloque externo.
+    El bloque se reúne MIENTRAS contesta la primera tanda.
+    """
     ahora = ahora or datetime.now(UTC)
     p = pregunta(cierre, ahora, velas("1h", 60))
     texto_mapa = mapa()
     if p is None or not texto_mapa:
         print("[mesa] sin mercado para la pregunta: la ronda se salta", flush=True)
         return None
-    respuestas = await asyncio.gather(
-        *(preguntar(f, llm, p, texto_mapa) for f, llm in llms.items())
+    tarea_ctx = asyncio.create_task(asyncio.to_thread(contexto)) if contexto else None
+    respuestas = list(
+        await asyncio.gather(*(preguntar(f, llm, p, texto_mapa) for f, llm in llms.items()))
     )
-    mesa.guardar(p, list(respuestas))
-    aviso = mensaje(p, list(respuestas))
+    ctx = None
+    if tarea_ctx is not None:
+        try:
+            ctx = await tarea_ctx
+        except Exception as exc:  # noqa: BLE001 — sin contexto, la ronda es la de la fase 1
+            print(f"[mesa] sin contexto externo: {str(exc)[:120]}", flush=True)
+    if ctx is not None and ctx.bloque:
+        await dormir(ESPERA_TANDA_S)
+        respuestas += list(
+            await asyncio.gather(
+                *(preguntar(f, llm, p, texto_mapa, ctx.bloque) for f, llm in llms.items())
+            )
+        )
+    mesa.guardar(p, respuestas, ctx)
+    aviso = mensaje(p, respuestas, ctx.bloque if ctx is not None else "")
     enviado = avisar(aviso)
-    contestaron = sum(r.p_arriba is not None for r in respuestas)
+    por_variante = " · ".join(
+        f"{v} {sum(r.p_arriba is not None for r in respuestas if r.variante == v)}"
+        f"/{sum(r.variante == v for r in respuestas)}"
+        for v in (VARIANTE_MAPA, VARIANTE_EXTERNO)
+        if any(r.variante == v for r in respuestas)
+    )
+    faltan = f" · fuentes sin dato: {', '.join(sorted(ctx.fallos))}" if ctx and ctx.fallos else ""
     print(
-        f"[mesa] ronda del cierre {cierre}: {contestaron}/{len(respuestas)} "
-        f"contestaron · telegram {'enviado' if enviado else 'NO enviado'}",
+        f"[mesa] ronda del cierre {cierre}: {por_variante} contestaron"
+        f" · telegram {'enviado' if enviado else 'NO enviado'}{faltan}",
         flush=True,
     )
     return aviso
@@ -486,6 +581,7 @@ async def vigilar(
     avisar: Callable[[str], bool],
     parar: asyncio.Event,
     dormir: Callable[[float], Awaitable[Any]] | None = None,
+    contexto: Callable[[], Any] | None = None,
 ) -> None:
     while not parar.is_set():
         try:
@@ -495,7 +591,7 @@ async def vigilar(
                 print(f"[mesa] no se pudo resolver: {str(exc)[:120]}", flush=True)
             cierre = cierre_pendiente(datetime.now(UTC), mesa.hechas(), espera_min, en_ventana)
             if cierre is not None:
-                await ronda(cierre, mesa, llms, velas, mapa, avisar)
+                await ronda(cierre, mesa, llms, velas, mapa, avisar, contexto=contexto)
         except Exception as exc:  # noqa: BLE001 — la mesa nunca se cae por una ronda
             print(f"[mesa] ronda fallida: {str(exc)[:160]}", flush=True)
         if dormir is not None:
@@ -546,8 +642,13 @@ def main() -> None:
         print("[mesa] ✗ ninguna familia se pudo armar", flush=True)
         return
     espera = float(os.environ.get("MESA_ESPERA_MIN", "50"))
+    # Fase 1b: el A/B con el contexto externo. `MESA_CONTEXTO=0` vuelve a la fase 1.
+    con_contexto = os.environ.get("MESA_CONTEXTO", "1") != "0"
+    from paper.contexto_externo import reunir as reunir_contexto
+
     print(
-        f"[mesa] en sombra · familias: {', '.join(llms)} · {espera:g} min tras cada cierre de 4h",
+        f"[mesa] en sombra · familias: {', '.join(llms)} · {espera:g} min tras cada cierre de 4h"
+        f" · contexto externo {'en A/B' if con_contexto else 'apagado'}",
         flush=True,
     )
 
@@ -564,7 +665,17 @@ def main() -> None:
         bucle = asyncio.get_running_loop()
         for s in (signal.SIGTERM, signal.SIGINT):
             bucle.add_signal_handler(s, parar.set)
-        await vigilar(mesa, llms, espera, en_ventana, velas, mapa, avisar_por_telegram, parar)
+        await vigilar(
+            mesa,
+            llms,
+            espera,
+            en_ventana,
+            velas,
+            mapa,
+            avisar_por_telegram,
+            parar,
+            contexto=reunir_contexto if con_contexto else None,
+        )
 
     asyncio.run(correr())
 
