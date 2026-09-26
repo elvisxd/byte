@@ -12,7 +12,7 @@ name: Contexto externo
 on:
   workflow_dispatch:
   push:
-    branches: [claude/mesa-contexto-externo]
+    branches: [claude/mesa-contexto-externo, claude/mesa-usdt-titulares]
     paths:
       - "paper/contexto_externo.py"
       - ".github/workflows/contexto-externo.yml"
