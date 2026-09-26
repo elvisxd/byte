@@ -112,6 +112,16 @@ def test_un_404_o_un_402_son_del_modelo_y_son_permanentes() -> None:
     assert tipo_de_agotamiento(_Error(401, "invalid api key")) is None
 
 
+def test_un_403_de_openrouter_que_restringe_el_modelo_rota_al_siguiente() -> None:
+    """`inkling:free` da 403 «only available on agentic harnesses» (2026-09-25): es
+    del modelo, no de la clave. Sin esto, primero en la lista, costaba cada vuelta
+    del brazo sin probar el segundo."""
+    texto = "Error code: 403 - thinkingmachines/inkling:free is only available on agentic harnesses"
+    assert tipo_de_agotamiento(_Error(403, texto)) == "permanente"
+    # Un 403 de la clave sigue sin rotar: fallaría igual con todos.
+    assert tipo_de_agotamiento(_Error(403, "Forbidden: key disabled")) is None
+
+
 async def test_un_modelo_permanente_no_se_reintenta_y_deja_paso_al_siguiente() -> None:
     reloj = _Reloj()
     malo = _Modelo("malo", _Error(404, "Model does not exist"))
