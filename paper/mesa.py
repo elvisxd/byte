@@ -66,6 +66,11 @@ VARIANTE_EXTERNO = "mapa+externo"
 # La segunda tanda espera a la primera: Groq cuenta 8.000 tokens POR MINUTO y
 # las dos preguntas llevan el mapa entero.
 ESPERA_TANDA_S = 65.0
+# La vara (CRITERIO_MESA_ANALISTAS.md, «La tasa base, como un analista más»):
+# la tasa base que el mapa le dio a la mesa, guardada como una familia más para
+# medir a cada analista contra el número que ya tenía delante. No es un
+# analista: no entra en el consenso, la discrepancia ni el «contestaron».
+FAMILIA_BASE = "tasa base"
 
 _VEREDICTO = re.compile(
     r"VEREDICTO:\s*(alcista|bajista|neutral)\s*(?:[—–-]+\s*(.*))?", re.IGNORECASE
@@ -84,6 +89,30 @@ que veas. En menos de 80 palabras: el régimen, y qué te hace inclinarte.
 Terminá SIEMPRE con estas dos líneas exactas, con tus números:
 PROBABILIDADES: arriba <probabilidad>% | abajo <probabilidad>%
 VEREDICTO: <alcista|bajista|neutral> — <por qué, en menos de 20 palabras>"""
+
+
+_TASA_BASE = re.compile(r"un nivel a (\d+) ATR se tocó dentro de \d+ velas el (\d+)%")
+
+
+def tasa_base_del_mapa(mapa: str, marco: str = MARCO, dist: float = DISTANCIA_ATR) -> float | None:
+    """La tasa base del bloque de `marco` a `dist` ATR, tal como la leyó la mesa.
+
+    Del texto del mapa y no recalculada: la vara es el número que el analista
+    tenía delante (`tools/paper.py`, `_tasa_base`). Sin bloque o sin línea, None
+    y la ronda sigue sin vara."""
+    cabeza = f"── {marco} ──"
+    i = mapa.find(cabeza)
+    if i < 0:
+        return None
+    fin = mapa.find("\n── ", i + len(cabeza))
+    bloque = mapa[i : fin if fin >= 0 else len(mapa)]
+    for linea in bloque.splitlines():
+        if "tasa base" not in linea:
+            continue
+        m = _TASA_BASE.search(linea)
+        if m and float(m.group(1)) == dist:
+            return int(m.group(2)) / 100
+    return None
 
 
 # ── la pregunta ─────────────────────────────────────────────────────────────
@@ -247,11 +276,15 @@ def _pct(p: float | None) -> str:
     return "—" if p is None else f"{round(p * 100)}%"
 
 
-def mensaje(p: Pregunta, respuestas: list[Respuesta], externo: str = "") -> str:
+def mensaje(
+    p: Pregunta, respuestas: list[Respuesta], externo: str = "", base: float | None = None
+) -> str:
     """El aviso de Telegram de una ronda. Texto plano: la razón la escribe un modelo.
 
     La línea de cada familia es la de la variante `mapa` (la serie de la fase
-    1); debajo, en una línea corta, lo que dijo CON el contexto externo."""
+    1); debajo, en una línea corta, lo que dijo CON el contexto externo. La
+    tasa base va aparte, al final: es la vara, no un analista."""
+    respuestas = [r for r in respuestas if r.familia != FAMILIA_BASE]
     con_externo = {r.familia: r for r in respuestas if r.variante == VARIANTE_EXTERNO}
     respuestas = [r for r in respuestas if r.variante == VARIANTE_MAPA]
     hora = datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M")
@@ -299,6 +332,8 @@ def mensaje(p: Pregunta, respuestas: list[Respuesta], externo: str = "") -> str:
         lineas.append(
             f"Con contexto: ↑ {_pct(ce[0])} · ↓ {_pct(ce[1])} · discrepan ±{round(ce[2] * 100)} pts"
         )
+    if base is not None:
+        lineas.append(f"Tasa base del mapa (la vara): ↑ {_pct(base)} · ↓ {_pct(base)}")
     # Del bloque, lo que más se mira: la macro y el calendario.
     for linea in externo.splitlines():
         if linea.startswith(("Macro 24h:", "Calendario:")):
@@ -446,7 +481,10 @@ class Mesa:
     def informe(self) -> str:
         """Por familia y variante: contestadas, resueltas y cuánto se aparta del
         resto. El Brier solo desde la puerta de 50 resueltas, por familia Y por
-        variante (el criterio): antes, la diferencia entre variantes es ruido."""
+        variante (el criterio): antes, la diferencia entre variantes es ruido.
+
+        Desde la puerta, cada familia lleva también su skill contra la tasa base
+        en las MISMAS rondas y variante: 1 − Brier(familia) / Brier(tasa base)."""
         filas = self._con.execute(
             """SELECT s.familia, s.variante, s.p_arriba, s.p_abajo, r.id AS ronda,
                       r.toco_arriba, r.toco_abajo, r.resuelta_en
@@ -458,10 +496,16 @@ class Mesa:
             f" (puerta del Brier: {PUERTA} por familia y variante)"
         ]
         # La media de cada ronda y variante, para la discrepancia contra el resto.
+        # La tasa base no es un analista: fuera de la media.
         por_ronda: dict[tuple[int, str], list[Any]] = {}
         for f in filas:
-            if f["p_arriba"] is not None:
+            if f["p_arriba"] is not None and f["familia"] != FAMILIA_BASE:
                 por_ronda.setdefault((f["ronda"], f["variante"]), []).append(f)
+        vara = {
+            (f["ronda"], f["variante"]): f
+            for f in filas
+            if f["familia"] == FAMILIA_BASE and f["p_arriba"] is not None
+        }
         medias = {
             k: (sum(x["p_arriba"] for x in fs) / len(fs), sum(x["p_abajo"] for x in fs) / len(fs))
             for k, fs in por_ronda.items()
@@ -479,20 +523,31 @@ class Mesa:
                 for f in contestadas
                 if len(por_ronda.get((f["ronda"], variante), [])) > 1
             ]
+            es_vara = familia == FAMILIA_BASE
             aparte = round(100 * sum(dis) / len(dis)) if dis else "—"
             linea = (
                 f"  {familia} [{variante}]: contestó {len(contestadas)}/{len(propias)}"
                 f" · resueltas {len(resueltas)}"
-                f" · se aparta del resto {aparte} pts de media"
+                + ("" if es_vara else f" · se aparta del resto {aparte} pts de media")
             )
             if len(resueltas) >= PUERTA:
-                brier = sum(
-                    (f["p_arriba"] - f["toco_arriba"]) ** 2 + (f["p_abajo"] - f["toco_abajo"]) ** 2
-                    for f in resueltas
-                ) / (2 * len(resueltas))
-                linea += f" · Brier {brier:.4f}"
+                linea += f" · Brier {_brier(resueltas):.4f}"
+                pares = [f for f in resueltas if (f["ronda"], variante) in vara]
+                if not es_vara and len(pares) >= PUERTA:
+                    de_la_vara = _brier([vara[(f["ronda"], variante)] for f in pares])
+                    if de_la_vara > 0:
+                        skill = 1 - _brier(pares) / de_la_vara
+                        linea += f" · vs tasa base {skill:+.3f} en {len(pares)}"
             salida.append(linea)
         return "\n".join(salida)
+
+
+def _brier(filas: list[Any]) -> float:
+    """Brier medio de filas resueltas, los dos niveles de cada pregunta."""
+    return sum(
+        (f["p_arriba"] - f["toco_arriba"]) ** 2 + (f["p_abajo"] - f["toco_abajo"]) ** 2
+        for f in filas
+    ) / (2 * len(filas))
 
 
 # ── el bucle ────────────────────────────────────────────────────────────────
@@ -553,8 +608,18 @@ async def ronda(
                 *(preguntar(f, llm, p, texto_mapa, ctx.bloque) for f, llm in llms.items())
             )
         )
-    mesa.guardar(p, respuestas, ctx)
-    aviso = mensaje(p, respuestas, ctx.bloque if ctx is not None else "")
+    base = tasa_base_del_mapa(texto_mapa)
+    varas = (
+        [
+            Respuesta(FAMILIA_BASE, "mapa", base, base, variante=v)
+            for v in (VARIANTE_MAPA, VARIANTE_EXTERNO)
+            if any(r.variante == v for r in respuestas)
+        ]
+        if base is not None
+        else []
+    )
+    mesa.guardar(p, respuestas + varas, ctx)
+    aviso = mensaje(p, respuestas, ctx.bloque if ctx is not None else "", base)
     enviado = avisar(aviso)
     por_variante = " · ".join(
         f"{v} {sum(r.p_arriba is not None for r in respuestas if r.variante == v)}"

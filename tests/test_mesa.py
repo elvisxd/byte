@@ -6,6 +6,7 @@ from datetime import UTC, datetime, time, timedelta
 from paper.mesa import (
     CUATRO_HORAS_S,
     ESPERA_TANDA_S,
+    FAMILIA_BASE,
     VARIANTE_EXTERNO,
     VARIANTE_MAPA,
     Mesa,
@@ -18,6 +19,7 @@ from paper.mesa import (
     mensaje,
     pregunta,
     ronda,
+    tasa_base_del_mapa,
 )
 
 T0 = datetime(2026, 9, 25, 16, 0, tzinfo=UTC)  # un cierre de 4h exacto
@@ -354,3 +356,125 @@ def test_una_mesa_db_de_la_fase_1_se_migra_sin_perder_nada(tmp_path):
         ("gemini", VARIANTE_MAPA)
     ]
     assert "gemini [mapa]: contestó 1/1" in mesa.informe()
+
+
+# ── la tasa base, como un analista más ──────────────────────────────────────
+
+MAPA_CON_TASAS = """BTCUSDT — los tres gráficos del mismo instante (prueba).
+── 15m ── precio 100 · al 50% del rango
+   tasa base: en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 71% de las veces; a 2 ATR, el 40%
+── 1h ── precio 100 · al 50% del rango
+   tasa base (con el ATR actual, aproximado): en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 38% de las veces; a 2 ATR, el 12%
+── 4h ── precio 100 · al 50% del rango
+   tasa base: en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 55% de las veces; a 2 ATR, el 20%"""  # noqa: E501
+
+
+def test_la_tasa_base_se_lee_del_bloque_de_1h_a_1_atr():
+    """El número que el analista tuvo delante: el de SU marco y SU distancia."""
+    assert tasa_base_del_mapa(MAPA_CON_TASAS) == 0.38
+    assert tasa_base_del_mapa(MAPA_CON_TASAS, marco="4h") == 0.55
+    assert tasa_base_del_mapa(MAPA_CON_TASAS, dist=2) is None
+    assert tasa_base_del_mapa("MAPA") is None
+
+
+def test_la_tasa_base_se_lee_del_mapa_de_verdad(monkeypatch):
+    """Si `tools/paper.py` cambia el texto de la línea, la vara se pierde en
+    silencio: esto lo lee del mismo `_mapa` que recibe la mesa."""
+    import tools.paper as herramientas
+    from tests.test_paper_mapa import INDICADORES
+    from tests.test_paper_mapa import _velas as velas_del_mapa
+
+    monkeypatch.setattr(herramientas, "velas", lambda s, marco, n: velas_del_mapa(marco))
+    monkeypatch.setattr(herramientas, "indicadores", lambda v, cuales: dict(INDICADORES))
+    r = herramientas._mapa("BTCUSDT", 8000)
+    assert r.ok
+    assert tasa_base_del_mapa(r.content) is not None
+
+
+def test_la_ronda_guarda_la_vara_por_variante_sin_contarla_como_analista(tmp_path):
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+
+    async def dormir(_s: float) -> None:
+        return None
+
+    aviso = asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            mesa,
+            {"gemini": _LlmQueMira()},
+            velas=lambda _m, _n: _velas(40),
+            mapa=lambda: MAPA_CON_TASAS,
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+            contexto=lambda: _Ctx(),
+            dormir=dormir,
+        )
+    )
+    filas = mesa._con.execute(
+        "SELECT familia, modelo, variante, p_arriba, p_abajo FROM respuestas"
+        " WHERE familia = ? ORDER BY id",
+        (FAMILIA_BASE,),
+    ).fetchall()
+    assert [tuple(f) for f in filas] == [
+        (FAMILIA_BASE, "mapa", VARIANTE_MAPA, 0.38, 0.38),
+        (FAMILIA_BASE, "mapa", VARIANTE_EXTERNO, 0.38, 0.38),
+    ]
+    assert aviso is not None
+    assert "Tasa base del mapa (la vara): ↑ 38% · ↓ 38%" in aviso
+    # Ni en el consenso ni como línea de familia.
+    assert "Consenso: ↑ 55% · ↓ 45%" in aviso and "• tasa base" not in aviso
+
+
+def test_sin_tasa_base_en_el_mapa_la_ronda_sigue_sin_vara(tmp_path):
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    aviso = asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            mesa,
+            {"gemini": _LlmQueMira()},
+            velas=lambda _m, _n: _velas(40),
+            mapa=lambda: "MAPA",
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+        )
+    )
+    assert aviso is not None and "Tasa base" not in aviso
+    assert [f[0] for f in mesa._con.execute("SELECT familia FROM respuestas")] == ["gemini"]
+
+
+def _rondas_con_vara(mesa: Mesa, n: int, familia: tuple[float, float], base: float) -> None:
+    """n rondas resueltas: arriba toca, abajo no (ninguna vela baja de 98)."""
+    for k in range(n):
+        p = Pregunta(int(T0.timestamp()) + k * CUATRO_HORAS_S, T0, 100.0, 2.0, 101.0, 98.0, T0)
+        mesa.guardar(
+            p,
+            [
+                Respuesta("a", p_arriba=familia[0], p_abajo=familia[1]),
+                Respuesta("b", p_arriba=0.5, p_abajo=0.5),
+                Respuesta(FAMILIA_BASE, "mapa", base, base),
+            ],
+        )
+    mesa.resolver(_velas(10, precio=100.0, rango=2.0, desde=T0), T0 + timedelta(days=40))
+
+
+def test_la_vara_no_mueve_la_discrepancia_ni_da_skill_antes_de_la_puerta(tmp_path):
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    _rondas_con_vara(mesa, 3, (0.9, 0.1), base=0.1)
+    informe = mesa.informe()
+    # a y b: media 0.7/0.3 → 20 pts; si la vara contara, sería otra cifra.
+    assert "a [mapa]: contestó 3/3 · resueltas 3 · se aparta del resto 20 pts" in informe
+    assert "tasa base [mapa]: contestó 3/3 · resueltas 3" in informe
+    assert "Brier" not in informe.split("\n", 1)[1] and "vs tasa base" not in informe
+
+
+def test_desde_la_puerta_cada_familia_lleva_su_skill_contra_la_vara(tmp_path):
+    """Arriba toca siempre y abajo nunca. a (0.9/0.1): Brier 0.01. La vara
+    (0.5/0.5): 0.25. Skill de a = 1 − 0.01/0.25 = +0.960; b (0.5/0.5) empata: 0."""
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    _rondas_con_vara(mesa, 50, (0.9, 0.1), base=0.5)
+    lineas = {ln.split(":")[0].strip(): ln for ln in mesa.informe().splitlines()[1:]}
+    assert "Brier 0.0100 · vs tasa base +0.960 en 50" in lineas["a [mapa]"]
+    assert "vs tasa base +0.000 en 50" in lineas["b [mapa]"]
+    assert "Brier 0.2500" in lineas["tasa base [mapa]"]
+    assert "vs tasa base" not in lineas["tasa base [mapa]"]
+    assert "se aparta" not in lineas["tasa base [mapa]"]
