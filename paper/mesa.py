@@ -32,11 +32,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import json
 import os
 import re
 import signal
 import sqlite3
+import urllib.error
+import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -342,6 +345,237 @@ def mensaje(
     return "\n".join(lineas)[:4000]
 
 
+# ── el aviso con tarjeta ────────────────────────────────────────────────────
+#
+# Desde el 2026-09-26, a pedido de Elvis (mockups A-D, «una combinación de
+# todas»): una foto con la tarjeta de la ronda —la dibuja el panel— y, de pie,
+# este parte en HTML. `mensaje()` sigue siendo el respaldo en texto plano: si el
+# panel no tiene la ruta, si la imagen falla o si Telegram rechaza el HTML,
+# llega el aviso de siempre.
+#
+# ⚠ TODO LO QUE ESCRIBE UN MODELO O UN TERCERO SE ESCAPA. Las razones de los
+# analistas y los titulares del bloque externo van con `html.escape`: un «<» en
+# una razón rompería el parte entero y Telegram lo rechazaría.
+
+# El tope de Telegram para el pie de una foto, en caracteres VISIBLES.
+TOPE_PIE = 1024
+_ABREV = {"alcista": "ALC", "bajista": "BAJ", "neutral": "NEU"}
+_DIAS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+
+
+def _e(s: str) -> str:
+    return html.escape(s, quote=False)
+
+
+def _visible(parte: str) -> int:
+    """Lo que Telegram cuenta contra el tope: el texto, sin etiquetas."""
+    return len(html.unescape(re.sub(r"<[^>]+>", "", parte)))
+
+
+def sesgo_de(respuestas: list[Respuesta]) -> tuple[str, str]:
+    """El veredicto de la mesa por mayoría de la variante `mapa`: («alcista»,
+    «2 de 3»). Un empate en lo más votado es «dividida»; nadie votó, «sin
+    veredicto»."""
+    votos = [
+        r.veredicto
+        for r in respuestas
+        if r.variante == VARIANTE_MAPA and r.familia != FAMILIA_BASE and r.veredicto
+    ]
+    if not votos:
+        return "sin veredicto", ""
+    conteo = {v: votos.count(v) for v in ("alcista", "bajista", "neutral") if v in votos}
+    mayor = max(conteo.values())
+    ganadores = [v for v, n in conteo.items() if n == mayor]
+    if len(ganadores) > 1:
+        return "dividida", " · ".join(f"{n} {v}" for v, n in conteo.items())
+    return ganadores[0], f"{mayor} de {len(votos)}"
+
+
+def _clave(respuestas: list[Respuesta], sesgo: str, c: tuple[float, float, float]) -> str:
+    """La razón del analista que votó con la mesa y quedó más cerca del consenso."""
+    candidatas = [
+        r
+        for r in respuestas
+        if r.porque and r.p_arriba is not None and r.p_abajo is not None and r.veredicto == sesgo
+    ] or [r for r in respuestas if r.porque and r.p_arriba is not None and r.p_abajo is not None]
+    if not candidatas:
+        return ""
+    r = min(candidatas, key=lambda r: abs(r.p_arriba - c[0]) + abs(r.p_abajo - c[1]))  # type: ignore[operator]
+    return r.porque
+
+
+def _dist(nivel: float, precio: float) -> str:
+    d = (nivel / precio - 1) * 100
+    return f"{'+' if d >= 0 else '−'}{abs(d):.1f}%"
+
+
+def _hora(momento: datetime) -> str:
+    local = momento.astimezone()
+    return f"{_DIAS[local.weekday()]} {local:%H:%M}"
+
+
+def parte_html(
+    p: Pregunta,
+    respuestas: list[Respuesta],
+    externo: str = "",
+    base: float | None = None,
+    eventos: list[str] | None = None,
+    tope: int = TOPE_PIE,
+) -> str:
+    """El parte de la ronda, en el HTML de Telegram, para ir de pie de la foto.
+
+    Primera línea, el veredicto: es lo que se lee en la notificación. Después
+    los dos niveles con su probabilidad y la tasa base, la clave y el riesgo, la
+    tabla por analista y, plegado, el porqué y el contexto. Si no entra en
+    `tope`, se recorta lo plegado desde el final, luego la tabla."""
+    respuestas = [r for r in respuestas if r.familia != FAMILIA_BASE]
+    mapa_ = [r for r in respuestas if r.variante == VARIANTE_MAPA]
+    con_externo = {r.familia: r for r in respuestas if r.variante == VARIANTE_EXTERNO}
+    c = consenso(mapa_)
+    cierre = datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M")
+    pie = f"<i>Cierre 4h {cierre} · vence {_hora(p.vence_en)} · en sombra, el trader no la ve</i>"
+    if c is None:
+        return (
+            f"<b>Mesa BTC · nadie contestó</b>\nPrecio {p.precio:,.0f} · "
+            f"↑ {p.arriba:,.0f} · ↓ {p.abajo:,.0f} en {PLAZO_H:g} h\n{pie}"
+        )
+    sesgo, votos = sesgo_de(mapa_)
+    icono = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪", "dividida": "⚖️"}.get(sesgo, "·")
+    titulo = "dividida" if sesgo == "dividida" else f"sesgo {sesgo}"
+    b = f" · base {_pct(base)}" if base is not None else ""
+    cabeza = [
+        f"<b>{icono} Mesa BTC · {titulo}</b>" + (f" ({_e(votos)})" if votos else ""),
+        f"<b>¿Toca en {PLAZO_H:g} h?</b> desde {p.precio:,.0f}",
+        f"↑ {p.arriba:,.0f} ({_dist(p.arriba, p.precio)}) → <b>{_pct(c[0])}</b>{b}",
+        f"↓ {p.abajo:,.0f} ({_dist(p.abajo, p.precio)}) → <b>{_pct(c[1])}</b>{b}",
+    ]
+    clave = _clave(mapa_, sesgo, c)
+    if clave:
+        cabeza.append(f"<b>Clave:</b> {_e(clave)}")
+    if eventos:
+        cabeza.append(f"<b>Riesgo:</b> {_e(' · '.join(eventos[:2]))}")
+
+    filas = [f"{'':11} voto   ↑   ↓  c/ctx"]
+    for r in mapa_:
+        nombre = r.familia[:10].ljust(11)
+        if r.p_arriba is None or r.p_abajo is None:
+            filas.append(f"{nombre}  —   sin respuesta")
+            continue
+        x = con_externo.get(r.familia)
+        ctx = (
+            f"{round(x.p_arriba * 100)}/{round(x.p_abajo * 100)}"
+            if x is not None and x.p_arriba is not None and x.p_abajo is not None
+            else "—"
+        )
+        filas.append(
+            f"{nombre} {_ABREV.get(r.veredicto or '', ' — ')}  "
+            f"{round(r.p_arriba * 100):>3} {round(r.p_abajo * 100):>3}  {ctx}"
+        )
+    tabla = "<pre>" + _e("\n".join(filas)) + "</pre>"
+
+    plegado = ["<b>Por qué</b>"]
+    plegado += [f"{_e(r.familia)}: {_e(r.porque)}" for r in mapa_ if r.porque]
+    ce = consenso(list(con_externo.values()))
+    if ce:
+        plegado.append(
+            f"<b>Con contexto</b> ↑ {_pct(ce[0])} · ↓ {_pct(ce[1])}"
+            f" · discrepan ±{round(ce[2] * 100)}"
+        )
+    plegado.append(f"<b>Discrepan</b> ±{round(c[2] * 100)} pts entre analistas")
+    for linea in externo.splitlines():
+        if linea.startswith("Macro 24h:"):
+            plegado.append(f"<b>Macro</b> {_e(linea.removeprefix('Macro 24h:').strip()[:200])}")
+
+    def armar(con_tabla: bool, plegado_: list[str]) -> str:
+        partes = ["\n".join(cabeza)]
+        if con_tabla:
+            partes.append(tabla)
+        if len(plegado_) > 1:
+            partes.append("<blockquote expandable>" + "\n".join(plegado_) + "</blockquote>")
+        partes.append(pie)
+        return "\n".join(partes)
+
+    for con_tabla in (True, False):
+        pleg = list(plegado)
+        while True:
+            texto = armar(con_tabla, pleg)
+            if _visible(texto) <= tope:
+                return texto
+            if len(pleg) <= 1:
+                break
+            pleg.pop()
+    return armar(False, [])[: tope * 2]
+
+
+def tarjeta(
+    p: Pregunta, respuestas: list[Respuesta], base: float | None, velas_1h: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Los números de la tarjeta que dibuja el panel (tarjetaMesa.ts). Sin
+    consenso no hay tarjeta: una imagen con dos «—» no dice nada."""
+    respuestas = [r for r in respuestas if r.familia != FAMILIA_BASE]
+    mapa_ = [r for r in respuestas if r.variante == VARIANTE_MAPA]
+    c = consenso(mapa_)
+    if c is None or not velas_1h:
+        return None
+    ce = consenso([r for r in respuestas if r.variante == VARIANTE_EXTERNO])
+    sesgo, votos = sesgo_de(mapa_)
+    return {
+        "simbolo": "BTC",
+        "precio": p.precio,
+        "atr": round(p.atr, 2),
+        "arriba": p.arriba,
+        "abajo": p.abajo,
+        "p_arriba": round(c[0], 4),
+        "p_abajo": round(c[1], 4),
+        "base": base,
+        "sesgo": sesgo,
+        "votos": votos,
+        "cierre": datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M"),
+        "vence": _hora(p.vence_en),
+        "familias": [
+            {
+                "nombre": r.familia,
+                "p_arriba": r.p_arriba,
+                "p_abajo": r.p_abajo,
+                "veredicto": r.veredicto,
+            }
+            for r in mapa_
+        ],
+        "con_contexto": {"p_arriba": round(ce[0], 4), "p_abajo": round(ce[1], 4)} if ce else None,
+        "velas": [
+            [int(v["time"]), float(v["open"]), float(v["high"]), float(v["low"]), float(v["close"])]
+            for v in velas_1h[-48:]
+        ],
+    }
+
+
+def avisar_por_panel(cuerpo: dict[str, Any]) -> bool:
+    """POST /api/papel/mesa del panel. Best-effort: nunca lanza. True solo si
+    el panel dice que Telegram lo aceptó; con False, `ronda` manda el aviso de
+    siempre por /api/papel/aviso (un panel viejo, sin esta ruta, da 404)."""
+    destino = os.environ.get("PANEL_URL", "")
+    if not destino:
+        return False
+    pedido = urllib.request.Request(  # noqa: S310 — destino fijado por entorno
+        destino.rstrip("/") + "/api/papel/mesa",
+        data=json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.environ.get('PANEL_TOKEN', '')}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(pedido, timeout=30) as r:  # noqa: S310
+            respuesta = json.loads(r.read() or b"{}")
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+    if respuesta.get("enviado"):
+        print(f"[mesa] aviso enviado como {respuesta.get('como', '?')}", flush=True)
+        return True
+    return False
+
+
 # ── el registro ─────────────────────────────────────────────────────────────
 
 
@@ -578,15 +812,20 @@ async def ronda(
     ahora: datetime | None = None,
     contexto: Callable[[], Any] | None = None,
     dormir: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    avisar_mesa: Callable[[dict[str, Any]], bool] | None = None,
 ) -> str | None:
     """Una ronda completa. Devuelve el aviso, o None si no se pudo preguntar.
 
     Con `contexto` (fase 1b), dos tandas: primero todas las familias con el
     mapa solo, y tras `ESPERA_TANDA_S` todas con el mapa y el bloque externo.
     El bloque se reúne MIENTRAS contesta la primera tanda.
+
+    Con `avisar_mesa`, el aviso va como foto con tarjeta y parte en HTML; si
+    no sale, `avisar` manda el texto plano de siempre.
     """
     ahora = ahora or datetime.now(UTC)
-    p = pregunta(cierre, ahora, velas("1h", 60))
+    velas_1h = velas("1h", 60)
+    p = pregunta(cierre, ahora, velas_1h)
     texto_mapa = mapa()
     if p is None or not texto_mapa:
         print("[mesa] sin mercado para la pregunta: la ronda se salta", flush=True)
@@ -619,8 +858,22 @@ async def ronda(
         else []
     )
     mesa.guardar(p, respuestas + varas, ctx)
-    aviso = mensaje(p, respuestas, ctx.bloque if ctx is not None else "", base)
-    enviado = avisar(aviso)
+    bloque = ctx.bloque if ctx is not None else ""
+    aviso = mensaje(p, respuestas, bloque, base)
+    enviado = False
+    if avisar_mesa is not None:
+        eventos = list((ctx.datos or {}).get("calendario") or []) if ctx is not None else []
+        try:
+            cuerpo = {
+                "html": parte_html(p, respuestas, bloque, base, eventos),
+                "texto": aviso,
+                "tarjeta": tarjeta(p, respuestas, base, velas_1h),
+            }
+            enviado = avisar_mesa(cuerpo)
+        except Exception as exc:  # noqa: BLE001 — el aviso de siempre va igual
+            print(f"[mesa] sin aviso con tarjeta: {str(exc)[:120]}", flush=True)
+    if not enviado:
+        enviado = avisar(aviso)
     por_variante = " · ".join(
         f"{v} {sum(r.p_arriba is not None for r in respuestas if r.variante == v)}"
         f"/{sum(r.variante == v for r in respuestas)}"
@@ -648,6 +901,7 @@ async def vigilar(
     parar: asyncio.Event,
     dormir: Callable[[float], Awaitable[Any]] | None = None,
     contexto: Callable[[], Any] | None = None,
+    avisar_mesa: Callable[[dict[str, Any]], bool] | None = None,
 ) -> None:
     while not parar.is_set():
         try:
@@ -657,7 +911,16 @@ async def vigilar(
                 print(f"[mesa] no se pudo resolver: {str(exc)[:120]}", flush=True)
             cierre = cierre_pendiente(datetime.now(UTC), mesa.hechas(), espera_min, en_ventana)
             if cierre is not None:
-                await ronda(cierre, mesa, llms, velas, mapa, avisar, contexto=contexto)
+                await ronda(
+                    cierre,
+                    mesa,
+                    llms,
+                    velas,
+                    mapa,
+                    avisar,
+                    contexto=contexto,
+                    avisar_mesa=avisar_mesa,
+                )
         except Exception as exc:  # noqa: BLE001 — la mesa nunca se cae por una ronda
             print(f"[mesa] ronda fallida: {str(exc)[:160]}", flush=True)
         if dormir is not None:
@@ -741,6 +1004,7 @@ def main() -> None:
             avisar_por_telegram,
             parar,
             contexto=reunir_contexto if con_contexto else None,
+            avisar_mesa=avisar_por_panel,
         )
 
     asyncio.run(correr())

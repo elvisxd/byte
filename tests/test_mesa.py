@@ -7,6 +7,7 @@ from paper.mesa import (
     CUATRO_HORAS_S,
     ESPERA_TANDA_S,
     FAMILIA_BASE,
+    TOPE_PIE,
     VARIANTE_EXTERNO,
     VARIANTE_MAPA,
     Mesa,
@@ -17,8 +18,11 @@ from paper.mesa import (
     familias_de,
     interpretar,
     mensaje,
+    parte_html,
     pregunta,
     ronda,
+    sesgo_de,
+    tarjeta,
     tasa_base_del_mapa,
 )
 
@@ -478,3 +482,139 @@ def test_desde_la_puerta_cada_familia_lleva_su_skill_contra_la_vara(tmp_path):
     assert "Brier 0.2500" in lineas["tasa base [mapa]"]
     assert "vs tasa base" not in lineas["tasa base [mapa]"]
     assert "se aparta" not in lineas["tasa base [mapa]"]
+
+
+# ── el aviso con tarjeta ────────────────────────────────────────────────────
+
+
+def _ronda_de_ejemplo() -> list[Respuesta]:
+    return [
+        Respuesta("gemini", "g", 0.62, 0.31, "alcista", "barrió el mínimo de Asia"),
+        Respuesta("openrouter", "o", 0.55, 0.38, "alcista", "CVD comprador <fuerte>"),
+        Respuesta("groq", "q", 0.45, 0.42, "neutral", "rango de 4h"),
+        Respuesta("nvidia", "n", fallo="Error code: 500"),
+        Respuesta("gemini", "g", 0.58, 0.35, "alcista", "x", variante=VARIANTE_EXTERNO),
+        Respuesta(FAMILIA_BASE, "mapa", 0.38, 0.38),
+    ]
+
+
+class _Etiquetas:
+    """Cuenta que cada etiqueta que abre, cierra: Telegram rechaza el parte entero."""
+
+    def __init__(self, texto: str) -> None:
+        from html.parser import HTMLParser
+
+        self.pila: list[str] = []
+        self.mal = False
+        yo = self
+
+        class P(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                yo.pila.append(tag)
+
+            def handle_endtag(self, tag):
+                if not yo.pila or yo.pila.pop() != tag:
+                    yo.mal = True
+
+        P().feed(texto)
+
+    @property
+    def bien(self) -> bool:
+        return not self.mal and not self.pila
+
+
+def test_el_veredicto_de_la_mesa_es_la_mayoria_de_la_variante_mapa():
+    assert sesgo_de(_ronda_de_ejemplo()) == ("alcista", "2 de 3")
+    empate = [Respuesta("a", veredicto="alcista"), Respuesta("b", veredicto="bajista")]
+    assert sesgo_de(empate) == ("dividida", "1 alcista · 1 bajista")
+    assert sesgo_de([Respuesta("a", fallo="500")]) == ("sin veredicto", "")
+
+
+def test_el_parte_abre_con_el_veredicto_y_los_numeros():
+    """La primera línea es la que se lee en la notificación del teléfono."""
+    parte = parte_html(
+        _pregunta_fija(),
+        _ronda_de_ejemplo(),
+        "Macro 24h: NDX 30,608 +0.2%\nCalendario: mañana 08:30 PCE",
+        base=0.38,
+        eventos=["mañana 08:30 Core PCE"],
+    )
+    primera = parte.split("\n", 1)[0]
+    assert primera == "<b>🟢 Mesa BTC · sesgo alcista</b> (2 de 3)"
+    assert "→ <b>54%</b> · base 38%" in parte and "→ <b>37%</b> · base 38%" in parte
+    # La clave: del que votó con la mesa, el más cerca del consenso (54/37).
+    assert "<b>Clave:</b> CVD comprador &lt;fuerte&gt;" in parte
+    assert "<b>Riesgo:</b> mañana 08:30 Core PCE" in parte
+    assert "<pre>" in parte and "sin respuesta" in parte and "58/35" in parte
+    assert "<blockquote expandable>" in parte and "<b>Macro</b> NDX 30,608 +0.2%" in parte
+    assert "tasa base" not in parte.split("<pre>")[1].split("</pre>")[0]
+    assert "<fuerte>" not in parte, "lo que escribe un modelo va escapado"
+    assert _Etiquetas(parte).bien
+
+
+def test_un_parte_largo_se_recorta_por_lo_plegado_y_cabe_en_el_pie():
+    largas = [
+        Respuesta(f"f{i}", "m", 0.5, 0.4, "neutral", "razón muy larga " * 10) for i in range(6)
+    ]
+    parte = parte_html(_pregunta_fija(), largas, "Macro 24h: " + "x " * 90, base=0.3)
+    from html import unescape
+    from re import sub
+
+    assert len(unescape(sub(r"<[^>]+>", "", parte))) <= TOPE_PIE
+    assert parte.startswith("<b>⚪ Mesa BTC · sesgo neutral</b>") and _Etiquetas(parte).bien
+
+
+def test_sin_respuestas_el_parte_lo_dice():
+    parte = parte_html(_pregunta_fija(), [Respuesta("a", fallo="500")])
+    assert "nadie contestó" in parte and _Etiquetas(parte).bien
+
+
+def test_la_tarjeta_lleva_los_numeros_y_no_a_la_vara():
+    velas = _velas(60)
+    t = tarjeta(_pregunta_fija(), _ronda_de_ejemplo(), 0.38, velas)
+    assert t is not None
+    assert (t["p_arriba"], t["p_abajo"], t["base"]) == (0.54, 0.37, 0.38)
+    assert (t["sesgo"], t["votos"]) == ("alcista", "2 de 3")
+    assert [f["nombre"] for f in t["familias"]] == ["gemini", "openrouter", "groq", "nvidia"]
+    assert t["con_contexto"] == {"p_arriba": 0.58, "p_abajo": 0.35}
+    assert len(t["velas"]) == 48 and t["velas"][-1][0] == velas[-1]["time"]
+    assert tarjeta(_pregunta_fija(), [Respuesta("a", fallo="x")], None, velas) is None
+
+
+def _ronda_con_aviso(tmp_path, avisar_mesa):
+    avisos: list[str] = []
+    asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            Mesa(str(tmp_path / "mesa.db")),
+            {"gemini": _LlmQueMira()},
+            velas=lambda _m, _n: _velas(40),
+            mapa=lambda: MAPA_CON_TASAS,
+            avisar=lambda t: avisos.append(t) or True,
+            ahora=T0 + timedelta(minutes=50),
+            avisar_mesa=avisar_mesa,
+        )
+    )
+    return avisos
+
+
+def test_con_el_aviso_de_la_mesa_no_se_manda_el_de_siempre(tmp_path):
+    cuerpos: list[dict] = []
+    avisos = _ronda_con_aviso(tmp_path, lambda c: cuerpos.append(c) or True)
+    assert avisos == [] and len(cuerpos) == 1
+    c = cuerpos[0]
+    assert c["html"].startswith("<b>⚪ Mesa BTC · sesgo neutral</b>")
+    assert c["texto"].startswith("🧑‍💼 Mesa de analistas") and c["tarjeta"]["base"] == 0.38
+
+
+def test_si_el_aviso_de_la_mesa_no_sale_va_el_de_siempre(tmp_path):
+    """Un panel viejo sin la ruta, la imagen rota o Telegram caído: el texto
+    plano de siempre llega igual."""
+    (tmp_path / "a").mkdir()
+    assert len(_ronda_con_aviso(tmp_path / "a", lambda _c: False)) == 1
+
+    def roto(_c):
+        raise RuntimeError("boom")
+
+    (tmp_path / "b").mkdir()
+    assert len(_ronda_con_aviso(tmp_path / "b", roto)) == 1
