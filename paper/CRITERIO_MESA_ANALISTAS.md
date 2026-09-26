@@ -36,7 +36,10 @@ propios niveles: dos lecturas sobre niveles distintos no se comparan.
   o no tocó. El modelo nunca se puntúa a sí mismo.
 - **Aviso por Telegram aparte**, uno por ronda: el veredicto y las dos
   probabilidades de cada familia, el consenso y cuánto discrepan. Lo pidió
-  Elvis el 2026-09-25.
+  Elvis el 2026-09-25. Desde el 2026-09-26 (también a su pedido) va como una
+  foto con la tarjeta de la ronda, que dibuja el panel, y el parte en HTML de
+  pie de foto; el texto plano de antes queda de respaldo. Solo cambia la
+  forma: lo que se guarda y se mide es lo mismo.
 - **Vive en `$DATOS/mesa.db`**, en el volumen, separada de los registros de
   los brazos.
 
