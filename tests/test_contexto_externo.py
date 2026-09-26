@@ -160,6 +160,12 @@ def test_titulares_de_varias_fuentes_recientes_limpios_y_sin_repetir():
     ]
 
 
+def test_un_titular_largo_se_corta_en_una_palabra():
+    largo = "palabra " * 20
+    (t,) = combinar_titulares([[(TS - 60, largo.strip(), "X")]], TS)
+    assert t.endswith("palabra… (X)") and len(t) <= 96
+
+
 def test_rss_roto_no_levanta():
     assert leer_rss("<rss><channel><item>", "X") == []
 

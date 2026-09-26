@@ -432,7 +432,8 @@ def combinar_titulares(
         if not texto or ahora_ts - ts > horas * 3600 or ts > ahora_ts + 600 or clave in vistos:
             continue
         vistos.add(clave)
-        out.append(f"{texto[:90]} ({fuente})")
+        corto = texto if len(texto) <= 90 else texto[:90].rsplit(" ", 1)[0] + "…"
+        out.append(f"{corto} ({fuente})")
         if len(out) == n:
             break
     return out
