@@ -206,6 +206,11 @@ def test_con_tope_chico_se_cortan_primero_los_titulares():
     assert "Titular" not in b and b.endswith(sin_titulares[-20:])
 
 
+def test_un_cambio_que_redondea_a_cero_no_lleva_signo_negativo():
+    d = {"dvol": {"dvol": 35.0, "hace24h": 35.3}}
+    assert "DVOL 35 (±0)" in formatear(d)
+
+
 def test_una_familia_sin_datos_no_deja_linea_vacia():
     d = {"sesion": "sesión Asia"}
     b = formatear(d)

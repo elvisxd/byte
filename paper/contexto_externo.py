@@ -75,6 +75,8 @@ def _pct(a: float, b: float) -> float | None:
 def _signo(x: float | None, dec: int = 1, sufijo: str = "%") -> str:
     if x is None:
         return ""
+    if round(abs(x), dec) == 0:
+        return f"±{0:.{dec}f}{sufijo}"
     return f"{'+' if x >= 0 else '−'}{abs(x):.{dec}f}{sufijo}"
 
 
@@ -190,19 +192,30 @@ def leer_farside(markdown: str) -> dict[str, Any] | None:
 
 
 def _farside(clave: str) -> dict[str, Any] | None:
+    """farside.co.uk por Firecrawl (1 crédito). La v2 de su API primero; la v1
+    sigue viva y es la que documentan la mayoría de ejemplos."""
     if not clave:
         return None
-    crudo = _pedir(
-        "https://api.firecrawl.dev/v1/scrape",
-        datos={
-            "url": "https://farside.co.uk/btc/",
-            "formats": ["markdown"],
-            "onlyMainContent": True,
-        },
-        cabeceras={"Authorization": f"Bearer {clave}"},
-    )
-    j = json.loads(crudo)
-    return leer_farside(((j or {}).get("data") or {}).get("markdown") or "")
+    ultimo_error: Exception | None = None
+    for version in ("v2", "v1"):
+        try:
+            crudo = _pedir(
+                f"https://api.firecrawl.dev/{version}/scrape",
+                datos={
+                    "url": "https://farside.co.uk/btc/",
+                    "formats": ["markdown"],
+                    "onlyMainContent": True,
+                },
+                cabeceras={"Authorization": f"Bearer {clave}"},
+            )
+        except (OSError, urllib.error.URLError) as exc:
+            ultimo_error = exc
+            continue
+        j = json.loads(crudo)
+        return leer_farside(((j or {}).get("data") or {}).get("markdown") or "")
+    if ultimo_error is not None:
+        raise ultimo_error
+    return None
 
 
 # ── derivados y opciones ────────────────────────────────────────────────────
