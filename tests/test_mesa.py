@@ -5,6 +5,9 @@ from datetime import UTC, datetime, time, timedelta
 
 from paper.mesa import (
     CUATRO_HORAS_S,
+    ESPERA_TANDA_S,
+    VARIANTE_EXTERNO,
+    VARIANTE_MAPA,
     Mesa,
     Pregunta,
     Respuesta,
@@ -227,3 +230,127 @@ def test_la_ventana_del_vigia_se_mira_en_hora_local_del_cierre():
 
     assert en_ventana(datetime(2026, 9, 25, 20, 0))
     assert not en_ventana(datetime.combine(datetime(2026, 9, 25).date(), time(0, 0)))
+
+
+# ── fase 1b: el contexto externo en A/B ─────────────────────────────────────
+
+
+class _LlmQueMira:
+    """Contesta distinto si el mensaje trae el bloque externo, y guarda lo que vio."""
+
+    def __init__(self, actual: str = "m") -> None:
+        self.actual, self.vistos = actual, []
+
+    async def ainvoke(self, mensajes):
+        texto = mensajes[-1].content
+        self.vistos.append(texto)
+        con = "CONTEXTO EXTERNO" in texto
+
+        class R:
+            content = (
+                "PROBABILIDADES: arriba 40% | abajo 60%\nVEREDICTO: bajista — dólar fuerte"
+                if con
+                else "PROBABILIDADES: arriba 55% | abajo 45%\nVEREDICTO: neutral — rango"
+            )
+
+        return R()
+
+
+class _Ctx:
+    bloque = "═══ CONTEXTO EXTERNO (x) ═══\nMacro 24h: DXY 101 +0.5%\nCalendario: hoy 08:30 CPI"
+    datos = {"dxy": {"precio": 101.0}}
+    fallos = {"etf": "sin dato"}
+
+
+def test_el_ab_pregunta_dos_veces_y_lo_unico_que_cambia_es_el_bloque(tmp_path):
+    """La medida de la fase 1b es la diferencia entre variantes de la MISMA familia
+    en la MISMA ronda: si cambiara algo más que el bloque, no se sabría a qué
+    atribuirla. Y la segunda tanda espera a la primera (Groq cuenta por minuto)."""
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    llm = _LlmQueMira()
+    esperas: list[float] = []
+
+    async def dormir(s: float) -> None:
+        esperas.append(s)
+
+    aviso = asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            mesa,
+            {"gemini": llm},
+            velas=lambda _m, _n: _velas(40),
+            mapa=lambda: "MAPA",
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+            contexto=lambda: _Ctx(),
+            dormir=dormir,
+        )
+    )
+    assert len(llm.vistos) == 2 and esperas == [ESPERA_TANDA_S]
+    sin, con = llm.vistos
+    assert con == sin + "\n\n" + _Ctx.bloque
+    filas = mesa._con.execute(
+        "SELECT variante, p_arriba, veredicto FROM respuestas ORDER BY id"
+    ).fetchall()
+    assert [tuple(f) for f in filas] == [
+        (VARIANTE_MAPA, 0.55, "neutral"),
+        (VARIANTE_EXTERNO, 0.40, "bajista"),
+    ]
+    guardado = mesa._con.execute("SELECT bloque, fallos FROM contextos").fetchone()
+    assert guardado[0] == _Ctx.bloque and "etf" in guardado[1]
+    assert aviso is not None
+    assert "con contexto: bajista · ↑ 40% · ↓ 60%" in aviso
+    assert "Macro 24h: DXY 101 +0.5%" in aviso and "Calendario: hoy 08:30 CPI" in aviso
+
+
+def test_sin_contexto_la_ronda_es_la_de_la_fase_1(tmp_path):
+    """Si las fuentes fallan todas, la mesa no pierde la ronda: queda la variante
+    mapa, que es la serie de la fase 1 y no se corta."""
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    llm = _LlmQueMira()
+
+    def roto():
+        raise RuntimeError("sin red")
+
+    asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            mesa,
+            {"gemini": llm},
+            velas=lambda _m, _n: _velas(40),
+            mapa=lambda: "MAPA",
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+            contexto=roto,
+        )
+    )
+    assert len(llm.vistos) == 1
+    assert [f[0] for f in mesa._con.execute("SELECT variante FROM respuestas")] == [VARIANTE_MAPA]
+
+
+def test_una_mesa_db_de_la_fase_1_se_migra_sin_perder_nada(tmp_path):
+    """La del volumen ya tiene rondas del 25: sus respuestas son de la variante mapa."""
+    import sqlite3
+
+    ruta = str(tmp_path / "mesa.db")
+    con = sqlite3.connect(ruta)
+    con.executescript(
+        """CREATE TABLE rondas (id INTEGER PRIMARY KEY, cierre_4h INTEGER NOT NULL UNIQUE,
+             hecha_en TEXT NOT NULL, precio REAL NOT NULL, atr REAL NOT NULL, arriba REAL NOT NULL,
+             abajo REAL NOT NULL, vence_en TEXT NOT NULL, toco_arriba INTEGER, toco_abajo INTEGER,
+             resuelta_en TEXT);
+           CREATE TABLE respuestas (id INTEGER PRIMARY KEY, ronda_id INTEGER NOT NULL,
+             familia TEXT NOT NULL, modelo TEXT, p_arriba REAL, p_abajo REAL, veredicto TEXT,
+             porque TEXT, texto TEXT, fallo TEXT);
+           INSERT INTO rondas VALUES (1, 100, '2026-09-25T00:50:00+00:00', 1, 1, 2, 0,
+             '2026-09-26T00:50:00+00:00', NULL, NULL, NULL);
+           INSERT INTO respuestas (ronda_id, familia, p_arriba, p_abajo)
+             VALUES (1, 'gemini', .5, .5);"""
+    )
+    con.commit()
+    con.close()
+    mesa = Mesa(ruta)
+    assert [tuple(f) for f in mesa._con.execute("SELECT familia, variante FROM respuestas")] == [
+        ("gemini", VARIANTE_MAPA)
+    ]
+    assert "gemini [mapa]: contestó 1/1" in mesa.informe()
