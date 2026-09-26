@@ -23,6 +23,7 @@ Uso, para probar las fuentes de verdad (sin modelo, cero tokens):
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -32,6 +33,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -63,6 +65,10 @@ def _pedir(
 
 def pedir_json(url: str) -> Any:
     return json.loads(_pedir(url))
+
+
+def pedir_texto(url: str) -> str:
+    return _pedir(url).decode("utf-8", errors="replace")
 
 
 # ── utilidades ──────────────────────────────────────────────────────────────
@@ -290,6 +296,15 @@ def leer_dvol(j: Any) -> dict[str, float] | None:
 # ── cripto, on-chain, sentimiento ───────────────────────────────────────────
 
 
+def leer_dominancia(j: Any) -> dict[str, float] | None:
+    """Dominancia de BTC y de USDT (CoinGecko, % de la capitalización total)."""
+    try:
+        pct = j["data"]["market_cap_percentage"]
+        return {"btc": float(pct["btc"]), "usdt": float(pct["usdt"]) if "usdt" in pct else None}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def leer_fng(j: Any) -> dict[str, Any] | None:
     try:
         hoy, ayer = j["data"][0], j["data"][1]
@@ -336,21 +351,89 @@ def sesion(ahora: datetime) -> str:
     return " · ".join(partes)
 
 
-def leer_titulares(j: Any, ahora_ts: float, horas: float = 12) -> list[str]:
-    """Los 3 titulares de cripto más recientes (Finnhub), sin saltos ni comillas."""
+# Titulares: (epoch s, texto, fuente). Salen de varias fuentes y se juntan en
+# `combinar_titulares`. X (Twitter) no se puede leer sin login y Firecrawl no lo
+# soporta; las cuentas de noticias rápidas publican lo mismo en su canal público
+# de Telegram, cuya vista web (t.me/s/…) se lee sin cuenta.
+Titular = tuple[float, str, str]
+
+CANALES_TELEGRAM = ("WatcherGuru",)
+RSS = (
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("Cointelegraph", "https://cointelegraph.com/rss"),
+)
+
+
+def _limpiar(texto: str) -> str:
+    """Sin etiquetas, entidades, saltos ni comillas que parezcan del bloque."""
+    t = html.unescape(re.sub(r"<[^>]+>", " ", texto))
+    return re.sub(r"\s+", " ", t).strip().replace("«", "").replace("»", "")
+
+
+def leer_finnhub(j: Any) -> list[Titular]:
+    return [
+        (float(n.get("datetime") or 0), _limpiar(str(n.get("headline", ""))), "Finnhub")
+        for n in (j if isinstance(j, list) else [])
+    ]
+
+
+_ITEM = re.compile(r"<item\b.*?</item>", re.DOTALL)
+_CAMPO = {c: re.compile(rf"<{c}>(.*?)</{c}>", re.DOTALL) for c in ("title", "pubDate")}
+
+
+def leer_rss(xml_texto: str, fuente: str) -> list[Titular]:
+    """Título y fecha de cada <item>. Con expresiones y no con un parser XML: el
+    feed es de un tercero, y un parser XML abre la puerta a entidades y
+    expansiones que acá no hacen falta para leer dos campos."""
     out = []
-    for n in sorted(j if isinstance(j, list) else [], key=lambda x: -float(x.get("datetime") or 0)):
-        if ahora_ts - float(n.get("datetime") or 0) > horas * 3600:
+    for item in _ITEM.findall(xml_texto):
+        titulo, fecha = (_CAMPO[c].search(item) for c in ("title", "pubDate"))
+        if not titulo or not fecha:
             continue
-        t = (
-            re.sub(r"\s+", " ", str(n.get("headline", "")))
-            .strip()
-            .replace("«", "")
-            .replace("»", "")
-        )
-        if t:
-            out.append(t[:90])
-        if len(out) == 3:
+        crudo = re.sub(r"^<!\[CDATA\[(.*)\]\]>$", r"\1", titulo.group(1).strip(), flags=re.DOTALL)
+        try:
+            ts = parsedate_to_datetime(fecha.group(1).strip()).timestamp()
+        except (TypeError, ValueError):
+            continue
+        out.append((ts, _limpiar(crudo), fuente))
+    return out
+
+
+_MENSAJE_TG = re.compile(
+    r'<time[^>]*datetime="([^"]+)"|<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+    re.DOTALL,
+)
+
+
+def leer_telegram(pagina: str, fuente: str) -> list[Titular]:
+    """La vista pública de un canal (t.me/s/<canal>): cada mensaje trae su texto
+    y, más abajo, su <time>. Se empareja cada texto con la hora que le sigue."""
+    out, pendiente = [], None
+    for m in _MENSAJE_TG.finditer(pagina):
+        if m.group(2) is not None:
+            pendiente = _limpiar(m.group(2))
+        elif pendiente:
+            try:
+                out.append((datetime.fromisoformat(m.group(1)).timestamp(), pendiente, fuente))
+            except ValueError:
+                pass
+            pendiente = None
+    return out
+
+
+def combinar_titulares(
+    listas: list[list[Titular]], ahora_ts: float, horas: float = 12, n: int = 3
+) -> list[str]:
+    """Los `n` más recientes de todas las fuentes, sin repetir la misma noticia."""
+    vistos, out = set(), []
+    todos = sorted((t for lista in listas for t in lista), key=lambda t: -t[0])
+    for ts, texto, fuente in todos:
+        clave = re.sub(r"[^a-z0-9]", "", texto.lower())[:40]
+        if not texto or ahora_ts - ts > horas * 3600 or ts > ahora_ts + 600 or clave in vistos:
+            continue
+        vistos.add(clave)
+        out.append(f"{texto[:90]} ({fuente})")
+        if len(out) == n:
             break
     return out
 
@@ -464,7 +547,9 @@ def formatear(d: dict[str, Any], tope: int = TOPE_CHARS) -> str:
         [
             f"ETH/BTC {eb['precio']:.5f} {_signo(eb['cambio'])}" if eb else None,
             f"SOL/BTC {_signo(sb['cambio'])}" if sb else None,
-            f"dominancia {dom:.1f}%" if dom is not None else None,
+            f"dominancia BTC {dom['btc']:.1f}%" if dom else None,
+            # USDT.D: si sube, el dinero se refugia en stablecoins; suele ir contra BTC.
+            f"USDT.D {dom['usdt']:.2f}%" if dom and dom.get("usdt") is not None else None,
         ],
     )
     hr, fee, fng = d.get("hashrate_eh"), d.get("fees"), d.get("fng")
@@ -498,6 +583,7 @@ def reunir(
     pedir: Json = pedir_json,
     firecrawl: str | None = None,
     finnhub: str | None = None,
+    texto: Callable[[str], str] = pedir_texto,
 ) -> Contexto:
     """Pide todas las fuentes en paralelo y arma el bloque. Nunca levanta."""
     ahora = ahora or datetime.now(UTC)
@@ -551,9 +637,7 @@ def reunir(
                 '"', "%22"
             )
         ),
-        "dominancia": lambda: float(
-            pedir("https://api.coingecko.com/api/v3/global")["data"]["market_cap_percentage"]["btc"]
-        ),
+        "dominancia": lambda: leer_dominancia(pedir("https://api.coingecko.com/api/v3/global")),
         "hashrate_eh": lambda: (
             float(pedir("https://mempool.space/api/v1/mining/hashrate/3d")["currentHashrate"])
             / 1e18
@@ -563,13 +647,21 @@ def reunir(
         "calendario": lambda: leer_calendario(
             pedir("https://nfs.faireconomy.media/ff_calendar_thisweek.json"), ahora
         ),
-        "titulares": lambda: (
-            leer_titulares(
-                pedir(f"https://finnhub.io/api/v1/news?category=crypto&token={finnhub}"), ts
-            )
+        "tit_finnhub": lambda: (
+            leer_finnhub(pedir(f"https://finnhub.io/api/v1/news?category=crypto&token={finnhub}"))
             if finnhub
             else None
         ),
+        **{
+            f"tit_{nombre.lower()}": (lambda n=nombre, u=url: leer_rss(texto(u), n))
+            for nombre, url in RSS
+        },
+        **{
+            f"tit_tg_{canal.lower()}": (
+                lambda c=canal: leer_telegram(texto(f"https://t.me/s/{c}"), c)
+            )
+            for canal in CANALES_TELEGRAM
+        },
     }
 
     def correr(nombre: str) -> tuple[str, Any, str]:
@@ -612,6 +704,9 @@ def reunir(
         clave = {"ETHBTC": "ethbtc", "SOLBTC": "solbtc"}.get(t.get("symbol"))
         if clave:
             d[clave] = {"precio": float(t["lastPrice"]), "cambio": float(t["priceChangePercent"])}
+    titulares = [d.pop(k) for k in [k for k in d if k.startswith("tit_")]]
+    if titulares:
+        d["titulares"] = combinar_titulares(titulares, ts)
     cme = d.pop("cme", None)
     if cme and spot_v:
         d["base_cme"] = _pct(cme["precio"], spot_v)

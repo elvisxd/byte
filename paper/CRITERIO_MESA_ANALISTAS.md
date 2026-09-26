@@ -89,11 +89,16 @@ Una línea por familia de ejes, solo el valor y su cambio reciente, sin prosa:
   de cuentas, base de CME.
 - **Opciones:** DVOL, put/call de open interest, el vencimiento grande más
   próximo.
-- **Cripto:** ETH/BTC, SOL/BTC, dominancia de BTC.
+- **Cripto:** ETH/BTC, SOL/BTC, dominancia de BTC y de USDT (USDT.D: si
+  sube, el dinero se refugia en stablecoins; la pidió Elvis el 2026-09-26,
+  antes de la primera ronda A/B).
 - **On-chain y sentimiento:** hashrate, comisiones, Fear & Greed.
 - **Calendario:** eventos de EE. UU. de impacto alto hoy y mañana, sesión,
   fin de semana, días a fin de mes.
-- **Titulares:** los 3 más recientes de cripto, cortados.
+- **Titulares:** los 3 más recientes de cripto, cortados, sin repetir la
+  misma noticia: Finnhub, los RSS de CoinDesk y Cointelegraph y el canal
+  público de Telegram de Watcher Guru. X no: pide login y Firecrawl no lo
+  lee; las cuentas de noticias rápidas publican lo mismo en Telegram.
 
 **Tope: 1.600 caracteres** (~450 tokens) para todo el bloque. Lo que no quepa
 se corta por el final (titulares primero). Una fuente que no responde se

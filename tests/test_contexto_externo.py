@@ -4,14 +4,18 @@ from datetime import UTC, datetime
 
 from paper.contexto_externo import (
     TOPE_CHARS,
+    combinar_titulares,
     formatear,
     leer_calendario,
     leer_deribit_opciones,
+    leer_dominancia,
     leer_farside,
+    leer_finnhub,
     leer_fng,
     leer_okx_funding,
+    leer_rss,
     leer_stablecoins,
-    leer_titulares,
+    leer_telegram,
     leer_yahoo,
     reunir,
     sesion,
@@ -117,14 +121,52 @@ def test_sesion_y_fin_de_mes():
     assert "fin de semana" in sesion(datetime(2026, 9, 27, 3, 0, tzinfo=UTC))
 
 
-def test_titulares_recientes_y_limpios():
-    """Los escribe un tercero: sin saltos de línea ni comillas que parezcan del bloque."""
-    j = [
-        {"headline": "Viejo", "datetime": TS - 20 * 3600},
-        {"headline": "BTC «sube»\nfuerte", "datetime": TS - 3600},
-        {"headline": "ETF récord", "datetime": TS - 7200},
+def test_titulares_de_varias_fuentes_recientes_limpios_y_sin_repetir():
+    """Los escribe un tercero: sin saltos de línea ni comillas que parezcan del
+    bloque, y la misma noticia de dos portales cuenta una vez."""
+    finnhub = leer_finnhub(
+        [
+            {"headline": "Viejo", "datetime": TS - 20 * 3600},
+            {"headline": "BTC «sube»\nfuerte", "datetime": TS - 3600},
+        ]
+    )
+    rss = leer_rss(
+        "<rss><channel>"
+        "<item><title>ETF récord &amp; más</title>"
+        "<pubDate>Fri, 25 Sep 2026 16:20:00 +0000</pubDate></item>"
+        "<item><title><![CDATA[BTC sube fuerte]]></title>"
+        "<pubDate>Fri, 25 Sep 2026 16:40:00 +0000</pubDate></item>"
+        "</channel></rss>",
+        "CoinDesk",
+    )
+    tg = leer_telegram(
+        '<div class="tgme_widget_message_text js-message_text" dir="auto">'
+        "JUST IN: <b>Fed</b> habla hoy</div>"
+        '<a class="tgme_widget_message_date">'
+        '<time datetime="2026-09-25T16:45:00+00:00">16:45</time></a>',
+        "WatcherGuru",
+    )
+    assert tg == [
+        (
+            datetime(2026, 9, 25, 16, 45, tzinfo=UTC).timestamp(),
+            "JUST IN: Fed habla hoy",
+            "WatcherGuru",
+        )
     ]
-    assert leer_titulares(j, TS) == ["BTC sube fuerte", "ETF récord"]
+    assert combinar_titulares([finnhub, rss, tg], TS) == [
+        "JUST IN: Fed habla hoy (WatcherGuru)",
+        "BTC sube fuerte (CoinDesk)",
+        "ETF récord & más (CoinDesk)",
+    ]
+
+
+def test_rss_roto_no_levanta():
+    assert leer_rss("<rss><channel><item>", "X") == []
+
+
+def test_dominancia_de_btc_y_de_usdt():
+    j = {"data": {"market_cap_percentage": {"btc": 58.21, "eth": 11.0, "usdt": 5.13}}}
+    assert leer_dominancia(j) == {"btc": 58.21, "usdt": 5.13}
 
 
 def _datos_llenos() -> dict:
@@ -164,7 +206,7 @@ def _datos_llenos() -> dict:
             "opciones": {"put_call": 0.62, "vto": "27-Sep", "vto_musd": 4100.0},
             "ethbtc": {"precio": 0.0412, "cambio": -1.1},
             "solbtc": {"precio": 0.002, "cambio": -0.7},
-            "dominancia": 58.2,
+            "dominancia": {"btc": 58.2, "usdt": 5.13},
             "hashrate_eh": 890.0,
             "fees": 12,
             "fng": {"valor": 34, "clase": "Fear", "ayer": 38},
@@ -223,7 +265,7 @@ def test_reunir_con_la_red_caida_no_levanta_y_anota_los_fallos():
     def caida(_url: str):
         raise OSError("sin red")
 
-    c = reunir(AHORA, pedir=caida, firecrawl="", finnhub="")
+    c = reunir(AHORA, pedir=caida, firecrawl="", finnhub="", texto=caida)
     assert "sesión EE. UU." in c.bloque
     assert "dxy" in c.fallos and "funding" in c.fallos
     assert "token=" not in "".join(c.fallos.values())
