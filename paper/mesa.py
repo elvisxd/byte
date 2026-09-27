@@ -6,7 +6,7 @@ que se escribió antes que esto y en su propio commit.
 Tras cada cierre de 4h dentro de la ventana del vigía, con `MESA_ESPERA_MIN`
 de retraso, le hace LA MISMA pregunta a un analista de cada familia:
 
-    marco 1h, plazo 24 h: ¿toca arriba = precio + 1 ATR? ¿y abajo = precio − 1 ATR?
+    plazo 24 h: ¿toca arriba = precio + 1.5%? ¿y abajo = precio − 1.5%?
 
 Cada uno contesta con sus dos probabilidades y un veredicto (alcista, bajista
 o neutral). Se guarda en `mesa.db`, se manda un aviso por Telegram con la mesa
@@ -54,12 +54,21 @@ from paper.analista import _texto_de, interpretar_probabilidades
 from paper.prompt import ROL_ANALISTA
 
 # La pregunta: el marco por defecto de las predicciones y su plazo
-# (`Registro.PLAZO_POR_MARCO["1h"]`), a 1 ATR, que es una de las dos distancias
-# con tasa base en el mapa.
+# (`Registro.PLAZO_POR_MARCO["1h"]`), con los niveles a ±1.5% del precio.
+#
+# ⚠ HASTA EL 2026-09-27 ERAN ±1 ATR DE 1h: con el mercado quieto eso eran
+# ~160 dólares, un movimiento que no le dice nada a quien opera. Elvis pidió
+# niveles de más de 1.000 (a 84.000, el 1.5% son ~1.260). La tasa base de la
+# pregunta la calcula el código con las mismas velas (`tasa_base_pct`): el mapa
+# solo trae las de 1 y 2 ATR. Las rondas viejas quedan aparte (`PREGUNTA`).
 MARCO = "1h"
 PLAZO_H = 24.0
-DISTANCIA_ATR = 1.0
+DISTANCIA_PCT = 1.5
+PREGUNTA = f"{MARCO} ±{DISTANCIA_PCT:g}% {PLAZO_H:g}h"
+PREGUNTA_VIEJA = "1h ±1 ATR 24h"
 PERIODO_ATR = 14
+# Velas de 1h para la tasa base: 200 = ~8 días, 175 muestras con 24 h por delante.
+VELAS_BASE = 200
 CUATRO_HORAS_S = 4 * 3600
 # Cada cuánto mira el reloj. La ronda no necesita precisión de segundos.
 CADA_S = 300
@@ -85,40 +94,36 @@ _VEREDICTO = re.compile(
 INSTRUCCION_MESA = """Leé el mapa de abajo. Una sola pregunta, la misma que les llega a los demás
 analistas de la mesa:
 
-marco {marco}, plazo {plazo:g} h desde ahora (precio {precio:,.2f}):
-  · ¿el precio TOCA {arriba:,.2f} (arriba, +{dist:g} ATR de {marco}) antes de vencer?
-  · ¿el precio TOCA {abajo:,.2f} (abajo, −{dist:g} ATR de {marco}) antes de vencer?
+plazo {plazo:g} h desde ahora (precio {precio:,.2f}):
+  · ¿el precio TOCA {arriba:,.2f} (arriba, +{dist:g}%) antes de vencer?
+  · ¿el precio TOCA {abajo:,.2f} (abajo, −{dist:g}%) antes de vencer?
 
-Partí de la tasa base que el mapa da para {marco} a {dist:g} ATR y ajustala por lo
-que veas. En menos de 80 palabras: el régimen, y qué te hace inclinarte.
+{base}
+Ajustala por lo que veas. En menos de 80 palabras: el régimen, y qué te hace inclinarte.
 
 Terminá SIEMPRE con estas dos líneas exactas, con tus números:
 PROBABILIDADES: arriba <probabilidad>% | abajo <probabilidad>%
 VEREDICTO: <alcista|bajista|neutral> — <por qué, en menos de 20 palabras>"""
 
 
-_TASA_BASE = re.compile(r"un nivel a (\d+) ATR se tocó dentro de \d+ velas el (\d+)%")
-
-
-def tasa_base_del_mapa(mapa: str, marco: str = MARCO, dist: float = DISTANCIA_ATR) -> float | None:
-    """La tasa base del bloque de `marco` a `dist` ATR, tal como la leyó la mesa.
-
-    Del texto del mapa y no recalculada: la vara es el número que el analista
-    tenía delante (`tools/paper.py`, `_tasa_base`). Sin bloque o sin línea, None
-    y la ronda sigue sin vara."""
-    cabeza = f"── {marco} ──"
-    i = mapa.find(cabeza)
-    if i < 0:
+def tasa_base_pct(
+    velas_1h: list[dict[str, Any]], dist_pct: float = DISTANCIA_PCT, horizonte: int = 24
+) -> tuple[float, int] | None:
+    """(tasa, muestras): cuántas veces, en estas velas de 1h, un nivel a
+    ±`dist_pct`% del cierre se tocó dentro de `horizonte` velas. Se promedian los
+    dos lados, como `_tasa_base` del mapa (tools/paper.py) pero en porcentaje.
+    Menos de 30 muestras: None, y la pregunta sale sin tasa base."""
+    cerradas = velas_1h[:-1]  # la última está en curso
+    n = len(cerradas) - horizonte
+    if n < 30:
         return None
-    fin = mapa.find("\n── ", i + len(cabeza))
-    bloque = mapa[i : fin if fin >= 0 else len(mapa)]
-    for linea in bloque.splitlines():
-        if "tasa base" not in linea:
-            continue
-        m = _TASA_BASE.search(linea)
-        if m and float(m.group(1)) == dist:
-            return int(m.group(2)) / 100
-    return None
+    toques = 0
+    for i in range(n):
+        c = float(cerradas[i]["close"])
+        despues = cerradas[i + 1 : i + 1 + horizonte]
+        toques += int(max(v["high"] for v in despues) >= c * (1 + dist_pct / 100))
+        toques += int(min(v["low"] for v in despues) <= c * (1 - dist_pct / 100))
+    return toques / (2 * n), n
 
 
 # ── la pregunta ─────────────────────────────────────────────────────────────
@@ -146,6 +151,9 @@ class Pregunta:
     arriba: float
     abajo: float
     vence_en: datetime
+    # La tasa base de ESTA pregunta y con cuántas velas se midió (`tasa_base_pct`).
+    base: float | None = None
+    base_muestras: int = 0
 
 
 def pregunta(cierre_4h: int, ahora: datetime, velas_1h: list[dict[str, Any]]) -> Pregunta | None:
@@ -154,14 +162,17 @@ def pregunta(cierre_4h: int, ahora: datetime, velas_1h: list[dict[str, Any]]) ->
     if not a or not velas_1h:
         return None
     precio = float(velas_1h[-1]["close"])
+    tasa = tasa_base_pct(velas_1h)
     return Pregunta(
         cierre_4h=cierre_4h,
         hecha_en=ahora,
         precio=precio,
         atr=a,
-        arriba=round(precio + DISTANCIA_ATR * a, 2),
-        abajo=round(precio - DISTANCIA_ATR * a, 2),
+        arriba=round(precio * (1 + DISTANCIA_PCT / 100), 2),
+        abajo=round(precio * (1 - DISTANCIA_PCT / 100), 2),
         vence_en=ahora + timedelta(hours=PLAZO_H),
+        base=tasa[0] if tasa else None,
+        base_muestras=tasa[1] if tasa else 0,
     )
 
 
@@ -234,7 +245,14 @@ async def preguntar(familia: str, llm: Any, p: Pregunta, mapa: str, externo: str
         precio=p.precio,
         arriba=p.arriba,
         abajo=p.abajo,
-        dist=DISTANCIA_ATR,
+        dist=DISTANCIA_PCT,
+        base=(
+            f"Partí de esta tasa base, medida por el código: en las últimas {p.base_muestras} "
+            f"velas de 1h, un nivel a ±{DISTANCIA_PCT:g}% se tocó dentro de {PLAZO_H:g} h el "
+            f"{round(p.base * 100)}% de las veces (las del mapa son a 1 y 2 ATR: otra distancia)."
+            if p.base is not None
+            else f"Partí de cuán seguido BTC se mueve ±{DISTANCIA_PCT:g}% en {PLAZO_H:g} h."
+        ),
     )
     try:
         respuesta = await llm.ainvoke(
@@ -297,7 +315,7 @@ def mensaje(
     lineas = [
         f"🧑‍💼 Mesa de analistas · BTC tras el cierre de 4h de las {hora}",
         f"Precio {p.precio:,.0f} · ¿toca en {PLAZO_H:g} h? ↑ {p.arriba:,.0f} · ↓ {p.abajo:,.0f} "
-        f"(±{DISTANCIA_ATR:g} ATR {MARCO} = {p.atr:,.0f})",
+        f"(±{DISTANCIA_PCT:g}% · ATR {MARCO} = {p.atr:,.0f})",
         "",
     ]
     for r in respuestas:
@@ -339,7 +357,7 @@ def mensaje(
             f"Con contexto: ↑ {_pct(ce[0])} · ↓ {_pct(ce[1])} · discrepan ±{round(ce[2] * 100)} pts"
         )
     if base is not None:
-        lineas.append(f"Tasa base del mapa (la vara): ↑ {_pct(base)} · ↓ {_pct(base)}")
+        lineas.append(f"Tasa base (la vara): ↑ {_pct(base)} · ↓ {_pct(base)}")
     # Del bloque, lo que más se mira: la macro y el calendario.
     for linea in externo.splitlines():
         if linea.startswith(("Macro 24h:", "Calendario:")):
@@ -526,6 +544,7 @@ def tarjeta(
         "simbolo": "BTC",
         "precio": p.precio,
         "atr": round(p.atr, 2),
+        "distancia": f"{DISTANCIA_PCT:g}%",
         "arriba": p.arriba,
         "abajo": p.abajo,
         "p_arriba": round(c[0], 4),
@@ -623,6 +642,13 @@ class Mesa:
             );
             """
         )
+        # Desde el 2026-09-27, la pregunta de cada ronda: las anteriores eran a
+        # ±1 ATR de 1h y no se mezclan con las de ±1.5% (ver `PREGUNTA`).
+        de_rondas = {f[1] for f in self._con.execute("PRAGMA table_info(rondas)")}
+        if "pregunta" not in de_rondas:
+            self._con.execute(
+                f"ALTER TABLE rondas ADD COLUMN pregunta TEXT NOT NULL DEFAULT '{PREGUNTA_VIEJA}'"
+            )
         # Fase 1b: la variante de cada respuesta. Las de la fase 1 son `mapa`.
         columnas = {f[1] for f in self._con.execute("PRAGMA table_info(respuestas)")}
         if "variante" not in columnas:
@@ -637,8 +663,9 @@ class Mesa:
 
     def guardar(self, p: Pregunta, respuestas: list[Respuesta], contexto: Any = None) -> int:
         cur = self._con.execute(
-            """INSERT INTO rondas (cierre_4h, hecha_en, precio, atr, arriba, abajo, vence_en)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO rondas
+                 (cierre_4h, hecha_en, precio, atr, arriba, abajo, vence_en, pregunta)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 p.cierre_4h,
                 p.hecha_en.isoformat(),
@@ -647,6 +674,7 @@ class Mesa:
                 p.arriba,
                 p.abajo,
                 p.vence_en.isoformat(),
+                PREGUNTA,
             ),
         )
         ronda = int(cur.lastrowid or 0)
@@ -725,12 +753,20 @@ class Mesa:
         filas = self._con.execute(
             """SELECT s.familia, s.variante, s.p_arriba, s.p_abajo, r.id AS ronda,
                       r.toco_arriba, r.toco_abajo, r.resuelta_en
-               FROM respuestas s JOIN rondas r ON r.id = s.ronda_id"""
+               FROM respuestas s JOIN rondas r ON r.id = s.ronda_id
+               WHERE r.pregunta = ?""",
+            (PREGUNTA,),
         ).fetchall()
-        rondas = self._con.execute("SELECT COUNT(*), COUNT(resuelta_en) FROM rondas").fetchone()
+        rondas = self._con.execute(
+            "SELECT COUNT(*), COUNT(resuelta_en) FROM rondas WHERE pregunta = ?", (PREGUNTA,)
+        ).fetchone()
+        viejas = self._con.execute(
+            "SELECT COUNT(*) FROM rondas WHERE pregunta != ?", (PREGUNTA,)
+        ).fetchone()[0]
         salida = [
-            f"Mesa de analistas: {rondas[0]} rondas, {rondas[1]} resueltas"
+            f"Mesa de analistas ({PREGUNTA}): {rondas[0]} rondas, {rondas[1]} resueltas"
             f" (puerta del Brier: {PUERTA} por familia y variante)"
+            + (f" · {viejas} rondas de una pregunta anterior, aparte" if viejas else "")
         ]
         # La media de cada ronda y variante, para la discrepancia contra el resto.
         # La tasa base no es un analista: fuera de la media.
@@ -868,9 +904,9 @@ def _para_el_trader(
     lineas = [
         f"═══ MESA DE ANALISTAS ({len(elegidas)} familias de modelos leyeron el mapa por "
         f"separado a las {hora}; es un dato, no una orden) ═══",
-        f"Su pregunta: marco {MARCO}, {PLAZO_H:g} h desde {r['precio']:,.0f}: "
-        f"¿toca {r['arriba']:,.0f} (+{DISTANCIA_ATR:g} ATR)? ¿toca {r['abajo']:,.0f} "
-        f"(−{DISTANCIA_ATR:g} ATR)?",
+        f"Su pregunta, {PLAZO_H:g} h desde {r['precio']:,.0f}: "
+        f"¿toca {r['arriba']:,.0f} ({_dist(r['arriba'], r['precio'])})? "
+        f"¿toca {r['abajo']:,.0f} ({_dist(r['abajo'], r['precio'])})?",
         f"Consenso: ↑ {_pct(c[0])} · ↓ {_pct(c[1])} · discrepan ±{round(c[2] * 100)} pts · "
         + (f"mesa {sesgo} ({votos})" if votos else sesgo)
         + (f" · tasa base {_pct(base)}" if base is not None else ""),
@@ -939,7 +975,7 @@ async def ronda(
     no sale, `avisar` manda el texto plano de siempre.
     """
     ahora = ahora or datetime.now(UTC)
-    velas_1h = velas("1h", 60)
+    velas_1h = velas("1h", VELAS_BASE)
     p = pregunta(cierre, ahora, velas_1h)
     texto_mapa = mapa()
     if p is None or not texto_mapa:
@@ -962,7 +998,7 @@ async def ronda(
                 *(preguntar(f, llm, p, texto_mapa, ctx.bloque) for f, llm in llms.items())
             )
         )
-    base = tasa_base_del_mapa(texto_mapa)
+    base = p.base
     varas = (
         [
             Respuesta(FAMILIA_BASE, "mapa", base, base, variante=v)
@@ -1091,7 +1127,8 @@ def main() -> None:
     from paper.contexto_externo import reunir as reunir_contexto
 
     print(
-        f"[mesa] en sombra · familias: {', '.join(llms)} · {espera:g} min tras cada cierre de 4h"
+        f"[mesa] familias: {', '.join(llms)} · pregunta {PREGUNTA}"
+        f" · {espera:g} min tras cada cierre de 4h"
         f" · contexto externo {'en A/B' if con_contexto else 'apagado'}",
         flush=True,
     )

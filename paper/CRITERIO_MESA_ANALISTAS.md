@@ -196,6 +196,25 @@ arriba —«¿la mesa le gana al analista propio?»— ya no se contesta antes d
 dársela al trader; se contesta después, con el sello, comparando v6 con y sin
 mesa. La comparación v5 se cierra donde estaba (CRITERIO_COMPARACION.md).
 
+### La pregunta pasa a ±1.5% (2026-09-27)
+
+Elvis, el 27 por la mañana: «el analista debe predecir un porcentaje mayor de
+subida o bajada; la que recibí anoche es apenas menos de 1k, hay que aumentar
+eso». Con el mercado quieto, ±1 ATR de 1h eran ~160 dólares: un movimiento que
+no sirve para operar. Desde el 27 la pregunta es **¿toca precio ± 1.5% en 24
+h?** (~1.260 a 84.000), con la misma forma (dos niveles, dos probabilidades,
+un veredicto).
+
+- **La tasa base la mide el código** para esta distancia exacta
+  (`tasa_base_pct`, las últimas 200 velas de 1h) y va escrita en la pregunta:
+  el mapa solo trae las de 1 y 2 ATR. Esa misma es la vara que se guarda.
+- **Las rondas viejas quedan aparte**: cada ronda lleva su `pregunta`
+  (`1h ±1 ATR 24h` las de antes, `1h ±1.5% 24h` las nuevas) y el informe solo
+  mide las de la pregunta actual. La puerta de 50 por familia y variante
+  arranca de nuevo: las pocas rondas a ±1 ATR (25 y 26) no se mezclan.
+- El trader (v6) ve la pregunta nueva desde el mismo día: el cambio se
+  desplegó antes de la ventana del 27, así que la v6 no mezcla preguntas.
+
 ## Dónde está cada cosa
 
 - `paper/mesa.py`: la ronda, el registro (`mesa.db`), la resolución, el aviso

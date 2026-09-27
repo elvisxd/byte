@@ -24,7 +24,7 @@ from paper.mesa import (
     ronda,
     sesgo_de,
     tarjeta,
-    tasa_base_del_mapa,
+    tasa_base_pct,
 )
 
 T0 = datetime(2026, 9, 25, 16, 0, tzinfo=UTC)  # un cierre de 4h exacto
@@ -49,14 +49,24 @@ def siempre(_: datetime) -> bool:
     return True
 
 
-def test_la_pregunta_la_fija_el_codigo_a_un_atr_y_24_horas():
+def test_la_pregunta_la_fija_el_codigo_a_un_porcentaje_y_24_horas():
     """Si cada analista eligiera sus niveles, dos respuestas no se podrían comparar:
-    es exactamente lo que la mesa viene a arreglar."""
-    p = pregunta(0, T0, _velas(40))
+    es exactamente lo que la mesa viene a arreglar. Desde el 27, a ±1.5%: ±1 ATR de
+    1h eran ~160 dólares con el mercado quieto."""
+    p = pregunta(0, T0, _velas(40, precio=84000.0, rango=160.0))
     assert p is not None
-    assert p.atr == 2.0
-    assert (p.arriba, p.abajo) == (102.0, 98.0)
+    assert p.atr == 160.0
+    assert (p.arriba, p.abajo) == (85260.0, 82740.0)
     assert p.vence_en - p.hecha_en == timedelta(hours=24)
+    assert p.base is None, "con 40 velas no hay 30 muestras para la tasa base"
+
+
+def test_la_tasa_base_de_la_pregunta_la_mide_el_codigo_en_porcentaje():
+    # Rango de ±2% en cada vela: todo nivel a ±1.5% se toca siempre.
+    assert tasa_base_pct(_velas(80, precio=100.0, rango=4.0)) == (1.0, 55)
+    # Rango de ±1%: nunca.
+    assert tasa_base_pct(_velas(80, precio=100.0, rango=2.0)) == (0.0, 55)
+    assert tasa_base_pct(_velas(40)) is None
 
 
 def test_la_ronda_espera_detras_de_los_brazos():
@@ -360,40 +370,12 @@ def test_una_mesa_db_de_la_fase_1_se_migra_sin_perder_nada(tmp_path):
     assert [tuple(f) for f in mesa._con.execute("SELECT familia, variante FROM respuestas")] == [
         ("gemini", VARIANTE_MAPA)
     ]
-    assert "gemini [mapa]: contestó 1/1" in mesa.informe()
+    # Sus rondas eran de la pregunta a ±1 ATR: se guardan, pero aparte del informe.
+    assert mesa._con.execute("SELECT pregunta FROM rondas").fetchone()[0] == "1h ±1 ATR 24h"
+    assert "1 rondas de una pregunta anterior, aparte" in mesa.informe()
 
 
 # ── la tasa base, como un analista más ──────────────────────────────────────
-
-MAPA_CON_TASAS = """BTCUSDT — los tres gráficos del mismo instante (prueba).
-── 15m ── precio 100 · al 50% del rango
-   tasa base: en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 71% de las veces; a 2 ATR, el 40%
-── 1h ── precio 100 · al 50% del rango
-   tasa base (con el ATR actual, aproximado): en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 38% de las veces; a 2 ATR, el 12%
-── 4h ── precio 100 · al 50% del rango
-   tasa base: en las últimas 150 velas, un nivel a 1 ATR se tocó dentro de 24 velas el 55% de las veces; a 2 ATR, el 20%"""  # noqa: E501
-
-
-def test_la_tasa_base_se_lee_del_bloque_de_1h_a_1_atr():
-    """El número que el analista tuvo delante: el de SU marco y SU distancia."""
-    assert tasa_base_del_mapa(MAPA_CON_TASAS) == 0.38
-    assert tasa_base_del_mapa(MAPA_CON_TASAS, marco="4h") == 0.55
-    assert tasa_base_del_mapa(MAPA_CON_TASAS, dist=2) is None
-    assert tasa_base_del_mapa("MAPA") is None
-
-
-def test_la_tasa_base_se_lee_del_mapa_de_verdad(monkeypatch):
-    """Si `tools/paper.py` cambia el texto de la línea, la vara se pierde en
-    silencio: esto lo lee del mismo `_mapa` que recibe la mesa."""
-    import tools.paper as herramientas
-    from tests.test_paper_mapa import INDICADORES
-    from tests.test_paper_mapa import _velas as velas_del_mapa
-
-    monkeypatch.setattr(herramientas, "velas", lambda s, marco, n: velas_del_mapa(marco))
-    monkeypatch.setattr(herramientas, "indicadores", lambda v, cuales: dict(INDICADORES))
-    r = herramientas._mapa("BTCUSDT", 8000)
-    assert r.ok
-    assert tasa_base_del_mapa(r.content) is not None
 
 
 def test_la_ronda_guarda_la_vara_por_variante_sin_contarla_como_analista(tmp_path):
@@ -407,8 +389,8 @@ def test_la_ronda_guarda_la_vara_por_variante_sin_contarla_como_analista(tmp_pat
             int(T0.timestamp()),
             mesa,
             {"gemini": _LlmQueMira()},
-            velas=lambda _m, _n: _velas(40),
-            mapa=lambda: MAPA_CON_TASAS,
+            velas=lambda _m, _n: _velas(80, rango=4.0),
+            mapa=lambda: "MAPA",
             avisar=lambda _t: True,
             ahora=T0 + timedelta(minutes=50),
             contexto=lambda: _Ctx(),
@@ -421,16 +403,16 @@ def test_la_ronda_guarda_la_vara_por_variante_sin_contarla_como_analista(tmp_pat
         (FAMILIA_BASE,),
     ).fetchall()
     assert [tuple(f) for f in filas] == [
-        (FAMILIA_BASE, "mapa", VARIANTE_MAPA, 0.38, 0.38),
-        (FAMILIA_BASE, "mapa", VARIANTE_EXTERNO, 0.38, 0.38),
+        (FAMILIA_BASE, "mapa", VARIANTE_MAPA, 1.0, 1.0),
+        (FAMILIA_BASE, "mapa", VARIANTE_EXTERNO, 1.0, 1.0),
     ]
     assert aviso is not None
-    assert "Tasa base del mapa (la vara): ↑ 38% · ↓ 38%" in aviso
+    assert "Tasa base (la vara): ↑ 100% · ↓ 100%" in aviso
     # Ni en el consenso ni como línea de familia.
     assert "Consenso: ↑ 55% · ↓ 45%" in aviso and "• tasa base" not in aviso
 
 
-def test_sin_tasa_base_en_el_mapa_la_ronda_sigue_sin_vara(tmp_path):
+def test_sin_velas_para_la_tasa_base_la_ronda_sigue_sin_vara(tmp_path):
     mesa = Mesa(str(tmp_path / "mesa.db"))
     aviso = asyncio.run(
         ronda(
@@ -589,8 +571,8 @@ def _ronda_con_aviso(tmp_path, avisar_mesa):
             int(T0.timestamp()),
             Mesa(str(tmp_path / "mesa.db")),
             {"gemini": _LlmQueMira()},
-            velas=lambda _m, _n: _velas(40),
-            mapa=lambda: MAPA_CON_TASAS,
+            velas=lambda _m, _n: _velas(80, rango=4.0),
+            mapa=lambda: "MAPA",
             avisar=lambda t: avisos.append(t) or True,
             ahora=T0 + timedelta(minutes=50),
             avisar_mesa=avisar_mesa,
@@ -605,7 +587,7 @@ def test_con_el_aviso_de_la_mesa_no_se_manda_el_de_siempre(tmp_path):
     assert avisos == [] and len(cuerpos) == 1
     c = cuerpos[0]
     assert c["html"].startswith("<b>⚪ Mesa BTC · sesgo neutral</b>")
-    assert c["texto"].startswith("🧑‍💼 Mesa de analistas") and c["tarjeta"]["base"] == 0.38
+    assert c["texto"].startswith("🧑‍💼 Mesa de analistas") and c["tarjeta"]["base"] == 1.0
 
 
 def test_si_el_aviso_de_la_mesa_no_sale_va_el_de_siempre(tmp_path):
@@ -643,7 +625,7 @@ def test_el_trader_ve_la_ultima_ronda_con_su_contexto(tmp_path):
     bloque, sello = para_el_trader(ruta, T0 + timedelta(hours=1))
     assert bloque.startswith("═══ MESA DE ANALISTAS (")
     assert "es un dato, no una orden" in bloque
-    assert "¿toca 84,280 (+1 ATR)? ¿toca 83,960 (−1 ATR)?" in bloque
+    assert "¿toca 84,280 (+0.2%)? ¿toca 83,960 (−0.2%)?" in bloque
     # Solo gemini contestó con contexto en el ejemplo: esa es la variante que se ve.
     assert "Consenso: ↑ 58% · ↓ 35%" in bloque and "tasa base 38%" in bloque
     assert "Macro 24h: DXY 101 +0.5%" in bloque
