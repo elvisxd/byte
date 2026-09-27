@@ -13,8 +13,11 @@ o neutral). Se guarda en `mesa.db`, se manda un aviso por Telegram con la mesa
 entera, y el código resuelve cada pregunta contra las velas de 15m cuando el
 precio toca o vence el plazo.
 
-⚠ EL TRADER NO VE NADA DE ESTO. Es lo que permite correrla a mitad de la
-muestra v5: ningún brazo lee `mesa.db` ni recibe la mesa en su mensaje.
+⚠ DESDE EL PROMPT V6 EL TRADER VE LA ÚLTIMA RONDA (`para_el_trader`), como un
+dato al final de su mensaje: lo decidió Elvis el 2026-09-26, adelantando la
+fase 2 del criterio. La mesa sigue sin ver al trader —sus analistas leen solo
+el mapa y el contexto—, así que su A/B no se contamina. Hasta v5 ningún brazo
+leía `mesa.db`.
 
 ⚠ NUNCA TUMBA A LOS BRAZOS. Corre en su propio proceso, fuera de la lista que
 `arrancar.sh` vigila con `wait -n`, y cualquier fallo —una clave agotada, el
@@ -341,7 +344,7 @@ def mensaje(
     for linea in externo.splitlines():
         if linea.startswith(("Macro 24h:", "Calendario:")):
             lineas.append(linea[:220])
-    lineas.append("(en sombra: el trader no ve la mesa)")
+    lineas.append("(desde el prompt v6 el trader ve la mesa, como un dato)")
     return "\n".join(lineas)[:4000]
 
 
@@ -433,7 +436,7 @@ def parte_html(
     con_externo = {r.familia: r for r in respuestas if r.variante == VARIANTE_EXTERNO}
     c = consenso(mapa_)
     cierre = datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M")
-    pie = f"<i>Cierre 4h {cierre} · vence {_hora(p.vence_en)} · en sombra, el trader no la ve</i>"
+    pie = f"<i>Cierre 4h {cierre} · vence {_hora(p.vence_en)} · el trader la ve como dato (v6)</i>"
     if c is None:
         return (
             f"<b>Mesa BTC · nadie contestó</b>\nPrecio {p.precio:,.0f} · "
@@ -782,6 +785,118 @@ def _brier(filas: list[Any]) -> float:
         (f["p_arriba"] - f["toco_arriba"]) ** 2 + (f["p_abajo"] - f["toco_abajo"]) ** 2
         for f in filas
     ) / (2 * len(filas))
+
+
+# ── la mesa, para el trader (prompt v6) ─────────────────────────────────────
+#
+# Desde el 2026-09-26, por decisión de Elvis (CRITERIO_MESA_ANALISTAS.md, «Fase
+# 2, adelantada»): el trader ve la última ronda de la mesa —el consenso, cada
+# familia y el contexto externo de esa ronda— como un DATO al final de su
+# mensaje. Se lee de `mesa.db` en solo lectura: el trader no escribe en la mesa
+# y la mesa no ve al trader, así que el A/B de la mesa sigue limpio.
+#
+# ⚠ SOLO UNA RONDA RECIENTE. La pregunta de la mesa vale 24 h, pero el mapa y
+# el contexto envejecen: pasadas `EDAD_MAX_H` horas de la ronda no se muestra.
+
+EDAD_MAX_H = 5.0
+
+
+def para_el_trader(
+    ruta: str, ahora: datetime | None = None, edad_max_h: float = EDAD_MAX_H
+) -> tuple[str, dict[str, Any] | None]:
+    """(bloque para el mensaje del trader, sello para `extra.mesa`) de la última
+    ronda, o ("", None) si no hay mesa, no hay ronda reciente o nadie contestó.
+    Nunca lanza: una mesa rota no cuesta la vuelta del trader."""
+    try:
+        return _para_el_trader(ruta, ahora or datetime.now(UTC), edad_max_h)
+    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+        return "", None
+
+
+def _para_el_trader(
+    ruta: str, ahora: datetime, edad_max_h: float
+) -> tuple[str, dict[str, Any] | None]:
+    if not os.path.exists(ruta):
+        return "", None
+    con = sqlite3.connect(f"file:{ruta}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        r = con.execute("SELECT * FROM rondas ORDER BY cierre_4h DESC LIMIT 1").fetchone()
+        if r is None:
+            return "", None
+        hecha = datetime.fromisoformat(r["hecha_en"])
+        if (ahora - hecha).total_seconds() > edad_max_h * 3600:
+            return "", None
+        filas = con.execute(
+            "SELECT * FROM respuestas WHERE ronda_id = ? ORDER BY id", (r["id"],)
+        ).fetchall()
+        ctx = con.execute("SELECT bloque FROM contextos WHERE ronda_id = ?", (r["id"],)).fetchone()
+    finally:
+        con.close()
+    respuestas = [
+        Respuesta(
+            familia=f["familia"],
+            modelo=f["modelo"] or "",
+            p_arriba=f["p_arriba"],
+            p_abajo=f["p_abajo"],
+            veredicto=f["veredicto"],
+            porque=f["porque"] or "",
+            variante=f["variante"],
+        )
+        for f in filas
+    ]
+    base = next(
+        (x.p_arriba for x in respuestas if x.familia == FAMILIA_BASE and x.p_arriba is not None),
+        None,
+    )
+    analistas = [x for x in respuestas if x.familia != FAMILIA_BASE]
+    # La variante con contexto si la hubo: es la que leyó lo mismo que el
+    # bloque que el trader recibe debajo.
+    variante = (
+        VARIANTE_EXTERNO
+        if any(x.variante == VARIANTE_EXTERNO and x.p_arriba is not None for x in analistas)
+        else VARIANTE_MAPA
+    )
+    elegidas = [x for x in analistas if x.variante == variante]
+    c = consenso(elegidas)
+    if c is None:
+        return "", None
+    sesgo, votos = sesgo_de(
+        [Respuesta(x.familia, veredicto=x.veredicto) for x in elegidas]  # variante mapa por defecto
+    )
+    hora = hecha.astimezone().strftime("%H:%M")
+    lineas = [
+        f"═══ MESA DE ANALISTAS ({len(elegidas)} familias de modelos leyeron el mapa por "
+        f"separado a las {hora}; es un dato, no una orden) ═══",
+        f"Su pregunta: marco {MARCO}, {PLAZO_H:g} h desde {r['precio']:,.0f}: "
+        f"¿toca {r['arriba']:,.0f} (+{DISTANCIA_ATR:g} ATR)? ¿toca {r['abajo']:,.0f} "
+        f"(−{DISTANCIA_ATR:g} ATR)?",
+        f"Consenso: ↑ {_pct(c[0])} · ↓ {_pct(c[1])} · discrepan ±{round(c[2] * 100)} pts · "
+        + (f"mesa {sesgo} ({votos})" if votos else sesgo)
+        + (f" · tasa base {_pct(base)}" if base is not None else ""),
+    ]
+    detalle = []
+    for x in elegidas:
+        if x.p_arriba is None or x.p_abajo is None:
+            detalle.append(f"{x.familia} sin respuesta")
+        else:
+            detalle.append(
+                f"{x.familia} ↑{round(x.p_arriba * 100)} ↓{round(x.p_abajo * 100)}"
+                f" {x.veredicto or '—'}" + (f" ({x.porque[:90]})" if x.porque else "")
+            )
+    lineas += [f"· {d}" for d in detalle]
+    if variante == VARIANTE_EXTERNO and ctx is not None and ctx["bloque"]:
+        lineas += ["", ctx["bloque"]]
+    sello = {
+        "ronda": int(r["id"]),
+        "cierre_4h": int(r["cierre_4h"]),
+        "variante": variante,
+        "p_arriba": round(c[0], 4),
+        "p_abajo": round(c[1], 4),
+        "discrepancia": round(c[2], 4),
+        "base": base,
+    }
+    return "\n".join(lineas), sello
 
 
 # ── el bucle ────────────────────────────────────────────────────────────────

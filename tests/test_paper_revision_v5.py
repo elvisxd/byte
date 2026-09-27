@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import tools.paper as herramientas
+from paper.prompt import VERSION_PROMPT
 from paper.registro import Registro
 from tools.paper import (
     AbrirArgs,
@@ -124,7 +125,7 @@ def test_la_prediccion_que_cuadra_sella_la_revision_y_la_lectura_del_analista(
     assert res.ok is True, res.content
 
     extra = json.loads(registro.predicciones_vivas()[0]["contexto"])["extra"]
-    assert extra["prompt"] == "5"
+    assert extra["prompt"] == VERSION_PROMPT
     assert extra["revision"] == {
         "ejes": {
             "range-sweep": True,
@@ -196,6 +197,6 @@ def test_abrir_y_dejar_orden_exigen_la_revision_y_la_sellan(registro: Registro) 
 
 def test_tu_calibracion_calla_bajo_las_50_y_lo_deja_sellado(registro: Registro) -> None:
     texto = calibracion_propia(registro)
-    assert texto.startswith("═══ TU CALIBRACIÓN (prompt v5)")
+    assert texto.startswith(f"═══ TU CALIBRACIÓN (prompt v{VERSION_PROMPT})")
     assert "0 resueltas con este prompt: faltan 50" in texto
     assert herramientas._VUELTA["calibracion_vista"] is False

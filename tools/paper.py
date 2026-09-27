@@ -64,6 +64,9 @@ _VUELTA: dict[str, Any] = {
     # después «con lectura» de «sin lectura» y «vio su tabla» de «no la vio».
     "analista": None,
     "calibracion_vista": None,
+    # Prompt v6: qué ronda de la mesa de analistas vio el trader en esta
+    # vuelta (paper/mesa.py, `para_el_trader`), o None si no vio ninguna.
+    "mesa": None,
 }
 _SIN_CAMBIO: Any = object()
 
@@ -74,9 +77,10 @@ def fijar_vuelta(
     pensamiento: str | None = None,
     analista: Any = _SIN_CAMBIO,
     calibracion_vista: bool | None = None,
+    mesa: Any = _SIN_CAMBIO,
 ) -> None:
     """Lo que la siguiente escritura sella sobre la vuelta. `None` deja lo que había
-    (salvo `analista`, que se pone explícitamente a None cuando no hubo lectura)."""
+    (salvo `analista` y `mesa`, que se ponen explícitamente a None cuando no hubo)."""
     if motivo is not None:
         _VUELTA["motivo"] = motivo[:200]
     if pensamiento is not None:
@@ -85,6 +89,8 @@ def fijar_vuelta(
         _VUELTA["analista"] = analista
     if calibracion_vista is not None:
         _VUELTA["calibracion_vista"] = calibracion_vista
+    if mesa is not _SIN_CAMBIO:
+        _VUELTA["mesa"] = mesa
 
 
 # ═══ LA REVISIÓN QUE EXIGEN LAS ESCRITURAS (prompt v5) ═══
@@ -220,6 +226,8 @@ def _contexto_de(datos: dict[str, Any], ind: dict[str, Any]) -> Contexto:
             # vio su propia calibración. Ver `fijar_vuelta`.
             "analista": _VUELTA["analista"],
             "calibracion_vista": _VUELTA["calibracion_vista"],
+            # Prompt v6: la ronda de la mesa que vio. Ver `fijar_vuelta`.
+            "mesa": _VUELTA["mesa"],
         },
     )
 

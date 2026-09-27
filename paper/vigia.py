@@ -340,6 +340,8 @@ async def vigilar(
                 precarga=precarga_segura(registro, ajustes),
                 # La fase de analista del prompt v5, si el brazo la tiene.
                 analista=getattr(etiqueta, "analista", None),
+                # La mesa de analistas del prompt v6, si hay `mesa.db`.
+                mesa=getattr(etiqueta, "mesa", None),
             )
 
     if mantener_despierta is None:

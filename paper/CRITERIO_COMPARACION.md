@@ -465,3 +465,32 @@ herramientas y las 3 muestras son los mismos antes y después del cambio.
 
 Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
 modelos.
+
+## 2026-09-26: prompt v6, el trader ve la mesa de analistas, y la comparación v5 se cierra donde estaba
+
+Decisión del usuario, no del criterio: «Agrega de una vez … me parece que hay
+más información disponible para toma de decisión». La mesa de analistas
+(paper/mesa.py) y su contexto externo entran al mensaje del trader en
+`VERSION_PROMPT = "6"`, en un solo commit y para los cuatro brazos a la vez.
+Lo que eso cambia de la comparación, dicho con las cifras:
+
+- **La muestra v5 queda sellada donde estaba**: gemini 22, groq 6, openrouter
+  11 y nvidia 0 resueltas (arranque del 26 a las 20:38 EDT, más las que
+  resuelvan las v5 todavía vivas). Ningún brazo cruza las 50 en v5 y **la
+  comparación v5 no se lee nunca**. Se dice para que nadie la busque.
+- **La comparación v6 arranca en cero para los cuatro a la vez**, con la misma
+  puerta: 50 resueltas por brazo y por versión. El panel y `leer.py` ya parten
+  por versión.
+- **Lo que ve el trader se mide por separado**: cada escritura sella
+  `extra.mesa` (ronda, variante, consenso, discrepancia, tasa base) o None si
+  no hubo ronda reciente, así que «con mesa» y «sin mesa» se separan en el
+  registro sin haberlas mezclado.
+- **Groq**: el bloque de la mesa suma ~2000 caracteres (~600 tokens) a cada
+  vuelta, y groq ya perdía vueltas por el 413 (tope 8000 por minuto; pedidos de
+  8000-11100 el 26). Es esperable que pierda más. La instrucción no crece (8353
+  caracteres, bajo el tope de 8400 del test), pero el mensaje sí. Si groq deja
+  de escribir, decidirlo es del usuario: no se recorta la mesa solo para groq,
+  porque eso cambiaría el prompt de un brazo solo.
+
+Nada de esto cambia el tope diario, la ventana, la cadencia, las muestras del
+analista ni las listas de modelos.

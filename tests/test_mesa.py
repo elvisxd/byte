@@ -18,6 +18,7 @@ from paper.mesa import (
     familias_de,
     interpretar,
     mensaje,
+    para_el_trader,
     parte_html,
     pregunta,
     ronda,
@@ -163,7 +164,7 @@ def test_el_aviso_nombra_a_cada_familia_y_dice_que_es_en_sombra():
     )
     assert "gemini" in texto and "alcista" in texto and "62%" in texto
     assert "nvidia" in texto and "sin respuesta" in texto
-    assert "el trader no ve la mesa" in texto
+    assert "el trader ve la mesa" in texto
 
 
 class _LlmFalso:
@@ -618,3 +619,93 @@ def test_si_el_aviso_de_la_mesa_no_sale_va_el_de_siempre(tmp_path):
 
     (tmp_path / "b").mkdir()
     assert len(_ronda_con_aviso(tmp_path / "b", roto)) == 1
+
+
+# ── la mesa, para el trader (prompt v6) ─────────────────────────────────────
+
+
+def _mesa_con_una_ronda(tmp_path, hecha: datetime) -> str:
+    ruta = str(tmp_path / "mesa.db")
+    mesa = Mesa(ruta)
+    p = Pregunta(int(T0.timestamp()), hecha, 84120.0, 160.0, 84280.0, 83960.0, hecha)
+
+    class Ctx:
+        bloque = "═══ CONTEXTO EXTERNO (x) ═══\nMacro 24h: DXY 101 +0.5%"
+        datos: dict = {}
+        fallos: dict = {}
+
+    mesa.guardar(p, _ronda_de_ejemplo(), Ctx())
+    return ruta
+
+
+def test_el_trader_ve_la_ultima_ronda_con_su_contexto(tmp_path):
+    ruta = _mesa_con_una_ronda(tmp_path, T0)
+    bloque, sello = para_el_trader(ruta, T0 + timedelta(hours=1))
+    assert bloque.startswith("═══ MESA DE ANALISTAS (")
+    assert "es un dato, no una orden" in bloque
+    assert "¿toca 84,280 (+1 ATR)? ¿toca 83,960 (−1 ATR)?" in bloque
+    # Solo gemini contestó con contexto en el ejemplo: esa es la variante que se ve.
+    assert "Consenso: ↑ 58% · ↓ 35%" in bloque and "tasa base 38%" in bloque
+    assert "Macro 24h: DXY 101 +0.5%" in bloque
+    assert sello == {
+        "ronda": 1,
+        "cierre_4h": int(T0.timestamp()),
+        "variante": VARIANTE_EXTERNO,
+        "p_arriba": 0.58,
+        "p_abajo": 0.35,
+        "discrepancia": 0.0,
+        "base": 0.38,
+    }
+
+
+def test_una_ronda_vieja_o_sin_mesa_no_se_muestra(tmp_path):
+    ruta = _mesa_con_una_ronda(tmp_path, T0)
+    assert para_el_trader(ruta, T0 + timedelta(hours=6)) == ("", None)
+    assert para_el_trader(str(tmp_path / "no-existe.db"), T0) == ("", None)
+    (tmp_path / "rota.db").write_text("esto no es sqlite")
+    assert para_el_trader(str(tmp_path / "rota.db"), T0) == ("", None)
+
+
+def test_sin_contexto_se_ve_la_variante_mapa(tmp_path):
+    ruta = str(tmp_path / "mesa.db")
+    mesa = Mesa(ruta)
+    p = Pregunta(int(T0.timestamp()), T0, 100.0, 2.0, 102.0, 98.0, T0)
+    mesa.guardar(p, [r for r in _ronda_de_ejemplo() if r.variante == VARIANTE_MAPA])
+    bloque, sello = para_el_trader(ruta, T0)
+    assert sello is not None and sello["variante"] == VARIANTE_MAPA
+    assert "Consenso: ↑ 54% · ↓ 37%" in bloque and "mesa alcista (2 de 3)" in bloque
+    assert "· nvidia sin respuesta" in bloque and "CONTEXTO EXTERNO" not in bloque
+
+
+def test_la_vuelta_del_trader_lleva_la_mesa_y_la_sella(tmp_path):
+    """El bloque va al final del mensaje, después del analista, y cada
+    escritura de la vuelta sella qué ronda vio (`extra.mesa`)."""
+    import tools.paper as herramientas
+    from paper.sesion import una_vuelta
+    from paper.trace import TraceDeSesion
+
+    recibido: dict = {}
+
+    class _Grafo:
+        async def ainvoke(self, estado, _config):
+            recibido.update(estado)
+
+    trace = TraceDeSesion(sesion_id="s", modelo="m", simbolo="BTCUSDT")
+    asyncio.run(
+        una_vuelta(
+            _Grafo(),
+            trace,
+            1,
+            precarga="═══ ESTADO ═══\nnada",
+            mesa=lambda: ("═══ MESA DE ANALISTAS (x) ═══", {"ronda": 7}),
+        )
+    )
+    assert recibido["messages"][1]["content"].endswith("═══ MESA DE ANALISTAS (x) ═══")
+    assert herramientas._VUELTA["mesa"] == {"ronda": 7}
+
+    def rota():
+        raise RuntimeError("boom")
+
+    asyncio.run(una_vuelta(_Grafo(), trace, 2, precarga="═══ ESTADO ═══\nnada", mesa=rota))
+    assert "═══ MESA DE ANALISTAS" not in recibido["messages"][1]["content"]
+    assert herramientas._VUELTA["mesa"] is None, "la mesa rota no cuesta la vuelta ni arrastra"
