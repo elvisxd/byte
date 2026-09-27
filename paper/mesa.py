@@ -360,7 +360,7 @@ def mensaje(
         lineas.append(f"Tasa base (la vara): ↑ {_pct(base)} · ↓ {_pct(base)}")
     # Del bloque, lo que más se mira: la macro y el calendario.
     for linea in externo.splitlines():
-        if linea.startswith(("Macro 24h:", "Calendario:")):
+        if linea.startswith(("Macro", "Calendario:")):
             lineas.append(linea[:220])
     lineas.append("(desde el prompt v6 el trader ve la mesa, como un dato)")
     return "\n".join(lineas)[:4000]
@@ -412,6 +412,52 @@ def sesgo_de(respuestas: list[Respuesta]) -> tuple[str, str]:
     return ganadores[0], f"{mayor} de {len(votos)}"
 
 
+# Cuántos puntos sobre la tasa base hacen falta para decir que la mesa ESPERA
+# ese movimiento, y cuánta diferencia entre lados para hablar de inclinación.
+SOBRE_BASE = 0.05
+INCLINACION = 0.08
+
+
+def lectura(p_arriba: float, p_abajo: float, base: float | None) -> tuple[str, str]:
+    """(clave, texto) de la mesa POR SUS NÚMEROS, no por los votos.
+
+    Elvis, el 27, con ↑ 24% · ↓ 32% y base 31%: «¿se podría interpretar como
+    lateral o sin sesgo?». Sí: tres analistas votaron bajista, pero ninguna de
+    las dos probabilidades pasa la tasa base, así que la mesa no espera un
+    movimiento de ±1.5% más que el de siempre. El titular dice eso:
+
+      · un lado sobre la base (+5 pts) y ≥8 pts sobre el otro: alcista/bajista;
+      · los dos sobre la base: volátil (espera movimiento, sin lado);
+      · ninguno: lateral, con «inclinación» si un lado le saca ≥8 pts al otro.
+    """
+    ref = base if base is not None else min(p_arriba, p_abajo)
+    sube, baja = p_arriba > ref + SOBRE_BASE, p_abajo > ref + SOBRE_BASE
+    d = p_abajo - p_arriba
+    if sube and baja:
+        return "volatil", "volátil, sin lado"
+    if baja and d >= INCLINACION:
+        return "bajista", "sesgo bajista"
+    if sube and -d >= INCLINACION:
+        return "alcista", "sesgo alcista"
+    if d >= INCLINACION:
+        return "lateral", "lateral, inclinación bajista"
+    if -d >= INCLINACION:
+        return "lateral", "lateral, inclinación alcista"
+    return "lateral", "lateral, sin sesgo"
+
+
+def _votos(respuestas: list[Respuesta]) -> str:
+    """«3 bajista · 1 neutral», de la variante mapa."""
+    votos = [
+        r.veredicto
+        for r in respuestas
+        if r.variante == VARIANTE_MAPA and r.familia != FAMILIA_BASE and r.veredicto
+    ]
+    return " · ".join(
+        f"{votos.count(v)} {v}" for v in ("alcista", "bajista", "neutral") if votos.count(v)
+    )
+
+
 def _clave(respuestas: list[Respuesta], sesgo: str, c: tuple[float, float, float]) -> str:
     """La razón del analista que votó con la mesa y quedó más cerca del consenso."""
     candidatas = [
@@ -460,15 +506,17 @@ def parte_html(
             f"<b>Mesa BTC · nadie contestó</b>\nPrecio {p.precio:,.0f} · "
             f"↑ {p.arriba:,.0f} · ↓ {p.abajo:,.0f} en {PLAZO_H:g} h\n{pie}"
         )
-    sesgo, votos = sesgo_de(mapa_)
-    icono = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪", "dividida": "⚖️"}.get(sesgo, "·")
-    titulo = "dividida" if sesgo == "dividida" else f"sesgo {sesgo}"
+    sesgo, texto = lectura(c[0], c[1], base)
+    icono = {"alcista": "🟢", "bajista": "🔴", "volatil": "⚡"}.get(sesgo, "⚪")
+    votos = _votos(mapa_)
     b = f" · base {_pct(base)}" if base is not None else ""
     cabeza = [
-        f"<b>{icono} Mesa BTC · {titulo}</b>" + (f" ({_e(votos)})" if votos else ""),
+        f"<b>{icono} Mesa BTC · {texto}</b>",
         f"<b>¿Toca en {PLAZO_H:g} h?</b> desde {p.precio:,.0f}",
         f"↑ {p.arriba:,.0f} ({_dist(p.arriba, p.precio)}) → <b>{_pct(c[0])}</b>{b}",
         f"↓ {p.abajo:,.0f} ({_dist(p.abajo, p.precio)}) → <b>{_pct(c[1])}</b>{b}",
+        f"Ninguno de los dos: ≥{_pct(max(0.0, 1 - c[0] - c[1]))}"
+        + (f" · votos: {_e(votos)}" if votos else ""),
     ]
     clave = _clave(mapa_, sesgo, c)
     if clave:
@@ -504,8 +552,9 @@ def parte_html(
         )
     plegado.append(f"<b>Discrepan</b> ±{round(c[2] * 100)} pts entre analistas")
     for linea in externo.splitlines():
-        if linea.startswith("Macro 24h:"):
-            plegado.append(f"<b>Macro</b> {_e(linea.removeprefix('Macro 24h:').strip()[:200])}")
+        if linea.startswith("Macro"):
+            titulo, _, resto = linea.partition(":")
+            plegado.append(f"<b>{_e(titulo)}</b> {_e(resto.strip()[:200])}")
 
     def armar(con_tabla: bool, plegado_: list[str]) -> str:
         partes = ["\n".join(cabeza)]
@@ -539,7 +588,8 @@ def tarjeta(
     if c is None or not velas_1h:
         return None
     ce = consenso([r for r in respuestas if r.variante == VARIANTE_EXTERNO])
-    sesgo, votos = sesgo_de(mapa_)
+    sesgo, texto = lectura(c[0], c[1], base)
+    votos = _votos(mapa_)
     return {
         "simbolo": "BTC",
         "precio": p.precio,
@@ -551,6 +601,7 @@ def tarjeta(
         "p_abajo": round(c[1], 4),
         "base": base,
         "sesgo": sesgo,
+        "lectura": texto,
         "votos": votos,
         "cierre": datetime.fromtimestamp(p.cierre_4h).astimezone().strftime("%H:%M"),
         "vence": _hora(p.vence_en),
@@ -897,9 +948,8 @@ def _para_el_trader(
     c = consenso(elegidas)
     if c is None:
         return "", None
-    sesgo, votos = sesgo_de(
-        [Respuesta(x.familia, veredicto=x.veredicto) for x in elegidas]  # variante mapa por defecto
-    )
+    _, texto = lectura(c[0], c[1], base)
+    votos = _votos([Respuesta(x.familia, veredicto=x.veredicto) for x in elegidas])
     hora = hecha.astimezone().strftime("%H:%M")
     lineas = [
         f"═══ MESA DE ANALISTAS ({len(elegidas)} familias de modelos leyeron el mapa por "
@@ -908,7 +958,8 @@ def _para_el_trader(
         f"¿toca {r['arriba']:,.0f} ({_dist(r['arriba'], r['precio'])})? "
         f"¿toca {r['abajo']:,.0f} ({_dist(r['abajo'], r['precio'])})?",
         f"Consenso: ↑ {_pct(c[0])} · ↓ {_pct(c[1])} · discrepan ±{round(c[2] * 100)} pts · "
-        + (f"mesa {sesgo} ({votos})" if votos else sesgo)
+        + f"lectura: {texto}"
+        + (f" (votos: {votos})" if votos else "")
         + (f" · tasa base {_pct(base)}" if base is not None else ""),
     ]
     detalle = []
