@@ -17,6 +17,7 @@ from paper.mesa import (
     consenso,
     familias_de,
     interpretar,
+    lectura,
     mensaje,
     para_el_trader,
     parte_html,
@@ -523,13 +524,15 @@ def test_el_parte_abre_con_el_veredicto_y_los_numeros():
         eventos=["mañana 08:30 Core PCE"],
     )
     primera = parte.split("\n", 1)[0]
-    assert primera == "<b>🟢 Mesa BTC · sesgo alcista</b> (2 de 3)"
+    # ↑ 54% contra una base de 38%: la mesa espera ese movimiento (por los números).
+    assert primera == "<b>🟢 Mesa BTC · sesgo alcista</b>"
+    assert "Ninguno de los dos: ≥9% · votos: 2 alcista · 1 neutral" in parte
     assert "→ <b>54%</b> · base 38%" in parte and "→ <b>37%</b> · base 38%" in parte
     # La clave: del que votó con la mesa, el más cerca del consenso (54/37).
     assert "<b>Clave:</b> CVD comprador &lt;fuerte&gt;" in parte
     assert "<b>Riesgo:</b> mañana 08:30 Core PCE" in parte
     assert "<pre>" in parte and "sin respuesta" in parte and "58/35" in parte
-    assert "<blockquote expandable>" in parte and "<b>Macro</b> NDX 30,608 +0.2%" in parte
+    assert "<blockquote expandable>" in parte and "<b>Macro 24h</b> NDX 30,608 +0.2%" in parte
     assert "tasa base" not in parte.split("<pre>")[1].split("</pre>")[0]
     assert "<fuerte>" not in parte, "lo que escribe un modelo va escapado"
     assert _Etiquetas(parte).bien
@@ -544,7 +547,8 @@ def test_un_parte_largo_se_recorta_por_lo_plegado_y_cabe_en_el_pie():
     from re import sub
 
     assert len(unescape(sub(r"<[^>]+>", "", parte))) <= TOPE_PIE
-    assert parte.startswith("<b>⚪ Mesa BTC · sesgo neutral</b>") and _Etiquetas(parte).bien
+    # 50% y 40% contra una base de 30%: los dos lados sobre la base.
+    assert parte.startswith("<b>⚡ Mesa BTC · volátil, sin lado</b>") and _Etiquetas(parte).bien
 
 
 def test_sin_respuestas_el_parte_lo_dice():
@@ -557,7 +561,11 @@ def test_la_tarjeta_lleva_los_numeros_y_no_a_la_vara():
     t = tarjeta(_pregunta_fija(), _ronda_de_ejemplo(), 0.38, velas)
     assert t is not None
     assert (t["p_arriba"], t["p_abajo"], t["base"]) == (0.54, 0.37, 0.38)
-    assert (t["sesgo"], t["votos"]) == ("alcista", "2 de 3")
+    assert (t["sesgo"], t["lectura"], t["votos"]) == (
+        "alcista",
+        "sesgo alcista",
+        "2 alcista · 1 neutral",
+    )
     assert [f["nombre"] for f in t["familias"]] == ["gemini", "openrouter", "groq", "nvidia"]
     assert t["con_contexto"] == {"p_arriba": 0.58, "p_abajo": 0.35}
     assert len(t["velas"]) == 48 and t["velas"][-1][0] == velas[-1]["time"]
@@ -586,7 +594,8 @@ def test_con_el_aviso_de_la_mesa_no_se_manda_el_de_siempre(tmp_path):
     avisos = _ronda_con_aviso(tmp_path, lambda c: cuerpos.append(c) or True)
     assert avisos == [] and len(cuerpos) == 1
     c = cuerpos[0]
-    assert c["html"].startswith("<b>⚪ Mesa BTC · sesgo neutral</b>")
+    # 55/45 con una base de 100% (velas que siempre tocan): ninguno la pasa.
+    assert c["html"].startswith("<b>⚪ Mesa BTC · lateral, inclinación alcista</b>")
     assert c["texto"].startswith("🧑‍💼 Mesa de analistas") and c["tarjeta"]["base"] == 1.0
 
 
@@ -655,7 +664,8 @@ def test_sin_contexto_se_ve_la_variante_mapa(tmp_path):
     mesa.guardar(p, [r for r in _ronda_de_ejemplo() if r.variante == VARIANTE_MAPA])
     bloque, sello = para_el_trader(ruta, T0)
     assert sello is not None and sello["variante"] == VARIANTE_MAPA
-    assert "Consenso: ↑ 54% · ↓ 37%" in bloque and "mesa alcista (2 de 3)" in bloque
+    assert "Consenso: ↑ 54% · ↓ 37%" in bloque
+    assert "lectura: sesgo alcista (votos: 2 alcista · 1 neutral)" in bloque
     assert "· nvidia sin respuesta" in bloque and "CONTEXTO EXTERNO" not in bloque
 
 
@@ -691,3 +701,14 @@ def test_la_vuelta_del_trader_lleva_la_mesa_y_la_sella(tmp_path):
     asyncio.run(una_vuelta(_Grafo(), trace, 2, precarga="═══ ESTADO ═══\nnada", mesa=rota))
     assert "═══ MESA DE ANALISTAS" not in recibido["messages"][1]["content"]
     assert herramientas._VUELTA["mesa"] is None, "la mesa rota no cuesta la vuelta ni arrastra"
+
+
+def test_la_lectura_sale_de_los_numeros_contra_la_base_no_de_los_votos():
+    """El caso de Elvis del 27: 3 de 4 votaron bajista, pero ↑ 24% · ↓ 32% con base
+    31% no es un sesgo: ninguno pasa la base. Es lateral, apenas inclinado abajo."""
+    assert lectura(0.24, 0.32, 0.31) == ("lateral", "lateral, inclinación bajista")
+    assert lectura(0.30, 0.33, 0.31) == ("lateral", "lateral, sin sesgo")
+    assert lectura(0.25, 0.45, 0.31) == ("bajista", "sesgo bajista")
+    assert lectura(0.52, 0.30, 0.31) == ("alcista", "sesgo alcista")
+    assert lectura(0.45, 0.48, 0.31) == ("volatil", "volátil, sin lado")
+    assert lectura(0.40, 0.20, None)[0] == "alcista", "sin base, contra el lado más bajo"

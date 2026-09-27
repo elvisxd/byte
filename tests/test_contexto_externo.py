@@ -275,3 +275,12 @@ def test_reunir_con_la_red_caida_no_levanta_y_anota_los_fallos():
     assert "sesión EE. UU." in c.bloque
     assert "dxy" in c.fallos and "funding" in c.fallos
     assert "token=" not in "".join(c.fallos.values())
+
+
+def test_en_fin_de_semana_la_macro_dice_que_es_el_cierre_del_viernes():
+    """Domingo: los ±0.0% son la bolsa cerrada, no un mercado en calma."""
+    d = _datos_llenos()
+    d["bolsa_cerrada"] = True
+    b = formatear(d)
+    assert "\nMacro (cierre del viernes): " in b and "\nAcciones BTC (viernes): " in b
+    assert "Macro 24h" not in b

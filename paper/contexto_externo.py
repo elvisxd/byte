@@ -466,8 +466,11 @@ def formatear(d: dict[str, Any], tope: int = TOPE_CHARS) -> str:
             lineas.append(f"{titulo}: " + " · ".join(partes_ok))
 
     vix, t10 = d.get("vix"), d.get("us10a")
+    # En fin de semana la bolsa está cerrada y los «±0.0%» son el cierre del
+    # viernes contra sí mismo: el título lo dice para que nadie lo lea como calma.
+    cerrada = bool(d.get("bolsa_cerrada"))
     linea(
-        "Macro 24h",
+        "Macro (cierre del viernes)" if cerrada else "Macro 24h",
         [
             _mercado(d, "ndx", "NDX", 0),
             _mercado(d, "spx", "SPX", 0),
@@ -498,7 +501,7 @@ def formatear(d: dict[str, Any], tope: int = TOPE_CHARS) -> str:
         ],
     )
     linea(
-        "Acciones BTC",
+        "Acciones BTC (viernes)" if cerrada else "Acciones BTC",
         [
             f"{n} {_signo(_pct(d[k]['precio'], d[k]['hace24h']))}" if d.get(k) else None
             for k, n in (
@@ -594,6 +597,7 @@ def reunir(
     ctx = Contexto()
     d = ctx.datos
     d["sesion"] = sesion(ahora)
+    d["bolsa_cerrada"] = ahora.astimezone(ZONA).weekday() >= 5
 
     def spot() -> float | None:
         j = pedir("https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT")
