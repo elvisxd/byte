@@ -15,7 +15,7 @@ entero. El modelo elige **cuándo y por qué**; el resto es aritmética.
 import os
 import urllib.error
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +42,21 @@ logger = get_logger("tools.paper")
 # Medido el 2026-09-13, sesión de qwen3.6:27b: en cinco vueltas describió "rango
 # estrecho, precio cerca del tope" —el escenario exacto de una orden límite— y
 # no dejó ni una.
-SIEMPRE = ["atr", "adx", "rsi", "macd", "ema", "liquidity", "fvg", "regime", "divergencias", "cvd"]
+SIEMPRE = [
+    "atr",
+    "adx",
+    "rsi",
+    "macd",
+    "ema",
+    "liquidity",
+    "fvg",
+    "regime",
+    "divergencias",
+    "cvd",
+    # Prompt v7 (mapa v3): los niveles de la gráfica de Elvis —order blocks,
+    # golden pocket, líneas de tendencia y tridente—. Ver `_niveles`.
+    "niveles",
+]
 
 # ═══ LO QUE SE SELLA DE LA VUELTA, ADEMÁS DEL GRÁFICO ═══
 #
@@ -774,6 +788,12 @@ def _predecir(registro: Registro, args: PredecirArgs, max_chars: int) -> ToolRes
     )
 
 
+# Prompt v7: de qué nivel del mapa sale cada precio de la orden. Se sella en
+# `extra.orden` y la operación lo hereda: con 50 resueltas por origen se sabe
+# cuál de los niveles de la gráfica sirve de verdad para entrar o para salir.
+Origen = Literal["ob", "fvg", "golden_pocket", "tendencia", "tridente", "pool", "otro"]
+
+
 class OrdenArgs(BaseModel):
     eje: str = Field(description="Qué hipótesis la genera")
     direccion: str = Field(description="long o short")
@@ -807,6 +827,29 @@ class OrdenArgs(BaseModel):
     en_contra: str = Field(
         description="El hecho del mapa que más daño le hace a esta tesis. Obligatorio."
     )
+    confirmacion: Literal["toque", "rechazo"] = Field(
+        default="toque",
+        description=(
+            "toque: entra al tocar el límite. rechazo: espera a que una vela de "
+            "`marco_confirmacion` toque el límite y CIERRE de vuelta con mecha (≥40% del "
+            "rango); entra a ese cierre. Se cancela sola si la mecha llega al stop o si "
+            "cierra del otro lado del límite."
+        ),
+    )
+    marco_confirmacion: Literal["15m", "1h", "4h"] = Field(
+        default="15m", description="Solo con rechazo: la vela que tiene que confirmarlo."
+    )
+    origen_entrada: Origen = Field(
+        default="otro",
+        description=(
+            "De qué nivel del mapa sale el precio límite: ob, fvg, golden_pocket, "
+            "tendencia, tridente, pool u otro."
+        ),
+    )
+    origen_tp: Origen = Field(
+        default="otro",
+        description="De qué nivel del mapa sale el take_profit (los mismos que origen_entrada).",
+    )
 
 
 def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolResult:
@@ -831,6 +874,13 @@ def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolRes
         return ToolResult(
             content=f"no se dejó la orden: {exc}", summary={"error": "sin revisión"}, ok=False
         )
+    # Prompt v7: cómo entra y de qué niveles salen la entrada y el objetivo.
+    ctx.extra["orden"] = {
+        "confirmacion": args.confirmacion,
+        "marco_confirmacion": args.marco_confirmacion if args.confirmacion == "rechazo" else None,
+        "origen_entrada": args.origen_entrada,
+        "origen_tp": args.origen_tp,
+    }
     try:
         oid = registro.dejar_orden(
             eje=args.eje,
@@ -842,6 +892,8 @@ def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolRes
             stop_loss=args.stop_loss,
             take_profit=args.take_profit,
             horas_vigencia=args.horas_vigencia,
+            confirmacion=args.confirmacion,
+            marco_confirmacion=args.marco_confirmacion,
         )
     except ValueError as exc:
         return ToolResult(
@@ -854,8 +906,15 @@ def _dejar_orden(registro: Registro, args: OrdenArgs, max_chars: int) -> ToolRes
         content=(
             f"Orden #{oid} dejada: {args.direccion} {SIMBOLO_UNICO} a {args.precio_limite} "
             f"(el precio está en {ctx.precio}, {distancia:.2f}% de distancia), stop "
-            f"{args.stop_loss}. Vive {args.horas_vigencia}h. Si el precio la toca mientras "
-            f"no estás, entra sola y la vas a ver abierta la próxima vez."
+            f"{args.stop_loss}. Vive {args.horas_vigencia}h. "
+            + (
+                f"Con RECHAZO en {args.marco_confirmacion}: entra al cierre de la vela que toque "
+                f"{args.precio_limite} y cierre de vuelta con mecha; se cancela sola si toca el "
+                f"stop o cierra del otro lado."
+                if args.confirmacion == "rechazo"
+                else "Si el precio la toca mientras no estás, entra sola y la vas a ver abierta "
+                "la próxima vez."
+            )
         ),
         summary={"id": oid, "limite": args.precio_limite, "eje": args.eje},
     )
@@ -1051,6 +1110,47 @@ def _regimen_hace(reg: dict[str, Any]) -> str:
     return f", confirmado hace {int(hace)} velas"
 
 
+def _niveles(n: Any) -> str:
+    """Los niveles de la gráfica (mapa v3), en una línea: los mismos precios que
+    Elvis ve dibujados (scripts/paper/indicadores/niveles.ts, con paridad
+    probada). Cada uno con su evidencia —toques y reacciones medidos en ATR—,
+    porque un nivel sin reacciones es solo un precio. Vacío si no hay."""
+    if not isinstance(n, dict) or n.get("error"):
+        return ""
+    partes: list[str] = []
+    for ob in (n.get("order_blocks") or [])[:3]:
+        partes.append(
+            f"OB {'↑' if ob['lado'] == 'alcista' else '↓'} {ob['piso']}–{ob['techo']}"
+            f" ({ob['toques']}t·{ob['reacciones']}r"
+            + (
+                f", a {ob['distancia_atr']} ATR"
+                if ob.get("distancia_atr")
+                else ", el precio adentro"
+            )
+            + ")"
+        )
+    gp = n.get("golden_pocket")
+    if isinstance(gp, dict):
+        partes.append(
+            f"golden pocket {gp['piso']}–{gp['techo']} ({gp['tramo']} {gp['desde']}→{gp['hasta']},"
+            f" retroceso {gp['retroceso']}, {gp['toques']}t·{gp['reacciones']}r)"
+        )
+    for t in n.get("tendencias") or []:
+        partes.append(
+            f"tendencia {t['lado']} {'↗' if t['pendiente'] >= 0 else '↘'} {t['precio']}"
+            f" ({t['toques']}t·{t['reacciones']}r)"
+        )
+    tri = n.get("tridente")
+    if isinstance(tri, dict):
+        me = tri.get("mediana_ev") or {}
+        partes.append(
+            f"tridente mediana {tri['mediana']} entre {tri['inferior']} y {tri['superior']}"
+            f" (canal {tri['ancho_atr']} ATR;"
+            f" mediana {me.get('toques', 0)}t·{me.get('reacciones', 0)}r)"
+        )
+    return " · ".join(partes)
+
+
 def _bloque(
     marco: str,
     datos: dict[str, Any],
@@ -1108,6 +1208,8 @@ def _bloque(
             f"dentro de {tasa['horizonte']} velas el {tasa['1_atr']}% de las veces; "
             f"a 2 ATR, el {tasa['2_atr']}%"
         )
+    if linea_niveles := _niveles(ind.get("niveles")):
+        lineas.append(f"   niveles: {linea_niveles}")
     pools = ind.get("liquidity") or []
     if pools:
         lineas.append(
@@ -1355,7 +1457,13 @@ def _estado(registro: Registro) -> ToolResult:
         for o in ordenes:
             partes.append(
                 f"  #{o['id']} {o['direccion']} {o['simbolo']} a {o['precio_limite']} "
-                f"(stop {o['stop_loss']}) · eje '{o['eje']}' · vence {o['vence_en'][:16]} "
+                f"(stop {o['stop_loss']}"
+                + (
+                    f", con rechazo en {o.get('marco_confirmacion') or '15m'}"
+                    if o.get("confirmacion") == "rechazo"
+                    else ""
+                )
+                + f") · eje '{o['eje']}' · vence {o['vence_en'][:16]} "
                 f"· «{o['razon'][:70]}»"
             )
 

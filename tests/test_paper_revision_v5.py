@@ -200,3 +200,91 @@ def test_tu_calibracion_calla_bajo_las_50_y_lo_deja_sellado(registro: Registro) 
     assert texto.startswith(f"═══ TU CALIBRACIÓN (prompt v{VERSION_PROMPT})")
     assert "0 resueltas con este prompt: faltan 50" in texto
     assert herramientas._VUELTA["calibracion_vista"] is False
+
+
+# ── prompt v7: los niveles de la gráfica y la orden con rechazo ─────────────
+
+
+def test_la_orden_sella_como_entra_y_de_que_niveles_salen_sus_precios(
+    registro: Registro,
+) -> None:
+    orden = _dejar_orden(
+        registro,
+        OrdenArgs(
+            eje="range-sweep",
+            direccion="long",
+            precio_limite=99400.0,
+            stop_loss=99000.0,
+            take_profit=101000.0,
+            razon="OB alcista 99.300-99.450 y golden pocket; objetivo en la resistencia",
+            ejes=EJES_OK,
+            en_contra="el 4h bajista",
+            confirmacion="rechazo",
+            marco_confirmacion="1h",
+            origen_entrada="ob",
+            origen_tp="tendencia",
+        ),
+        4000,
+    )
+    assert orden.ok is True, orden.content
+    assert "Con RECHAZO en 1h" in orden.content
+    viva = registro.ordenes_vivas()[0]
+    assert (viva["confirmacion"], viva["marco_confirmacion"]) == ("rechazo", "1h")
+    extra = json.loads(viva["contexto"])["extra"]
+    assert extra["orden"] == {
+        "confirmacion": "rechazo",
+        "marco_confirmacion": "1h",
+        "origen_entrada": "ob",
+        "origen_tp": "tendencia",
+    }
+
+
+def test_la_linea_de_niveles_del_mapa_lleva_precios_y_evidencia() -> None:
+    from tools.paper import _niveles
+
+    n = {
+        "marco": "1h",
+        "order_blocks": [
+            {
+                "lado": "alcista",
+                "piso": 83281.07,
+                "techo": 84250.76,
+                "distancia_atr": 8.63,
+                "toques": 3,
+                "reacciones": 3,
+            },
+        ],
+        "golden_pocket": {
+            "tramo": "caída",
+            "desde": 88508.75,
+            "hasta": 83411.57,
+            "piso": 86561.63,
+            "techo": 86724.74,
+            "medio": 85960.16,
+            "retroceso": 0.87,
+            "toques": 0,
+            "reacciones": 0,
+        },
+        "tendencias": [
+            {
+                "lado": "resistencia",
+                "precio": 88211.37,
+                "pendiente": -6.61,
+                "toques": 3,
+                "reacciones": 2,
+            }
+        ],
+        "tridente": {
+            "mediana": 88948.61,
+            "superior": 92351.05,
+            "inferior": 85546.18,
+            "ancho_atr": 10.94,
+            "mediana_ev": {"toques": 0, "reacciones": 0},
+        },
+    }
+    linea = _niveles(n)
+    assert "OB ↑ 83281.07–84250.76 (3t·3r, a 8.63 ATR)" in linea
+    assert "golden pocket 86561.63–86724.74 (caída 88508.75→83411.57" in linea
+    assert "tendencia resistencia ↘ 88211.37 (3t·2r)" in linea
+    assert "tridente mediana 88948.61 entre 85546.18 y 92351.05" in linea
+    assert _niveles(None) == "" and _niveles({"error": "x"}) == ""

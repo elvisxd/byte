@@ -494,3 +494,35 @@ Lo que eso cambia de la comparación, dicho con las cifras:
 
 Nada de esto cambia el tope diario, la ventana, la cadencia, las muestras del
 analista ni las listas de modelos.
+
+## 2026-09-27: prompt v7, los niveles de la gráfica y la orden con rechazo, y la v6 se cierra con un día
+
+Decisión del usuario, no del criterio: «quisiera ahora la parte del trader que
+use mis indicadores para hacer las órdenes límite o entradas —los OB, FVG,
+líneas de tendencia, el tridente, el fibo y el golden pocket— y el TP también,
+usando las mismas herramientas, evaluando el rechazo». Y a la pregunta de si
+arrancar la v7 cerrando la v6 con un día: «hazlo ya». Se despliega el 27 por la
+noche, fuera de la ventana, para los cuatro brazos a la vez.
+
+- **La v6 queda con un día** (el 27): se lee aparte y no cruza las 50 nunca.
+  La v7 arranca en cero con la misma puerta de 50 por brazo y versión.
+- **Lo que cambia, y cómo se separa en el registro:**
+  - el mapa pasa a v3 (`extra.indicadores.version_mapa = 3`) con la línea
+    `niveles` por marco: order blocks, golden pocket, tendencias y tridente
+    (scripts/paper/indicadores/niveles.ts, paridad con la gráfica probada);
+  - `dejar_orden` suma `confirmacion` (toque/rechazo) y `marco_confirmacion`,
+    columnas nuevas de `ordenes`;
+  - `extra.orden` sella `origen_entrada` y `origen_tp`: con 50 resueltas por
+    origen se sabe qué nivel sirve para entrar y cuál para salir.
+- **Lo que ya se sabía de esos niveles, dicho antes de medir:** la prueba
+  hacia adelante de la gráfica (validar-indicadores.ts, 2026-09-24) no
+  encontró ningún nivel que reaccione en el primer toque mejor que uno al azar,
+  y TRADERS.md registra cero backtests significativos de OB/FVG como entrada.
+  La hipótesis de v7 es que el RECHAZO —entrar cuando el nivel ya frenó— es lo
+  que podría aportar, y se mide contra las órdenes de toque del mismo prompt.
+- **Groq**: la línea de niveles suma ~300 tokens por vuelta (tres marcos) y
+  las descripciones de `dejar_orden` crecen. La instrucción sigue bajo el tope
+  (8380 caracteres). Se espera más 413; no se recorta solo para groq.
+
+Nada de esto cambia el tope diario, la ventana, la cadencia ni las listas de
+modelos.

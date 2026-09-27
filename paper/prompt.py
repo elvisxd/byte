@@ -78,9 +78,23 @@ versiones:
   ronda (macro, refugio, divisas, acciones BTC, flujos, derivados, opciones,
   cripto, on-chain, calendario, titulares). Cada escritura sella qué ronda vio
   (`extra.mesa`). El resto del prompt no cambia.
+- 7 (2026-09-27): los NIVELES DE LA GRÁFICA de Elvis y la orden con RECHAZO.
+  Lo pidió él al día siguiente de v6 («que use mis indicadores para hacer las
+  órdenes límite o entradas… y el TP… evaluando el rechazo»); la v6 queda con
+  un día. Tres cambios:
+  1. El mapa (v3, scripts/paper/indicadores/niveles.ts) trae por marco los
+     order blocks vivos, el golden pocket del último impulso, las líneas de
+     tendencia con ≥3 toques y el tridente de canal ≥10 ATR, con los mismos
+     precios que dibuja la gráfica y su evidencia (toques y reacciones).
+  2. `dejar_orden` suma `confirmacion`: «toque» (lo de siempre) o «rechazo»,
+     que entra al CIERRE de la vela de `marco_confirmacion` que toque el
+     límite y cierre de vuelta con mecha (paper/registro.py, `_rechazo`).
+  3. `origen_entrada` y `origen_tp` sellan de qué nivel sale cada precio
+     (`extra.orden`), para medir cuál de los niveles sirve de verdad.
+  El punto 4 lo dice en una línea; para pagarla se quitó una repetición del 3.
 """
 
-VERSION_PROMPT = "6"
+VERSION_PROMPT = "7"
 
 # ⚠ EL ROL VA COMO MENSAJE `system`, APARTE DE LA INSTRUCCIÓN. Sin él, qwen
 # narraba en su pensamiento «the user tried to make a prediction… the
@@ -181,14 +195,14 @@ Esto es lo que tenés que hacer AHORA, en este turno:
    «pasó el tiempo» es un motivo.
 3. Si no hay ninguna abierta —o ves una entrada clara— decidí con el mapa si
    entrar. La razón dice qué viste que justifica entrar ACÁ y no cinco velas
-   después, y la entrada lleva OBJETIVO: sin destino no es una entrada. El
-   mapa de abajo es el de este instante: no lo vuelvas a pedir.
+   después, y la entrada lleva OBJETIVO: sin destino no es una entrada.
    `mirar_mercado` CON intervalo te da un gráfico con más detalle, solo si
    te hace falta. Cada marco tiene su rango y su ATR: no los mezcles.
 4. Si el precio de ahora no te sirve pero SÍ sabrías a qué precio entrarías,
    dejá una orden con `dejar_orden`: entre sesión y sesión pasan horas sin
-   nadie mirando, y una orden es la única forma de que «entro si vuelve al
-   borde» llegue a ocurrir. La razón se sella al dejarla.
+   nadie mirando. Límite y objetivo van en NIVELES del mapa —OB, FVG, golden
+   pocket, tendencia, tridente, pool— y `origen_entrada`/`origen_tp` dicen de
+   cuál salen; con `confirmacion` rechazo solo entra si el nivel frena.
 5. Si no hay nada que hacer, decilo y no operes. No entrar es una decisión
    válida: forzar una entrada para «aprovechar la sesión» contamina el eje.
 6. Operes o no, dejá DOS predicciones con `predecir`, en el marco que elijas:

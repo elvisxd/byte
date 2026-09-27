@@ -432,7 +432,10 @@ def poner_al_dia(
             # modelo verá lo que haya vivo y decidirá.
             print(f"{prefijo} no se pudo poner al día: {exc}", flush=True)
             return cambios
-    cambios["ordenes"] = registro.evaluar_ordenes(velas)
+    # Las órdenes con rechazo en 1h o 4h (prompt v7) piden sus velas solo si hay.
+    cambios["ordenes"] = registro.evaluar_ordenes(
+        velas, velas_de=lambda marco: velas_del_mercado(SIMBOLO, marco, 200)["velas"]
+    )
     for d in cambios["ordenes"]:
         print(f"{prefijo} orden #{d['id']}: {d['resultado']}", flush=True)
     cambios["predicciones"] = registro.resolver_predicciones(velas)

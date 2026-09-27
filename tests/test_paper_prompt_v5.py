@@ -21,7 +21,7 @@ from tools.paper import _tasa_base
 
 
 def test_el_prompt_v5_pide_la_cuenta_entera_y_el_si_no_por_eje() -> None:
-    assert VERSION_PROMPT == "6", "v6 conserva todo lo de v5 y suma la mesa"
+    assert VERSION_PROMPT == "7", "v7 conserva todo lo de v5 y v6, y suma los niveles"
     assert "dejá DOS predicciones" in INSTRUCCION
     assert "`tasa_base`" in INSTRUCCION and "`ajuste`" in INSTRUCCION
     assert "tasa base + ajuste" in INSTRUCCION
