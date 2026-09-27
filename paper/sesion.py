@@ -510,6 +510,14 @@ async def una_vuelta(
     fijar_vuelta(mesa=sello_mesa)
     if bloque_mesa:
         contenido = f"{contenido}\n\n{bloque_mesa}"
+        # Para verlo en el log sin abrir la traza: qué ronda recibió el trader.
+        print(
+            f"[vigía] vuelta {numero}: el trader recibe la ronda {sello_mesa.get('ronda')}"
+            f" de la mesa ({sello_mesa.get('variante')})"
+            if sello_mesa
+            else f"[vigía] vuelta {numero}: el trader recibe la mesa",
+            flush=True,
+        )
     try:
         # El estado va COMPLETO: `iterations` y los acumuladores no tienen
         # default en el grafo, y sin ellos el primer nodo revienta con un
