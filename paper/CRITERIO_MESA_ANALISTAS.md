@@ -179,6 +179,23 @@ en lugar de su analista propio, con **su propia muestra de 50**. Si es no, no
 se cambia nada y el experimento a ciegas se ahorró. Es una variable de
 conducta: la decide Elvis con las cifras delante.
 
+### Fase 2, adelantada (2026-09-26)
+
+Elvis decidió el 26 no esperar la puerta de 50: «Agrega de una vez … me parece
+que hay más información disponible para toma de decisión». Desde el prompt v6
+el trader recibe, al final de su mensaje y después de su analista propio (que
+se queda), la última ronda de la mesa si tiene menos de 5 h
+(`paper/mesa.py:para_el_trader`): la pregunta, el consenso, cuánto discrepan,
+el voto mayoritario, cada familia con su razón, la tasa base y el CONTEXTO
+EXTERNO de esa ronda. Se usa la variante `mapa+externo` si contestó alguien en
+ella; si no, la `mapa`. Cada escritura sella qué ronda vio (`extra.mesa`).
+
+Lo que no cambia: la mesa sigue sin ver al trader, así que su A/B y su puerta
+de 50 por familia y variante siguen limpios. Lo que se pierde: la pregunta de
+arriba —«¿la mesa le gana al analista propio?»— ya no se contesta antes de
+dársela al trader; se contesta después, con el sello, comparando v6 con y sin
+mesa. La comparación v5 se cierra donde estaba (CRITERIO_COMPARACION.md).
+
 ## Dónde está cada cosa
 
 - `paper/mesa.py`: la ronda, el registro (`mesa.db`), la resolución, el aviso

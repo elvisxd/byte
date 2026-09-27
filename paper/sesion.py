@@ -206,6 +206,8 @@ def armar(
     )
     # La fase de analista (prompt v5), con el MISMO modelo: ver `_armar_analista`.
     etiqueta_modelo.analista = _armar_analista(llm, ajustes)
+    # La mesa de analistas (prompt v6): ver `_armar_mesa`.
+    etiqueta_modelo.mesa = _armar_mesa(ruta_db)
     return registro, grafo, etiqueta_modelo
 
 
@@ -215,6 +217,21 @@ class _EtiquetaLocal(str):
     atributos: se registra y se serializa como el str que es."""
 
     analista: Any = None
+    mesa: Any = None
+
+
+def _armar_mesa(ruta_db: str) -> Any:
+    """La última ronda de la mesa de analistas para el mensaje del trader
+    (prompt v6, `paper/mesa.py:para_el_trader`). `mesa.db` vive junto al
+    registro del brazo —en el volumen, `$DATOS/mesa.db`— salvo que
+    `BYTE_MESA_DB` diga otra ruta. Sin mesa, el bloque sale vacío y la vuelta
+    es la de v5."""
+    from paper.mesa import para_el_trader
+
+    ruta = os.environ.get("BYTE_MESA_DB") or os.path.join(
+        os.path.dirname(os.path.abspath(ruta_db)), "mesa.db"
+    )
+    return lambda: para_el_trader(ruta)
 
 
 def _armar_analista(llm: Any, ajustes: Settings) -> Any:
@@ -368,6 +385,8 @@ def _armar_remoto(
     etiqueta.reservar_primero = relevo.reservar_primero  # type: ignore[attr-defined]
     # La fase de analista (prompt v5) sobre el mismo relevo: ver `_armar_analista`.
     etiqueta.analista = _armar_analista(relevo, ajustes)  # type: ignore[attr-defined]
+    # La mesa de analistas (prompt v6): ver `_armar_mesa`.
+    etiqueta.mesa = _armar_mesa(ruta_db)  # type: ignore[attr-defined]
 
     herramientas = ToolRegistry(
         build_paper_tools(ruta_db, ajustes.paper_max_tool_result_chars, etiqueta)
@@ -441,6 +460,7 @@ async def una_vuelta(
     numero: int,
     precarga: str = "",
     analista: Any = None,
+    mesa: Any = None,
 ) -> str | None:
     """Una pregunta al modelo. Devuelve el error si falló; None si fue bien.
 
@@ -455,6 +475,10 @@ async def una_vuelta(
     Su bloque va AL FINAL del mensaje, después del mapa, y su sello queda en
     cada escritura de la vuelta. Si no hay analista o falló, la vuelta es la
     de siempre: la fase nunca cuesta la vuelta (paper/analista.py).
+
+    `mesa` (prompt v6) devuelve (bloque, sello) de la última ronda de la mesa
+    de analistas: el bloque va después del analista y el sello a cada
+    escritura (`extra.mesa`). Vacío si no hay ronda reciente.
     """
     trace.vuelta = numero
     # Se publica ANTES de la vuelta y no solo después: si el modelo tarda
@@ -476,6 +500,16 @@ async def una_vuelta(
     fijar_vuelta(analista=sello_del_analista(lectura))
     if bloque := bloque_del_analista(lectura):
         contenido = f"{contenido}\n\n{bloque}"
+    bloque_mesa, sello_mesa = ("", None)
+    if mesa is not None and precarga:
+        try:
+            bloque_mesa, sello_mesa = mesa()
+        except Exception:  # noqa: BLE001 — la mesa nunca cuesta la vuelta
+            bloque_mesa, sello_mesa = ("", None)
+    # Explícito también sin mesa: el sello no arrastra la ronda de la vuelta anterior.
+    fijar_vuelta(mesa=sello_mesa)
+    if bloque_mesa:
+        contenido = f"{contenido}\n\n{bloque_mesa}"
     try:
         # El estado va COMPLETO: `iterations` y los acumuladores no tienen
         # default en el grafo, y sin ellos el primer nodo revienta con un
@@ -551,6 +585,7 @@ async def una_sesion(
             vueltas,
             precarga=precarga_segura(registro, ajustes),
             analista=getattr(etiqueta_modelo, "analista", None),
+            mesa=getattr(etiqueta_modelo, "mesa", None),
         )
         if error is not None:
             errores.append(error)
