@@ -40,6 +40,32 @@ estadística propia; los objetivos son «zonas» de 1.000 puntos.
 experimento ya contiene por las dos caras (`range-sweep` y `anti-smc`), con
 menos precisión que la nuestra y sin registro.
 
+**Segunda mirada, 2026-09-28 — su curso completo, medido.** Elvis pasó dos
+informes de las 16 clases de «Trading desde Cero», uno de la lógica y otro de
+sus indicadores. Traen lo que la primera mirada no tenía: el playbook de
+**continuación de tendencia**. Es sesgo alineado en los marcos altos,
+retroceso al golden pocket 0.5–0.618, RSI descargado a favor, vela de rechazo,
+stop estructural y objetivo en el máximo anterior, con 2R mínimo. O sea, el
+eje que la sección 3 anota como el que nos falta.
+
+Se probó como bot mecánico, con las reglas fijadas antes de correrlo:
+mi-dashboard-trading, `railway-chart-service/scripts/CRITERIO_BACKTEST_LEAK.md`.
+Fueron 16 monedas, ~3 años de velas de 1h, los marcos 1h/4h y 4h/1d, costes
+de BingX y 20 entradas al azar por trade. Decidía la muestra de fuera, el
+último 30 %. Los números están en `RESULTADO_BACKTEST_LEAK.md`:
+- **No pasa.** Principal: 1747 trades, R medio −0,17 (IC −0,28 a −0,06) y
+  método − azar **+0,00** (IC −0,11 a +0,12). La entrada no se distingue del
+  azar.
+- Ni el RSI, ni un oscilador con money flow en su lugar, ni la gestión con
+  parcial en 1R cambian eso.
+- **Su setup de tendencia casi no existe exigido completo:** 24 trades en tres
+  años y 16 monedas. De 735 velas con rechazo en el golden pocket, el RSI
+  descargado deja 40. Sin el RSI hay más trades y pierden más que el azar.
+
+Veredicto de la segunda mirada: sigue sin haber nada que integrar como brazo.
+El único subproducto es el **oscilador con money flow** de la gráfica: queda
+como herramienta visual con su evidencia contra la tasa base, no como regla.
+
 ## 2 · Linda Raschke — Turtle Soup (registro auditado, *Market Wizards*)
 
 **Reglas originales (compra):** rango de **20 días**; el mínimo previo de 20
