@@ -133,7 +133,11 @@ CREATE TABLE IF NOT EXISTS ordenes (
     resuelta_en     TEXT,
     resultado       TEXT,               -- disparada | vencida | cancelada
     operacion_id    INTEGER REFERENCES operaciones(id),  -- si se disparó
-    nota            TEXT                -- por qué se canceló, si se canceló
+    nota            TEXT,               -- por qué se canceló, si se canceló
+    -- Prompt v7: `toque` entra al tocar el límite; `rechazo` espera a que una
+    -- vela de `marco_confirmacion` toque y CIERRE de vuelta con mecha.
+    confirmacion        TEXT NOT NULL DEFAULT 'toque',
+    marco_confirmacion  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ordenes ON ordenes(resuelta_en) WHERE resuelta_en IS NULL;
 
@@ -288,6 +292,13 @@ def _sellar_prediccion(
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
+# Prompt v7, la orden con rechazo (`Registro._rechazo`): cuánto dura una vela de
+# cada marco, y cuánta mecha hace falta para contar como rechazo —la del lado
+# del nivel, como fracción del rango de la vela—.
+DURACION_MARCO_S = {"15m": 900, "1h": 3600, "4h": 14400}
+MECHA_RECHAZO = 0.4
+
+
 class Registro:
     """Las operaciones en papel, en SQLite."""
 
@@ -350,13 +361,23 @@ class Registro:
         # El modelo llegó cuando ya había operaciones y predicciones en el
         # Codespace. Las filas viejas se quedan con NULL, que es honesto: no se
         # sabe cuál las hizo, y rellenarlas con el de ahora sería inventarlo.
+        cols_ordenes = {f["name"] for f in self._con.execute("PRAGMA table_info(ordenes)")}
         for tabla, cols in (
             ("operaciones", columnas),
             ("predicciones", cols_pred),
-            ("ordenes", {f["name"] for f in self._con.execute("PRAGMA table_info(ordenes)")}),
+            ("ordenes", cols_ordenes),
         ):
             if cols and "modelo" not in cols:
                 self._con.execute(f"ALTER TABLE {tabla} ADD COLUMN modelo TEXT")  # noqa: S608
+
+        # Prompt v7: la orden con RECHAZO (ver `_rechazo`). Las de antes son de
+        # toque, que es lo que eran.
+        for nombre, tipo in (
+            ("confirmacion", "TEXT NOT NULL DEFAULT 'toque'"),
+            ("marco_confirmacion", "TEXT"),
+        ):
+            if cols_ordenes and nombre not in cols_ordenes:
+                self._con.execute(f"ALTER TABLE ordenes ADD COLUMN {nombre} {tipo}")  # noqa: S608
 
     def abrir(
         self,
@@ -627,8 +648,14 @@ class Registro:
         stop_loss: float,
         take_profit: float | None = None,
         horas_vigencia: float = 24.0,
+        confirmacion: str = "toque",
+        marco_confirmacion: str | None = None,
     ) -> int:
         """Deja una orden límite para que se evalúe en la próxima sesión.
+
+        `confirmacion` (prompt v7): «toque» entra al tocar el límite, como
+        siempre; «rechazo» espera a que una vela de `marco_confirmacion` toque
+        el límite y cierre de vuelta con mecha (`_rechazo`).
 
         Las mismas validaciones que `abrir`, pero contra el PRECIO LÍMITE y no
         contra el precio actual: la orden dice "si el precio llega acá, entro
@@ -666,6 +693,14 @@ class Registro:
             )
         if horas_vigencia <= 0:
             raise ValueError("una orden que vence antes de existir no se registra")
+        if confirmacion not in ("toque", "rechazo"):
+            raise ValueError(f"confirmación desconocida: {confirmacion!r} (toque o rechazo)")
+        if confirmacion == "rechazo":
+            marco_confirmacion = marco_confirmacion or "15m"
+            if marco_confirmacion not in DURACION_MARCO_S:
+                raise ValueError(f"marco de confirmación desconocido: {marco_confirmacion!r}")
+        else:
+            marco_confirmacion = None
         # ⚠ LA MISMA REGLA QUE EN `predecir`, Y AQUÍ IMPORTA MÁS. Dos
         # predicciones correlacionadas ensucian la calibración; dos órdenes
         # idénticas se disparan LAS DOS y abren operaciones gemelas, que
@@ -686,8 +721,8 @@ class Registro:
         cursor = self._con.execute(
             """INSERT INTO ordenes
                (eje, simbolo, direccion, creada_en, vence_en, precio_limite, stop_loss,
-                take_profit, contexto, razon, sello, modelo)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                take_profit, contexto, razon, sello, modelo, confirmacion, marco_confirmacion)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 eje,
                 simbolo,
@@ -709,6 +744,8 @@ class Registro:
                     take_profit=take_profit,
                 ),
                 self.modelo or None,
+                confirmacion,
+                marco_confirmacion,
             ),
         )
         self._con.commit()
@@ -820,7 +857,12 @@ class Registro:
         return cerradas
 
     def evaluar_ordenes(
-        self, velas: list[dict[str, Any]], *, contexto_ahora: Contexto | None = None
+        self,
+        velas: list[dict[str, Any]],
+        *,
+        contexto_ahora: Contexto | None = None,
+        velas_de: Callable[[str], list[dict[str, Any]]] | None = None,
+        ahora: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Mira qué pasó con las órdenes mientras el agente estaba apagado.
 
@@ -833,7 +875,20 @@ class Registro:
         son muchas. Es la diferencia entre simular órdenes y simular cierres.
         """
         resueltas = []
+        ahora = ahora or datetime.now(UTC)
+        por_marco: dict[str, list[dict[str, Any]]] = {"15m": velas}
         for orden in self.ordenes_vivas():
+            if (orden.get("confirmacion") or "toque") == "rechazo":
+                marco = orden.get("marco_confirmacion") or "15m"
+                if marco not in por_marco:
+                    try:
+                        por_marco[marco] = velas_de(marco) if velas_de else []
+                    except Exception:  # noqa: BLE001 — sin velas, se mira en la próxima
+                        por_marco[marco] = []
+                r = self._rechazo(orden, por_marco[marco], marco, ahora, contexto_ahora)
+                if r is not None:
+                    resueltas.append(r)
+                continue
             vence = datetime.fromisoformat(orden["vence_en"])
             creada = datetime.fromisoformat(orden["creada_en"])
             disparo = None
@@ -869,8 +924,80 @@ class Registro:
         self._con.commit()
         return resueltas
 
+    def _rechazo(
+        self,
+        orden: dict[str, Any],
+        velas: list[dict[str, Any]],
+        marco: str,
+        ahora: datetime,
+        contexto_ahora: Contexto | None,
+    ) -> dict[str, Any] | None:
+        """Una orden con RECHAZO (prompt v7): entra al CIERRE de la primera vela
+        cerrada de su marco que toca el límite y cierra de vuelta con mecha.
+
+        Pidió Elvis el 2026-09-27 «evaluando el rechazo»: los niveles de la
+        gráfica no reaccionan en el primer toque mejor que uno al azar
+        (validar-indicadores.ts); si hay ventaja, está en entrar cuando el nivel
+        ya frenó. Para un long (el short es el espejo), vela a vela desde que se
+        dejó la orden y solo con velas CERRADAS:
+
+          · si la mecha llegó al stop: cancelada — el nivel no aguantó;
+          · si cerró del otro lado del límite: cancelada — el nivel se rompió;
+          · si tocó el límite y cerró por encima, con la mecha inferior de al
+            menos `MECHA_RECHAZO` de su rango: DISPARADA al cierre, con el mismo
+            stop y objetivo (si el cierre ya pasó el objetivo, cancelada: no
+            queda recorrido);
+          · si no, sigue esperando hasta vencer.
+        """
+        creada = datetime.fromisoformat(orden["creada_en"])
+        vence = datetime.fromisoformat(orden["vence_en"])
+        dur = timedelta(seconds=DURACION_MARCO_S[marco])
+        largo = orden["direccion"] == "long"
+        limite, stop, tp = orden["precio_limite"], orden["stop_loss"], orden["take_profit"]
+        for vela in velas:
+            abre = datetime.fromtimestamp(vela["time"], UTC)
+            cierra = abre + dur
+            if abre < creada or cierra > ahora:
+                continue
+            if abre > vence:
+                break
+            o, h, lo, c = vela["open"], vela["high"], vela["low"], vela["close"]
+            toca = lo <= limite if largo else h >= limite
+            if not toca:
+                continue
+            if (lo <= stop) if largo else (h >= stop):
+                return self._cancelar_sola(orden, cierra, "rechazo fallido: la mecha llegó al stop")
+            if (c < limite) if largo else (c > limite):
+                return self._cancelar_sola(orden, cierra, "el nivel se rompió: cerró del otro lado")
+            rango = h - lo
+            mecha = (min(o, c) - lo) if largo else (h - max(o, c))
+            if rango > 0 and mecha >= MECHA_RECHAZO * rango:
+                if tp is not None and ((c >= tp) if largo else (c <= tp)):
+                    return self._cancelar_sola(
+                        orden, cierra, "el rechazo cerró más allá del objetivo: sin recorrido"
+                    )
+                return self._disparar(orden, cierra, contexto_ahora, precio=c)
+        if ahora > vence:
+            self._con.execute(
+                "UPDATE ordenes SET resuelta_en=?, resultado='vencida' WHERE id=?",
+                (ahora.isoformat(), orden["id"]),
+            )
+            return {"id": orden["id"], "resultado": "vencida", "eje": orden["eje"]}
+        return None
+
+    def _cancelar_sola(self, orden: dict[str, Any], cuando: datetime, nota: str) -> dict[str, Any]:
+        self._con.execute(
+            "UPDATE ordenes SET resuelta_en=?, resultado='cancelada', nota=? WHERE id=?",
+            (cuando.isoformat(), nota, orden["id"]),
+        )
+        return {"id": orden["id"], "resultado": "cancelada", "eje": orden["eje"], "nota": nota}
+
     def _disparar(
-        self, orden: dict[str, Any], cuando: datetime, contexto_ahora: Contexto | None
+        self,
+        orden: dict[str, Any],
+        cuando: datetime,
+        contexto_ahora: Contexto | None,
+        precio: float | None = None,
     ) -> dict[str, Any]:
         """Convierte una orden tocada en una operación abierta.
 
@@ -882,8 +1009,10 @@ class Registro:
         """
         contexto = Contexto(**json.loads(orden["contexto"]))
         # El precio de entrada es el LÍMITE, no el de la vela: es a lo que se
-        # habría ejecutado la orden.
-        entrada = replace(contexto, precio=orden["precio_limite"], timestamp=cuando.isoformat())
+        # habría ejecutado la orden. Con rechazo (v7), el CIERRE de la vela que
+        # lo confirmó: a eso se entra.
+        precio_entrada = orden["precio_limite"] if precio is None else precio
+        entrada = replace(contexto, precio=precio_entrada, timestamp=cuando.isoformat())
         cursor = self._con.execute(
             """INSERT INTO operaciones
                (eje, simbolo, direccion, abierta_en, precio_entrada, stop_loss,
@@ -894,7 +1023,7 @@ class Registro:
                 orden["simbolo"],
                 orden["direccion"],
                 cuando.isoformat(),
-                orden["precio_limite"],
+                precio_entrada,
                 orden["stop_loss"],
                 orden["take_profit"],
                 json.dumps(asdict(entrada), ensure_ascii=False),
@@ -925,7 +1054,7 @@ class Registro:
             "resultado": "disparada",
             "eje": orden["eje"],
             "operacion_id": oid,
-            "precio": orden["precio_limite"],
+            "precio": precio_entrada,
         }
 
     def cancelar_orden(self, orden_id: int, *, nota: str = "") -> None:
