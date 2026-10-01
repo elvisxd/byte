@@ -8,7 +8,7 @@
 #
 # La versión de Python tiene que estar dentro del `requires-python` del
 # pyproject: con 3.14 pydantic no se importa.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
