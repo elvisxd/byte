@@ -712,3 +712,37 @@ def test_la_lectura_sale_de_los_numeros_contra_la_base_no_de_los_votos():
     assert lectura(0.52, 0.30, 0.31) == ("alcista", "sesgo alcista")
     assert lectura(0.45, 0.48, 0.31) == ("volatil", "volátil, sin lado")
     assert lectura(0.40, 0.20, None)[0] == "alcista", "sin base, contra el lado más bajo"
+
+
+def test_vigilar_deja_el_informe_en_el_log_una_vez_por_dia(tmp_path, capsys):
+    """El informe sale al arrancar y no se repite en el mismo día (2026-10-02)."""
+    from paper.mesa import vigilar
+
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    parar = asyncio.Event()
+    vueltas = {"n": 0}
+
+    async def dormir(_s):
+        vueltas["n"] += 1
+        if vueltas["n"] >= 3:
+            parar.set()
+
+    asyncio.run(
+        vigilar(
+            mesa,
+            {},
+            50,
+            lambda _m: False,
+            lambda _marco, _n: [],
+            lambda: "",
+            lambda _t: True,
+            parar,
+            dormir=dormir,
+        )
+    )
+    lineas = [
+        linea
+        for linea in capsys.readouterr().out.splitlines()
+        if linea.startswith("[mesa-informe] Mesa de analistas")
+    ]
+    assert len(lineas) == 1
