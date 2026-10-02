@@ -200,8 +200,13 @@ def leer_farside(markdown: str) -> dict[str, Any] | None:
 def _farside(clave: str) -> dict[str, Any] | None:
     """farside.co.uk por Firecrawl (1 crédito). La v2 de su API primero; la v1
     sigue viva y es la que documentan la mayoría de ejemplos."""
+    # ⚠ CADA HUECO CON SU MOTIVO (2026-10-02). Devolvía None sin decir por qué
+    # y el log solo mostraba «etf»: la fuente faltó en todas las rondas de la
+    # semana sin que se pudiera saber si era la clave, la cuota de Firecrawl o la
+    # tabla de Farside. Ahora cada caso levanta un error que `correr` deja en
+    # `ctx.fallos` y la ronda imprime.
     if not clave:
-        return None
+        raise RuntimeError("sin FIRECRAWL_API_KEY")
     ultimo_error: Exception | None = None
     for version in ("v2", "v1"):
         try:
@@ -217,8 +222,18 @@ def _farside(clave: str) -> dict[str, Any] | None:
         except (OSError, urllib.error.URLError) as exc:
             ultimo_error = exc
             continue
-        j = json.loads(crudo)
-        return leer_farside(((j or {}).get("data") or {}).get("markdown") or "")
+        j = json.loads(crudo) or {}
+        markdown = (j.get("data") or {}).get("markdown") or ""
+        if not markdown:
+            raise RuntimeError(
+                f"Firecrawl {version} sin markdown: {str(j.get('error') or j.get('success'))[:60]}"
+            )
+        etf = leer_farside(markdown)
+        if etf is None:
+            raise RuntimeError(
+                f"la tabla de Farside no trae días ({len(markdown.splitlines())} líneas)"
+            )
+        return etf
     if ultimo_error is not None:
         raise ultimo_error
     return None

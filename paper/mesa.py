@@ -1082,7 +1082,13 @@ async def ronda(
         for v in (VARIANTE_MAPA, VARIANTE_EXTERNO)
         if any(r.variante == v for r in respuestas)
     )
-    faltan = f" · fuentes sin dato: {', '.join(sorted(ctx.fallos))}" if ctx and ctx.fallos else ""
+    # Con el motivo de cada una (2026-10-02): con solo el nombre, «etf» faltó
+    # una semana entera sin que el log dijera por qué.
+    faltan = (
+        f" · fuentes sin dato: {', '.join(f'{k} ({ctx.fallos[k]})' for k in sorted(ctx.fallos))}"
+        if ctx and ctx.fallos
+        else ""
+    )
     print(
         f"[mesa] ronda del cierre {cierre}: {por_variante} contestaron"
         f" · tasa base {_pct(base) if base is not None else 'sin dato'}"
@@ -1105,7 +1111,21 @@ async def vigilar(
     contexto: Callable[[], Any] | None = None,
     avisar_mesa: Callable[[dict[str, Any]], bool] | None = None,
 ) -> None:
+    # ⚠ EL INFORME VA AL LOG UNA VEZ POR DÍA (2026-10-02, Elvis: «revisar cómo
+    # le fue a los analistas»). `mesa.db` vive en el volumen de Railway y no se
+    # puede leer desde fuera; `--informe` solo lo imprimía a mano. Sale al
+    # arrancar y después con el primer paso de cada día UTC, con la misma puerta
+    # de 50 que el criterio: antes, solo cuentas, sin Brier.
+    informado: str | None = None
     while not parar.is_set():
+        hoy = datetime.now(UTC).date().isoformat()
+        if hoy != informado:
+            informado = hoy
+            try:
+                for linea in mesa.informe().splitlines():
+                    print(f"[mesa-informe] {linea.strip()}", flush=True)
+            except Exception as exc:  # noqa: BLE001 — el informe nunca para la mesa
+                print(f"[mesa] sin informe: {str(exc)[:120]}", flush=True)
         try:
             try:
                 mesa.resolver(velas("15m", 200), datetime.now(UTC))

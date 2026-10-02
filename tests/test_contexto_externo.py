@@ -284,3 +284,34 @@ def test_en_fin_de_semana_la_macro_dice_que_es_el_cierre_del_viernes():
     b = formatear(d)
     assert "\nMacro (cierre del viernes): " in b and "\nAcciones BTC (viernes): " in b
     assert "Macro 24h" not in b
+
+
+def test_farside_dice_por_que_falta(monkeypatch):
+    """Cada hueco de la fuente de ETF con su motivo (2026-10-02); antes, None y solo «etf»."""
+    import json
+
+    import pytest
+
+    from paper import contexto_externo as ce
+
+    with pytest.raises(RuntimeError, match="sin FIRECRAWL_API_KEY"):
+        ce._farside("")
+    monkeypatch.setattr(
+        ce,
+        "_pedir",
+        lambda *a, **k: json.dumps({"success": False, "error": "Insufficient credits"}).encode(),
+    )
+    with pytest.raises(RuntimeError, match="sin markdown: Insufficient credits"):
+        ce._farside("clave")
+    monkeypatch.setattr(
+        ce,
+        "_pedir",
+        lambda *a, **k: json.dumps({"data": {"markdown": "# Farside\nnada\n"}}).encode(),
+    )
+    with pytest.raises(RuntimeError, match="no trae días"):
+        ce._farside("clave")
+    md = "| 25 Sep 2026 | 10.0 | (190.1) |\n"
+    monkeypatch.setattr(
+        ce, "_pedir", lambda *a, **k: json.dumps({"data": {"markdown": md}}).encode()
+    )
+    assert ce._farside("clave") == {"dia": "25 Sep 2026", "neto_musd": -190.1}
