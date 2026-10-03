@@ -239,6 +239,61 @@ def _farside(clave: str) -> dict[str, Any] | None:
     return None
 
 
+SOSOVALUE = "https://openapi.sosovalue.com/openapi/v1/etfs/summary-history"
+
+
+def leer_sosovalue(j: Any) -> dict[str, Any] | None:
+    """El flujo neto total de los ETF spot de BTC del último día (US$ M).
+
+    SoSoValue envuelve la respuesta en `{"code": 0, "data": [...]}`; cada fila
+    trae `date` (AAAA-MM-DD) y `total_net_inflow` en dólares.
+    """
+    if not isinstance(j, dict):
+        raise RuntimeError(f"SoSoValue respondió {type(j).__name__}")
+    if j.get("code") != 0:
+        raise RuntimeError(f"SoSoValue code {j.get('code')}: {str(j.get('message'))[:60]}")
+    filas = [
+        f
+        for f in (j.get("data") or [])
+        if isinstance(f, dict) and f.get("date") and f.get("total_net_inflow") is not None
+    ]
+    if not filas:
+        return None
+    ultima = max(filas, key=lambda f: str(f["date"]))
+    return {"dia": str(ultima["date"])[:10], "neto_musd": float(ultima["total_net_inflow"]) / 1e6}
+
+
+def _sosovalue(clave: str) -> dict[str, Any] | None:
+    """SoSoValue (clave gratis). Reemplaza a Farside por Firecrawl, que dejó de
+    responder con la clave vencida (401) y no tiene sustituto sin clave desde
+    Railway (2026-10-03: Farside 403 directo y por lector, JS en bitbo)."""
+    crudo = _pedir(
+        f"{SOSOVALUE}?symbol=BTC&country_code=US&limit=5",
+        cabeceras={"x-soso-api-key": clave},
+    )
+    etf = leer_sosovalue(json.loads(crudo))
+    if etf is None:
+        raise RuntimeError("SoSoValue sin filas de flujo")
+    return etf
+
+
+def _etf(soso: str, firecrawl: str) -> dict[str, Any] | None:
+    """SoSoValue si hay clave; si falla o no hay, Farside por Firecrawl."""
+    if not soso:
+        return _farside(firecrawl)
+    try:
+        return _sosovalue(soso)
+    except Exception as exc:  # noqa: BLE001 — se intenta la otra fuente
+        if not firecrawl:
+            raise
+        try:
+            return _farside(firecrawl)
+        except Exception as otro:  # noqa: BLE001
+            raise RuntimeError(
+                f"{type(exc).__name__}: {exc}; luego {type(otro).__name__}: {otro}"
+            ) from otro
+
+
 # ── derivados y opciones ────────────────────────────────────────────────────
 
 
@@ -602,6 +657,7 @@ def reunir(
     pedir: Json = pedir_json,
     firecrawl: str | None = None,
     finnhub: str | None = None,
+    sosovalue: str | None = None,
     texto: Callable[[str], str] = pedir_texto,
 ) -> Contexto:
     """Pide todas las fuentes en paralelo y arma el bloque. Nunca levanta."""
@@ -609,6 +665,7 @@ def reunir(
     ts = ahora.timestamp()
     firecrawl = os.environ.get("FIRECRAWL_API_KEY", "") if firecrawl is None else firecrawl
     finnhub = os.environ.get("FINNHUB_API_KEY", "") if finnhub is None else finnhub
+    sosovalue = os.environ.get("SOSOVALUE_API_KEY", "") if sosovalue is None else sosovalue
     ctx = Contexto()
     d = ctx.datos
     d["sesion"] = sesion(ahora)
@@ -627,7 +684,7 @@ def reunir(
         "stablecoins": lambda: leer_stablecoins(
             pedir("https://stablecoins.llama.fi/stablecoincharts/all")
         ),
-        "etf": lambda: _farside(firecrawl),
+        "etf": lambda: _etf(sosovalue, firecrawl),
         "funding": lambda: leer_okx_funding(
             pedir(
                 "https://www.okx.com/api/v5/public/funding-rate-history?instId=BTC-USDT-SWAP&limit=21"
