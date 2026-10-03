@@ -271,7 +271,7 @@ def test_reunir_con_la_red_caida_no_levanta_y_anota_los_fallos():
     def caida(_url: str):
         raise OSError("sin red")
 
-    c = reunir(AHORA, pedir=caida, firecrawl="", finnhub="", texto=caida)
+    c = reunir(AHORA, pedir=caida, firecrawl="", finnhub="", sosovalue="", texto=caida)
     assert "sesión EE. UU." in c.bloque
     assert "dxy" in c.fallos and "funding" in c.fallos
     assert "token=" not in "".join(c.fallos.values())
@@ -315,3 +315,60 @@ def test_farside_dice_por_que_falta(monkeypatch):
         ce, "_pedir", lambda *a, **k: json.dumps({"data": {"markdown": md}}).encode()
     )
     assert ce._farside("clave") == {"dia": "25 Sep 2026", "neto_musd": -190.1}
+
+
+def test_sosovalue_da_el_ultimo_dia_en_millones(monkeypatch):
+    """La fuente de ETF con clave gratis (2026-10-03): mismo formato que Farside."""
+    import json
+
+    import pytest
+
+    from paper import contexto_externo as ce
+
+    pedidos = []
+    filas = [
+        {"date": "2026-10-01", "total_net_inflow": 120_500_000.0},
+        {"date": "2026-10-02", "total_net_inflow": -190_100_000.0},
+    ]
+
+    def pedir(url, **k):
+        pedidos.append((url, k))
+        return json.dumps({"code": 0, "data": filas}).encode()
+
+    monkeypatch.setattr(ce, "_pedir", pedir)
+    etf = ce._sosovalue("clave")
+    assert etf["dia"] == "2026-10-02"
+    assert etf["neto_musd"] == pytest.approx(-190.1)
+    url, k = pedidos[0]
+    assert "symbol=BTC" in url and "country_code=US" in url
+    assert k["cabeceras"] == {"x-soso-api-key": "clave"}
+
+    monkeypatch.setattr(
+        ce, "_pedir", lambda *a, **k: json.dumps({"code": 40001, "message": "bad key"}).encode()
+    )
+    with pytest.raises(RuntimeError, match="code 40001: bad key"):
+        ce._sosovalue("clave")
+    monkeypatch.setattr(ce, "_pedir", lambda *a, **k: json.dumps({"code": 0, "data": []}).encode())
+    with pytest.raises(RuntimeError, match="sin filas"):
+        ce._sosovalue("clave")
+
+
+def test_etf_usa_sosovalue_y_cae_a_farside(monkeypatch):
+    import pytest
+
+    from paper import contexto_externo as ce
+
+    soso = {"dia": "2026-10-02", "neto_musd": 1.0}
+    farside = {"dia": "2 Oct 2026", "neto_musd": 2.0}
+    monkeypatch.setattr(ce, "_farside", lambda clave: farside)
+    monkeypatch.setattr(ce, "_sosovalue", lambda clave: soso)
+    assert ce._etf("s", "f") == soso
+    assert ce._etf("", "f") == farside
+
+    def falla(clave):
+        raise RuntimeError("code 40001: bad key")
+
+    monkeypatch.setattr(ce, "_sosovalue", falla)
+    assert ce._etf("s", "f") == farside
+    with pytest.raises(RuntimeError, match="bad key"):
+        ce._etf("s", "")
