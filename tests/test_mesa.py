@@ -13,14 +13,18 @@ from paper.mesa import (
     Mesa,
     Pregunta,
     Respuesta,
+    _precio_de,
+    aviso_de_analista,
     cierre_pendiente,
     consenso,
+    elegida,
     familias_de,
     interpretar,
     lectura,
     mensaje,
     para_el_trader,
     parte_html,
+    precio_24h,
     pregunta,
     ronda,
     sesgo_de,
@@ -218,7 +222,12 @@ def test_una_ronda_entera_guarda_avisa_y_sobrevive_a_una_familia_caida(tmp_path)
             ahora=T0 + timedelta(minutes=50),
         )
     )
-    assert aviso and avisos == [aviso]
+    # Un aviso por analista (2026-10-11): el que contestó con su lectura, el caído con su fallo.
+    assert aviso and len(avisos) == 2
+    assert (
+        avisos[0].startswith("⚪ gemini · neutral (g)") and "↑ 102 → 55% · ↓ 98 → 40%" in avisos[0]
+    )
+    assert avisos[1].startswith("⚠️ groq (roto): sin respuesta") and "429 agotado" in avisos[1]
     assert mesa.hechas() == {int(T0.timestamp())}
     filas = mesa._con.execute(
         "SELECT familia, p_arriba, fallo FROM respuestas ORDER BY familia"
@@ -594,9 +603,11 @@ def test_con_el_aviso_de_la_mesa_no_se_manda_el_de_siempre(tmp_path):
     avisos = _ronda_con_aviso(tmp_path, lambda c: cuerpos.append(c) or True)
     assert avisos == [] and len(cuerpos) == 1
     c = cuerpos[0]
-    # 55/45 con una base de 100% (velas que siempre tocan): ninguno la pasa.
-    assert c["html"].startswith("<b>⚪ Mesa BTC · lateral, inclinación alcista</b>")
-    assert c["texto"].startswith("🧑‍💼 Mesa de analistas") and c["tarjeta"]["base"] == 1.0
+    # El aviso de UN analista, con su tarjeta: sus números y su veredicto.
+    assert c["html"].startswith("<b>⚪ gemini · neutral</b> (m)") and _Etiquetas(c["html"]).bien
+    assert "↑ 102 → <b>55%</b> · ↓ 98 → <b>45%</b> · base 100%" in c["html"]
+    assert c["texto"].startswith("⚪ gemini · neutral (m)") and c["tarjeta"]["base"] == 1.0
+    assert c["tarjeta"]["analista"]["nombre"] == "gemini" and c["tarjeta"]["p_arriba"] == 0.55
 
 
 def test_si_el_aviso_de_la_mesa_no_sale_va_el_de_siempre(tmp_path):
@@ -746,3 +757,117 @@ def test_vigilar_deja_el_informe_en_el_log_una_vez_por_dia(tmp_path, capsys):
         if linea.startswith("[mesa-informe] Mesa de analistas")
     ]
     assert len(lineas) == 1
+
+
+# ── el análisis de flujo y un aviso por analista (2026-10-11) ───────────────
+
+
+async def _no_dormir(_s: float) -> None:
+    return None
+
+
+_PARTE = """1. **SITUACIÓN DEL PRECIO**: 84,120, +0.8% en 24 h.
+2. LECTURA DE FLUJO: delta 24 h +$480 M [panel]; absorción en 84,000 <muro>.
+3. VEREDICTO PROPIO: 60/40 alcista.
+4. PASO CONCRETO: mirar si 84,280 aguanta.
+OBJETIVOS: arriba 85,400 | abajo 83.200
+PROBABILIDADES: arriba 58% | abajo 31%
+VEREDICTO: alcista — compra agresiva absorbida arriba"""
+
+
+def test_los_objetivos_se_leen_en_cualquier_formato():
+    r = interpretar("gemini", "g", _PARTE)
+    assert (r.objetivo_arriba, r.objetivo_abajo) == (85400.0, 83200.0)
+    assert (r.p_arriba, r.p_abajo, r.veredicto) == (0.58, 0.31, "alcista")
+    assert _precio_de("$84500") == 84500.0 and _precio_de("84500.5") == 84500.5
+    assert _precio_de("84.500") == 84500.0 and _precio_de("1,234,567") == 1234567.0
+    sin = interpretar("g", "g", "PROBABILIDADES: arriba 50% | abajo 50%")
+    assert sin.objetivo_arriba is None and sin.p_arriba == 0.5
+
+
+def test_el_flujo_va_en_las_dos_variantes_y_se_guarda(tmp_path):
+    llm = _LlmQueMira()
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            mesa,
+            {"gemini": llm},
+            velas=lambda _m, _n: _velas(80),
+            mapa=lambda: "MAPA",
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+            contexto=lambda: _Ctx(),
+            dormir=_no_dormir,
+            flujo=lambda: "═══ FLUJO DE ÓRDENES (x) ═══\nDelta [panel]: 24 h +$1.0 M",
+        )
+    )
+    assert len(llm.vistos) == 2
+    assert all(
+        "FLUJO DE ÓRDENES (x)" in v and "Datos (código, velas de 1h)" in v for v in llm.vistos
+    )
+    assert "CONTEXTO EXTERNO (x)" in llm.vistos[1] and "CONTEXTO EXTERNO (x)" not in llm.vistos[0]
+    guardado = mesa._con.execute("SELECT bloque FROM flujos").fetchone()[0]
+    assert guardado.startswith("═══ FLUJO DE ÓRDENES")
+    assert mesa._con.execute("SELECT pregunta FROM rondas").fetchone()[0].endswith("· flujo")
+
+
+def test_sin_flujo_del_panel_la_ronda_sigue(tmp_path):
+    def caido():
+        raise OSError("panel caído")
+
+    llm = _LlmQueMira()
+    asyncio.run(
+        ronda(
+            int(T0.timestamp()),
+            Mesa(str(tmp_path / "mesa.db")),
+            {"gemini": llm},
+            velas=lambda _m, _n: _velas(80),
+            mapa=lambda: "MAPA",
+            avisar=lambda _t: True,
+            ahora=T0 + timedelta(minutes=50),
+            flujo=caido,
+        )
+    )
+    assert len(llm.vistos) == 1 and "FLUJO DE ÓRDENES (" not in llm.vistos[0]
+
+
+def test_el_aviso_de_un_analista_es_su_parte_sin_las_lineas_del_codigo():
+    p = Pregunta(
+        int(T0.timestamp()), T0, 84120.0, 600.0, 85382.0, 82858.0, T0 + timedelta(hours=24)
+    )
+    r = interpretar("gemini", "google/gemini-3.8-flash", _PARTE)
+    r.variante = VARIANTE_EXTERNO
+    c = aviso_de_analista(p, r, 0.38, _velas(60, precio=84000.0))
+    assert c["html"].startswith("<b>🟢 gemini · alcista</b> (gemini-3.8-flash)")
+    assert "Objetivos: ↑ 85,400 · ↓ 83,200" in c["html"] and "con contexto externo" in c["html"]
+    # Las negritas pasan a HTML, lo del modelo se escapa y las líneas del código no se repiten.
+    assert "<b>SITUACIÓN DEL PRECIO</b>" in c["html"] and "&lt;muro&gt;" in c["html"]
+    assert "OBJETIVOS:" not in c["html"] and "PROBABILIDADES:" not in c["html"]
+    assert _Etiquetas(c["html"]).bien and _Etiquetas(c["pie"]).bien
+    assert len(c["pie"]) < len(c["html"]) and "PASO CONCRETO" not in c["pie"]
+    t = c["tarjeta"]
+    assert t["analista"]["objetivo_arriba"] == 85400.0 and (t["p_arriba"], t["p_abajo"]) == (
+        0.58,
+        0.31,
+    )
+    # Un parte larguísimo se recorta y cabe en un mensaje de Telegram.
+    largo = interpretar("g", "g", "**x** " + "flujo comprador sostenido.\n" * 400 + _PARTE)
+    cl = aviso_de_analista(p, largo, None, _velas(60, precio=84000.0))
+    from html import unescape
+    from re import sub
+
+    assert len(unescape(sub(r"<[^>]+>", "", cl["html"]))) <= 3900 and _Etiquetas(cl["html"]).bien
+
+
+def test_se_ensena_la_variante_con_contexto_si_contesto():
+    rs = _ronda_de_ejemplo()
+    assert elegida(rs, "gemini").variante == VARIANTE_EXTERNO
+    assert elegida(rs, "groq").variante == VARIANTE_MAPA
+    assert elegida(rs, "nvidia").fallo == "Error code: 500" and elegida(rs, "x") is None
+
+
+def test_el_precio_de_24_h_lo_calcula_el_codigo():
+    linea = precio_24h(_velas(30, precio=100.0))
+    assert linea.startswith("   Datos (código, velas de 1h): precio") and "máximo" in linea
+    assert precio_24h(_velas(10)) == ""
