@@ -215,6 +215,39 @@ un veredicto).
 - El trader (v6) ve la pregunta nueva desde el mismo día: el cambio se
   desplegó antes de la ventana del 27, así que la v6 no mezcla preguntas.
 
+## El análisis de flujo y un aviso por analista (2026-10-11)
+
+Elvis, el 11: «quiero cambiar el análisis actual de los analistas a uno nuevo y
+que el mensaje de Telegram venga separado, no unido como está ahora, y que cada
+uno de los modelos tenga su gráfica», con su prompt de analista de order flow
+estilo Fabio Valentini («puedes adaptarlo a cómo lo está resolviendo
+actualmente»).
+
+- **El analista nuevo** (`ROL_MESA`, `INSTRUCCION_MESA`): un parte en cuatro
+  partes —situación del precio, lectura de flujo (agresión, panel, absorción,
+  Triple-A, liquidez, ETF), veredicto propio con la dirección en porcentajes y
+  objetivos, y un paso concreto— con sus reglas: no inventar flujo, nombrar la
+  fuente de cada afirmación. Termina con tres líneas para el código:
+  `OBJETIVOS`, `PROBABILIDADES` (las de siempre) y `VEREDICTO`.
+- **Datos del flujo, por código:** el panel calcula el FLUJO DE ÓRDENES de las
+  últimas 24 h (`POST /api/papel/flujo`, `flujoMesa.ts` del dashboard): delta
+  de 24/4/1 h y por hora de las plataformas que escucha, deep delta, perfil
+  (POC, área de valor, niveles de más compra y venta neta), operaciones grandes
+  y lo liquidado de cada lado, mapa de liquidaciones de Hyperliquid y muros del
+  libro. Va en las DOS variantes, después del mapa: es dato del mercado, como
+  el mapa. El A/B sigue siendo solo el bloque externo. Se guarda en la tabla
+  `flujos` con cada ronda. El cambio, el máximo y el mínimo de 24 h también los
+  calcula el código (velas de 1h). Sin panel, la ronda sigue sin el bloque.
+- **La pregunta que se mide no cambia** (±1.5% en 24 h, los mismos niveles para
+  todos), pero el analista sí: las rondas nuevas llevan la pregunta
+  `1h ±1.5% 24h · flujo`, el informe mide solo esas y **la puerta de 50 por
+  familia y variante empieza de nuevo**. Las de antes quedan aparte.
+- **Un Telegram por analista:** cada uno con SU tarjeta (sus probabilidades,
+  su veredicto y sus objetivos dibujados sobre las velas) y su parte entero
+  (si no cabe en el pie de la foto, va justo después como mensaje). Se enseña
+  la variante con contexto externo si contestó; si no, la del mapa. Ya no hay
+  aviso de la mesa entera; el trader (v6) sigue viendo el consenso como dato.
+
 ## Dónde está cada cosa
 
 - `paper/mesa.py`: la ronda, el registro (`mesa.db`), la resolución, el aviso
