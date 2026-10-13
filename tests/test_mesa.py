@@ -7,6 +7,9 @@ from paper.mesa import (
     CUATRO_HORAS_S,
     ESPERA_TANDA_S,
     FAMILIA_BASE,
+    INSTRUCCION_MESA,
+    PALABRAS,
+    PIE_AVISO,
     TOPE_PIE,
     VARIANTE_EXTERNO,
     VARIANTE_MAPA,
@@ -14,6 +17,7 @@ from paper.mesa import (
     Pregunta,
     Respuesta,
     _precio_de,
+    _visible,
     aviso_de_analista,
     cierre_pendiente,
     consenso,
@@ -809,7 +813,7 @@ def test_el_flujo_va_en_las_dos_variantes_y_se_guarda(tmp_path):
     assert "CONTEXTO EXTERNO (x)" in llm.vistos[1] and "CONTEXTO EXTERNO (x)" not in llm.vistos[0]
     guardado = mesa._con.execute("SELECT bloque FROM flujos").fetchone()[0]
     assert guardado.startswith("═══ FLUJO DE ÓRDENES")
-    assert mesa._con.execute("SELECT pregunta FROM rondas").fetchone()[0].endswith("· flujo")
+    assert mesa._con.execute("SELECT pregunta FROM rondas").fetchone()[0].endswith("· flujo corto")
 
 
 def test_sin_flujo_del_panel_la_ronda_sigue(tmp_path):
@@ -841,11 +845,13 @@ def test_el_aviso_de_un_analista_es_su_parte_sin_las_lineas_del_codigo():
     c = aviso_de_analista(p, r, 0.38, _velas(60, precio=84000.0))
     assert c["html"].startswith("<b>🟢 gemini · alcista</b> (gemini-3.8-flash)")
     assert "Objetivos: ↑ 85,400 · ↓ 83,200" in c["html"] and "con contexto externo" in c["html"]
-    # Las negritas pasan a HTML, lo del modelo se escapa y las líneas del código no se repiten.
+    # Un parte que no trae las tres líneas cortas va tal cual: las negritas pasan a HTML, lo
+    # del modelo se escapa y las líneas del código no se repiten.
     assert "<b>SITUACIÓN DEL PRECIO</b>" in c["html"] and "&lt;muro&gt;" in c["html"]
     assert "OBJETIVOS:" not in c["html"] and "PROBABILIDADES:" not in c["html"]
     assert _Etiquetas(c["html"]).bien and _Etiquetas(c["pie"]).bien
-    assert len(c["pie"]) < len(c["html"]) and "PASO CONCRETO" not in c["pie"]
+    # Corto y visual (2026-10-13): el pie de la foto es el aviso entero (sin segundo mensaje).
+    assert c["pie"] == c["html"] and _visible(c["html"]) <= PIE_AVISO
     t = c["tarjeta"]
     assert t["analista"]["objetivo_arriba"] == 85400.0 and (t["p_arriba"], t["p_abajo"]) == (
         0.58,
@@ -857,7 +863,40 @@ def test_el_aviso_de_un_analista_es_su_parte_sin_las_lineas_del_codigo():
     from html import unescape
     from re import sub
 
-    assert len(unescape(sub(r"<[^>]+>", "", cl["html"]))) <= 3900 and _Etiquetas(cl["html"]).bien
+    assert (
+        len(unescape(sub(r"<[^>]+>", "", cl["html"]))) <= PIE_AVISO and _Etiquetas(cl["html"]).bien
+    )
+    assert cl["html"].startswith("<b>") and "Objetivos:" in cl["html"]
+
+
+def test_el_parte_corto_son_tres_lineas_con_su_etiqueta():
+    p = Pregunta(
+        int(T0.timestamp()), T0, 84120.0, 600.0, 85382.0, 82858.0, T0 + timedelta(hours=24)
+    )
+    corto = """PRECIO: 84,120, entre el soporte de 83,800 y la resistencia de 84,600.
+**FLUJO**: venta agresiva absorbida en 84,000 (panel) <muro>.
+PASO: mirar si 84,280 aguanta con delta positivo.
+OBJETIVOS: arriba 85,400 | abajo 83.200
+PROBABILIDADES: arriba 58% | abajo 31%
+VEREDICTO: alcista — absorción en 84,000"""
+    r = interpretar("groq", "llama", corto)
+    c = aviso_de_analista(p, r, 0.29, _velas(60, precio=84000.0))
+    assert "<b>Precio</b> · 84,120" in c["html"] and "<b>Flujo</b> · venta agresiva" in c["html"]
+    assert "<b>Paso</b> · mirar si 84,280" in c["html"] and "&lt;muro&gt;" in c["html"]
+    assert "OBJETIVOS:" not in c["html"] and "PRECIO:" not in c["html"]
+    assert c["pie"] == c["html"] and _visible(c["html"]) <= PIE_AVISO and _Etiquetas(c["html"]).bien
+    # El analista recibe la consigna corta.
+    assert "menos de 90 palabras" in INSTRUCCION_MESA.format(
+        palabras=PALABRAS,
+        precio24="",
+        marco="1h",
+        plazo=24,
+        precio=1.0,
+        arriba=2.0,
+        abajo=0.5,
+        dist=1.5,
+        base="",
+    )
 
 
 def test_se_ensena_la_variante_con_contexto_si_contesto():
