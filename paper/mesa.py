@@ -21,6 +21,12 @@ flujo, veredicto propio con objetivos y un paso concreto— antes de sus líneas
 de siempre. La pregunta que se mide no cambia, pero el analista sí: sus rondas
 llevan otra `PREGUNTA` y la puerta de 50 empieza de nuevo.
 
+⚠ DESDE EL 2026-10-13, CORTO Y VISUAL (Elvis: «hacer más cortas las respuestas
+de las IAs, quiero más visual y menos texto»): el parte son tres líneas
+—PRECIO, FLUJO y PASO, una frase cada una— y el aviso es solo la foto con un pie
+corto (sin el mensaje largo detrás). Otro analista otra vez: otra `PREGUNTA`
+(«· flujo corto»), y las 4 rondas del parte largo quedan aparte.
+
 ⚠ DESDE EL PROMPT V6 EL TRADER VE LA ÚLTIMA RONDA (`para_el_trader`), como un
 dato al final de su mensaje: lo decidió Elvis el 2026-09-26, adelantando la
 fase 2 del criterio. La mesa sigue sin ver al trader —sus analistas leen solo
@@ -73,7 +79,9 @@ PLAZO_H = 24.0
 DISTANCIA_PCT = 1.5
 # Desde el 2026-10-11 la misma pregunta con el análisis de flujo: otro analista, otra
 # serie (las rondas de antes quedan aparte con `1h ±1.5% 24h`).
-PREGUNTA = f"{MARCO} ±{DISTANCIA_PCT:g}% {PLAZO_H:g}h · flujo"
+# Desde el 2026-10-13, el parte corto (tres líneas): otra serie (las del parte largo,
+# `· flujo`, quedan aparte).
+PREGUNTA = f"{MARCO} ±{DISTANCIA_PCT:g}% {PLAZO_H:g}h · flujo corto"
 PREGUNTA_VIEJA = "1h ±1 ATR 24h"
 PERIODO_ATR = 14
 # Velas de 1h para la tasa base: 200 = ~8 días, 175 muestras con 24 h por delante.
@@ -83,9 +91,9 @@ CUATRO_HORAS_S = 4 * 3600
 CADA_S = 300
 # La puerta del criterio: ni Brier ni acierto antes de esto, por familia.
 PUERTA = 50
-# El parte de flujo es largo (cuatro partes): se guarda entero para auditarlo y para el aviso.
+# El parte se guarda entero para auditarlo y para el aviso (corto desde el 2026-10-13: tres líneas).
 TOPE_TEXTO = 4000
-PALABRAS = 260
+PALABRAS = 90
 # Fase 1b (CRITERIO_MESA_ANALISTAS.md): las dos variantes de cada familia.
 VARIANTE_MAPA = "mapa"
 VARIANTE_EXTERNO = "mapa+externo"
@@ -110,34 +118,15 @@ ROL_MESA = (
 )
 
 INSTRUCCION_MESA = """Lee los datos de abajo: el mapa del gráfico, el flujo de órdenes del
-panel y, si viene, el contexto externo. En menos de {palabras} palabras, en este orden:
+panel y, si viene, el contexto externo. Responde CORTO: menos de {palabras} palabras en
+total, sin introducción ni listas, con exactamente estas tres líneas (una frase cada una,
+con precios concretos):
 
-1. SITUACIÓN DEL PRECIO: precio actual, cambio 24 h, máximo/mínimo 24 h y posición
-   respecto a los soportes y resistencias cercanos, con precios concretos.
+PRECIO: dónde está frente al soporte y la resistencia más cercanos.
 {precio24}
-2. LECTURA DE FLUJO (solo con datos verificables de abajo: no inventes deltas):
-   - Agresión: ¿quién está agresivo, compradores o vendedores? Míralo en el delta y el
-     volumen del panel (¿la subida o la bajada lleva volumen?), en las liquidaciones
-     (¿se liquidan largos o cortos?) y en el funding (¿FOMO apalancado o plano?).
-   - Panel de flujo: delta neto y %, POC, dónde se concentró la agresión de cada lado
-     en el perfil, deep delta y delta por hora. Nombra siempre la ventana del panel.
-   - Absorción: si el precio empuja un nivel con volumen pero no avanza, alguien está
-     absorbiendo del otro lado. Di dónde.
-   - Triple-A: ¿agresión (movimiento direccional con volumen), absorción (volumen alto
-     sin avance) o acumulación (rango estrecho, volumen seco)?
-   - Liquidez: ¿dónde están los stops? Máximos y mínimos recientes, niveles
-     psicológicos, el mapa de liquidaciones. El precio tiende a buscar la liquidez.
-   - Flujo institucional: entradas y salidas de los ETF spot (si vienen).
-
-3. VEREDICTO PROPIO: tu lectura, con la dirección en porcentajes para los dos lados
-   (p. ej. 60/40) y objetivos concretos arriba y abajo. No repitas consensos.
-
-4. PASO CONCRETO: una sola acción observable (qué nivel mirar, qué confirmar). No es
-   una recomendación de compra o venta.
-
-REGLAS: si el flujo no está claro con estos datos, dilo en vez de inventarlo. Nombra la
-fuente de cada afirmación de flujo (panel, liquidaciones, funding, OI, ETF) para que se
-pueda auditar. Conciso, tono de mesa, en español.
+FLUJO: quién agrede o absorbe y en qué nivel, con la fuente entre paréntesis (panel,
+liquidaciones, funding, OI, ETF). Si con estos datos no está claro, dilo; no inventes deltas.
+PASO: un solo nivel a mirar y qué confirmar en él (no es una recomendación de compra o venta).
 
 La pregunta que se mide, la misma para toda la mesa: plazo {plazo:g} h desde ahora
 (precio {precio:,.2f}),
@@ -751,6 +740,29 @@ def _cuerpo(texto: str) -> str:
     return re.sub(r"(?m)^#{1,4}\s*", "", seguro)
 
 
+# El parte corto (2026-10-13): sus tres líneas, cada una con su etiqueta en negrita. Si el
+# modelo no las escribió así, el parte tal cual, recortado para que quepa en el pie de la foto.
+_LINEA_CORTA = re.compile(
+    r"^\s*[-*•]?\s*\**\s*(PRECIO|FLUJO|PASO)\s*\**\s*:\s*\**\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ETIQUETA_CORTA = {"precio": "Precio", "flujo": "Flujo", "paso": "Paso"}
+# Lo que cabe en el pie de la foto (TOPE_PIE, 1.024 visibles), con margen.
+PIE_AVISO = 1000
+
+
+def _cuerpo_corto(texto: str) -> str:
+    """Las líneas PRECIO, FLUJO y PASO del parte, en HTML; "" si el modelo no las escribió."""
+    vistas: dict[str, str] = {}
+    for m in _LINEA_CORTA.finditer(texto):
+        clave = m.group(1).lower()
+        if clave not in vistas:
+            vistas[clave] = re.sub(r"\*\*", "", m.group(2)).strip()
+    if not vistas:
+        return ""
+    return "\n".join(f"<b>{_ETIQUETA_CORTA[k]}</b> · {_e(v)}" for k, v in vistas.items())
+
+
 def elegida(respuestas: list[Respuesta], familia: str) -> Respuesta | None:
     """La de `familia` que se enseña: la de contexto externo si contestó; si no, la del mapa."""
     propias = [r for r in respuestas if r.familia == familia]
@@ -797,13 +809,19 @@ def aviso_de_analista(
     if r.porque:
         cabeza.append(f"<i>{_e(r.porque)}</i>")
     pie_linea = f"<i>{datos} · cierre 4h {cierre} · vence {_hora(p.vence_en)}</i>"
-    cuerpo = _cuerpo(r.texto)
-    # Telegram corta en 4096: el parte se recorta antes que la cabeza.
+    # Corto y visual (2026-10-13): todo va en el pie de la foto, sin mensaje largo detrás. Las
+    # tres líneas del parte corto; si no vinieron, el parte recortado. Nunca la cabeza.
+    cuerpo = _cuerpo_corto(r.texto) or _cuerpo(r.texto)
     html_ = "\n".join(cabeza) + ("\n\n" + cuerpo if cuerpo else "") + "\n\n" + pie_linea
-    while _visible(html_) > 3900 and cuerpo:
-        cuerpo = cuerpo[: int(len(cuerpo) * 0.9)].rsplit("\n", 1)[0]
+    while _visible(html_) > PIE_AVISO and cuerpo:
+        cuerpo = (
+            cuerpo[: int(len(cuerpo) * 0.9)].rsplit("\n", 1)[0]
+            if "\n" in cuerpo
+            else cuerpo[: int(len(cuerpo) * 0.9)]
+        )
         cuerpo = re.sub(r"<b>[^<]*$", "", cuerpo)
-        html_ = "\n".join(cabeza) + "\n\n" + cuerpo + " …\n\n" + pie_linea
+        cuerpo = re.sub(r"<[^>]*$|&[a-z#0-9]*$", "", cuerpo)
+        html_ = "\n".join(cabeza) + ("\n\n" + cuerpo + " …" if cuerpo else "") + "\n\n" + pie_linea
     plano = re.sub(r"<[^>]+>", "", html_)
     t = tarjeta(p, [r], base, velas_1h)
     if t is not None:
@@ -817,7 +835,8 @@ def aviso_de_analista(
         }
     return {
         "html": html_,
-        "pie": "\n".join(cabeza) + "\n" + pie_linea,
+        # El pie de la foto es el aviso entero: cabe (PIE_AVISO), no sale un segundo mensaje.
+        "pie": html_,
         "texto": html.unescape(plano)[:4000],
         "tarjeta": t,
     }

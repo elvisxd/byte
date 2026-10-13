@@ -255,3 +255,20 @@ actualmente»).
 - `railway-vigia-service/arrancar.sh` (repo `mi-dashboard-trading`): la lanza
   junto a los brazos con las claves de cada uno. Si la mesa cae, los brazos
   siguen: no está en la lista de procesos que tumban el contenedor.
+
+## Corto y visual (2026-10-13)
+
+Elvis, el 13: «hacer más cortas las respuestas de las IAs, quiero más visual y
+menos texto».
+
+- **El parte son tres líneas** (`INSTRUCCION_MESA`, menos de 90 palabras):
+  `PRECIO` (frente al soporte y la resistencia más cercanos), `FLUJO` (quién
+  agrede o absorbe y dónde, con la fuente entre paréntesis) y `PASO` (un nivel a
+  mirar y qué confirmar). Las tres líneas del código (`OBJETIVOS`,
+  `PROBABILIDADES`, `VEREDICTO`) no cambian: lo que se mide es lo mismo.
+- **El aviso es la foto con un pie corto**: la cabeza (veredicto, probabilidades
+  contra la tasa base y objetivos) y las tres líneas, en el pie de la foto
+  (`PIE_AVISO`, 1.000 visibles). Ya no sale el mensaje largo detrás de cada foto.
+- **Otra serie**: el analista cambia, así que sus rondas llevan otra `PREGUNTA`
+  («· flujo corto») y la puerta de 50 empieza de nuevo. Las 4 rondas del parte
+  largo (`· flujo`, del 12) quedan aparte, sin resolver ninguna todavía.
