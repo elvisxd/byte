@@ -930,6 +930,13 @@ class Mesa:
                 ronda_id  INTEGER PRIMARY KEY REFERENCES rondas(id),
                 bloque    TEXT    NOT NULL   -- el FLUJO DE ÓRDENES que leyeron (2026-10-11)
             );
+            CREATE TABLE IF NOT EXISTS puertas (
+                familia   TEXT    NOT NULL,   -- quién cruzó la puerta de 50 resueltas (2026-10-14)
+                variante  TEXT    NOT NULL,
+                pregunta  TEXT    NOT NULL,
+                en        TEXT    NOT NULL,
+                PRIMARY KEY (familia, variante, pregunta)
+            );
             CREATE TABLE IF NOT EXISTS contextos (
                 ronda_id  INTEGER PRIMARY KEY REFERENCES rondas(id),
                 bloque    TEXT    NOT NULL,
@@ -1113,6 +1120,60 @@ class Mesa:
                         linea += f" · vs tasa base {skill:+.3f} en {len(pares)}"
             salida.append(linea)
         return "\n".join(salida)
+
+    def avisar_puertas(self, ahora: datetime, avisar: Callable[[str], bool]) -> int:
+        """Avisa de cada familia y variante que acaba de llegar a la puerta de 50 resueltas en
+        la pregunta actual, una sola vez cada una: queda en `puertas` solo si el aviso salió (si
+        no, se reintenta en la próxima vuelta). Devuelve cuántos salieron.
+
+        Elvis, 2026-10-14: «silenciar los mensajes de Telegram de los brazos de IA por ahora y
+        que solo me avise cuando llegue al límite de predicción que busco». Los avisos de cada
+        ronda los calla el panel (MESA_AVISOS); este va por /api/papel/aviso, que no se calla.
+        Lleva la línea del informe de esa familia: desde la puerta, su Brier y su skill contra la
+        tasa base (antes no se enseñan, el criterio)."""
+        filas = self._con.execute(
+            """SELECT s.familia, s.variante, COUNT(*) AS n
+               FROM respuestas s JOIN rondas r ON r.id = s.ronda_id
+               WHERE r.pregunta = ? AND s.p_arriba IS NOT NULL AND r.resuelta_en IS NOT NULL
+                 AND s.familia != ?
+               GROUP BY s.familia, s.variante""",
+            (PREGUNTA, FAMILIA_BASE),
+        ).fetchall()
+        hechas = {
+            (f[0], f[1])
+            for f in self._con.execute(
+                "SELECT familia, variante FROM puertas WHERE pregunta = ?", (PREGUNTA,)
+            )
+        }
+        nuevas = [
+            (f["familia"], f["variante"])
+            for f in filas
+            if f["n"] >= PUERTA and (f["familia"], f["variante"]) not in hechas
+        ]
+        if not nuevas:
+            return 0
+        informe = self.informe().splitlines()
+        salieron = 0
+        for familia, variante in nuevas:
+            linea = next(
+                (x.strip() for x in informe if x.strip().startswith(f"{familia} [{variante}]:")), ""
+            )
+            texto = (
+                f"Mesa de analistas: {familia} [{variante}] llegó a la puerta de {PUERTA}"
+                f" preguntas resueltas ({PREGUNTA}). Ya se puede mirar cómo le fue."
+                + (f"\n{linea}" if linea else "")
+            )
+            print(f"[mesa] puerta: {familia} [{variante}] llegó a {PUERTA} resueltas", flush=True)
+            if not avisar(texto):
+                print("[mesa] el aviso de la puerta no salió: se reintenta", flush=True)
+                continue
+            self._con.execute(
+                "INSERT INTO puertas (familia, variante, pregunta, en) VALUES (?, ?, ?, ?)",
+                (familia, variante, PREGUNTA, ahora.isoformat()),
+            )
+            self._con.commit()
+            salieron += 1
+        return salieron
 
 
 def _brier(filas: list[Any]) -> float:
@@ -1410,6 +1471,10 @@ async def vigilar(
                 mesa.resolver(velas("15m", 200), datetime.now(UTC))
             except Exception as exc:  # noqa: BLE001 — sin velas se resuelve en la próxima
                 print(f"[mesa] no se pudo resolver: {str(exc)[:120]}", flush=True)
+            try:
+                mesa.avisar_puertas(datetime.now(UTC), avisar)
+            except Exception as exc:  # noqa: BLE001 — el aviso de la puerta nunca para la mesa
+                print(f"[mesa] sin aviso de la puerta: {str(exc)[:120]}", flush=True)
             cierre = cierre_pendiente(datetime.now(UTC), mesa.hechas(), espera_min, en_ventana)
             if cierre is not None:
                 await ronda(
