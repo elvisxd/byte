@@ -910,3 +910,68 @@ def test_el_precio_de_24_h_lo_calcula_el_codigo():
     linea = precio_24h(_velas(30, precio=100.0))
     assert linea.startswith("   Datos (código, velas de 1h): precio") and "máximo" in linea
     assert precio_24h(_velas(10)) == ""
+
+
+# ── el aviso de la puerta de 50 (2026-10-14) ────────────────────────────────
+
+
+def test_avisa_una_vez_al_llegar_a_la_puerta_y_reintenta_si_no_sale(tmp_path):
+    """Elvis: «silenciar los mensajes de los brazos y que solo me avise cuando llegue al
+    límite». Un solo aviso por familia y variante, con su línea del informe; si Telegram no
+    lo aceptó, se reintenta en la próxima vuelta."""
+    from paper.mesa import PUERTA
+
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    for k in range(PUERTA):
+        t = T0 + timedelta(hours=4 * k)
+        p = Pregunta(int(t.timestamp()), t, 100.0, 2.0, 102.0, 98.0, t + timedelta(hours=24))
+        mesa.guardar(
+            p,
+            [
+                Respuesta("gemini", p_arriba=0.6, p_abajo=0.3),
+                Respuesta("groq", fallo="429"),
+                Respuesta(FAMILIA_BASE, p_arriba=0.4, p_abajo=0.4),
+            ],
+        )
+    fin = T0 + timedelta(hours=4 * PUERTA + 30)
+    avisos: list[str] = []
+    assert mesa.avisar_puertas(fin, lambda t: avisos.append(t) or True) == 0  # nada resuelto aún
+    mesa.resolver([], fin)
+    assert mesa.avisar_puertas(fin, lambda _t: False) == 0  # no salió: no queda marcada
+    assert mesa.avisar_puertas(fin, lambda t: avisos.append(t) or True) == 1
+    assert len(avisos) == 1 and "gemini [mapa]" in avisos[0] and f"puerta de {PUERTA}" in avisos[0]
+    assert "Brier" in avisos[0]  # con la línea del informe, que desde la puerta lleva el Brier
+    assert "groq" not in avisos[0] and FAMILIA_BASE not in avisos[0].splitlines()[0]
+    assert mesa.avisar_puertas(fin, lambda t: avisos.append(t) or True) == 0  # una sola vez
+    assert len(avisos) == 1
+
+
+def test_vigilar_avisa_la_puerta(tmp_path):
+    from paper.mesa import PUERTA, vigilar
+
+    mesa = Mesa(str(tmp_path / "mesa.db"))
+    for k in range(PUERTA):
+        t = T0 + timedelta(hours=4 * k)
+        p = Pregunta(int(t.timestamp()), t, 100.0, 2.0, 102.0, 98.0, t + timedelta(hours=24))
+        mesa.guardar(p, [Respuesta("gemini", p_arriba=0.6, p_abajo=0.3)])
+    mesa.resolver([], datetime.now(UTC))
+    parar = asyncio.Event()
+    avisos: list[str] = []
+
+    async def dormir(_s):
+        parar.set()
+
+    asyncio.run(
+        vigilar(
+            mesa,
+            {},
+            50,
+            lambda _m: False,
+            lambda _marco, _n: [],
+            lambda: "",
+            lambda t: avisos.append(t) or True,
+            parar,
+            dormir=dormir,
+        )
+    )
+    assert len(avisos) == 1 and "puerta" in avisos[0]
