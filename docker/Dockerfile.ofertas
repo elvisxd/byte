@@ -4,7 +4,7 @@
 # biblioteca estándar más `empleo/`, así que alcanza con el servidor HTTP. Meter
 # el `uv sync` completo traería langgraph, ollama, psycopg y selectolax —cientos
 # de megas y un arranque lento— para no usar nada de eso.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
