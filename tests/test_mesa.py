@@ -30,6 +30,7 @@ from paper.mesa import (
     parte_html,
     precio_24h,
     pregunta,
+    preguntar,
     ronda,
     sesgo_de,
     tarjeta,
@@ -975,3 +976,23 @@ def test_vigilar_avisa_la_puerta(tmp_path):
         )
     )
     assert len(avisos) == 1 and "puerta" in avisos[0]
+
+
+def test_un_error_de_la_clave_deja_rastro_en_el_log(capsys):
+    """Un 401 no es de cuota ni de caída: el relevo no lo anota, y sin esta línea el log de la
+    mesa no decía nada de una familia que llevaba días sin contestar (openrouter, 2026-10-25).
+    La clave, si el proveedor la repite en el mensaje, no sale."""
+
+    class Clave:
+        actual = "openrouter/x:free"
+
+        async def ainvoke(self, _):
+            raise RuntimeError(
+                "Error code: 401 - clave sk-or-v1-abcdefghijklmnopqrstuvwxyz no vale"
+            )
+
+    r = asyncio.run(preguntar("openrouter", Clave(), _pregunta_fija(), "mapa"))
+    linea = capsys.readouterr().out
+    assert r.fallo and r.p_arriba is None
+    assert "[mesa] openrouter [mapa] sin respuesta: Error code: 401" in linea
+    assert "abcdefghijklmnop" not in linea

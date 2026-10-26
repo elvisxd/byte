@@ -64,6 +64,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from api.redaccion import redactar
 from paper.analista import _texto_de, interpretar_probabilidades
 
 # La pregunta: el marco por defecto de las predicciones y su plazo
@@ -352,10 +353,17 @@ async def preguntar(
             ]
         )
     except Exception as exc:  # noqa: BLE001 — una familia menos, no una ronda menos
+        fallo = str(exc)[:160]
+        # ⚠ SIN ESTA LÍNEA, UN ERROR QUE NO ES DE CUOTA NI DE CAÍDA NO DEJA RASTRO EN EL LOG.
+        # El relevo solo anota lo que sabe clasificar (429, 5xx, 404…); un 401 o un 403 de la
+        # clave sube hasta acá y quedaba solo en mesa.db. Medido el 2026-10-25: openrouter llevaba
+        # 18 rondas seguidas sin contestar y el log no tenía ni una línea suya. Con `redactar`, por
+        # si el proveedor repite la clave en el mensaje.
+        print(f"[mesa] {familia} [{variante}] sin respuesta: {redactar(fallo)}", flush=True)
         return Respuesta(
             familia=familia,
             modelo=str(getattr(llm, "actual", "") or ""),
-            fallo=str(exc)[:160],
+            fallo=fallo,
             variante=variante,
         )
     r = interpretar(familia, str(getattr(llm, "actual", "") or ""), _texto_de(respuesta))
